@@ -8,12 +8,16 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/db"
 	"github.com/dmestas/edgesync/go-libfossil/delta"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
 )
 
 // buildRequest assembles one outbound xfer message for the given cycle.
 func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
+	// BUGGIFY: shrink send budget to stress multi-round convergence.
+	if s.opts.Buggify != nil && s.opts.Buggify.Check("sync.buildRequest.minBudget", 0.10) {
+		s.maxSend = 1024
+	}
+
 	var cards []xfer.Card
 
 	// 1. Pragma: client-version (every round)
@@ -128,6 +132,11 @@ func (s *session) buildFileCards() ([]xfer.Card, error) {
 	// The server will gimme the ones it needs, which populates pendingSend for the next round.
 	// We do NOT proactively send unsent files — Fossil's protocol expects igot first, gimme second.
 
+	// BUGGIFY: drop the last file card to simulate partial send.
+	if s.opts.Buggify != nil && s.opts.Buggify.Check("sync.buildFileCards.skip", 0.05) && len(cards) > 0 {
+		cards = cards[:len(cards)-1]
+	}
+
 	return cards, nil
 }
 
@@ -176,6 +185,10 @@ func (s *session) buildLoginCard(cards []xfer.Card) (*xfer.LoginCard, error) {
 		}
 	}
 	payload := appendRandomComment(buf.Bytes(), s.env.Rand)
+	// BUGGIFY: corrupt the nonce payload to trigger auth failures.
+	if s.opts.Buggify != nil && s.opts.Buggify.Check("sync.buildLoginCard.badNonce", 0.02) {
+		payload = append(payload, []byte("BUGGIFY")...)
+	}
 	return computeLogin(s.opts.User, s.opts.Password, s.opts.ProjectCode, payload), nil
 }
 
@@ -300,7 +313,7 @@ func (s *session) handleFileCard(uuid, deltaSrc string, payload []byte) error {
 	}
 
 	// BUGGIFY: simulate post-store failure to test retry/recovery logic.
-	if simio.Buggify(0.03) {
+	if s.opts.Buggify != nil && s.opts.Buggify.Check("sync.handleFileCard.reject", 0.03) {
 		return fmt.Errorf("buggify: simulated storage failure for %s", uuid)
 	}
 
