@@ -29,10 +29,11 @@ type Harness struct {
 	fossilRepo string
 	nats       *natsserver.Server
 	natsURL    string
-	proxy *FaultProxy
-	bridge    *bridge.Bridge
-	leaves    []*agent.Agent
-	leafPaths []string
+	proxy      *FaultProxy
+	bridge     *bridge.Bridge
+	leaves     []*agent.Agent
+	leafPaths  []string
+	buggify    *Buggify
 }
 
 // NewHarness creates a Harness with the given config, applying defaults.
@@ -123,11 +124,15 @@ func (h *Harness) SetupInfra() error {
 func (h *Harness) StartAgents() error {
 	var err error
 
+	// Create Buggify instance with seed offset to avoid correlation with fault schedule.
+	h.buggify = NewBuggify(h.Config.Seed + 1000)
+
 	h.bridge, err = bridge.New(bridge.Config{
 		NATSUrl:       h.natsURL,
 		FossilURL:     h.fossilURL,
 		ProjectCode:   "sim-project",
 		SubjectPrefix: "fossil",
+		Buggify:       h.buggify,
 	})
 	if err != nil {
 		return fmt.Errorf("sim: bridge new: %w", err)
@@ -149,6 +154,7 @@ func (h *Harness) StartAgents() error {
 			Pull:          true,
 			PollInterval:  2 * time.Second,
 			SubjectPrefix: "fossil",
+			Buggify:       h.buggify,
 		})
 		if err != nil {
 			return fmt.Errorf("sim: agent new leaf-%d: %w", i, err)
@@ -232,6 +238,7 @@ func (h *Harness) restartBridge(t *testing.T) {
 		FossilURL:     h.fossilURL,
 		ProjectCode:   "sim-project",
 		SubjectPrefix: "fossil",
+		Buggify:       h.buggify,
 	})
 	if err != nil {
 		t.Logf("bridge restart new: %v", err)
@@ -265,6 +272,7 @@ func (h *Harness) restartLeaf(target string, t *testing.T) {
 		Pull:          true,
 		PollInterval:  2 * time.Second,
 		SubjectPrefix: "fossil",
+		Buggify:       h.buggify,
 	})
 	if err != nil {
 		t.Logf("leaf-%d restart new: %v", idx, err)
@@ -288,6 +296,9 @@ func (h *Harness) NATSUrl() string { return h.natsURL }
 
 // FossilURL returns the Fossil HTTP server URL.
 func (h *Harness) FossilURL() string { return h.fossilURL }
+
+// Buggify returns the buggify instance for test logging.
+func (h *Harness) Buggify() *Buggify { return h.buggify }
 
 // freePort asks the OS for an available TCP port.
 func freePort() (int, error) {
