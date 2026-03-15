@@ -3,7 +3,11 @@ package sim
 import (
 	"math/rand"
 	"sync"
+
+	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
 )
+
+var _ libsync.BuggifyChecker = (*Buggify)(nil)
 
 // AllSites lists all BUGGIFY site names for enablement decisions.
 var AllSites = []string{
