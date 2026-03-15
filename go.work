@@ -1,0 +1,8 @@
+go 1.25.4
+
+use (
+	./bridge
+	./dst
+	./go-libfossil
+	./leaf
+)

@@ -1,0 +1,224 @@
+package db
+
+import (
+	"fmt"
+	"os/exec"
+	"path/filepath"
+	"testing"
+
+	"github.com/dmestas/edgesync/go-libfossil/simio"
+)
+
+func TestOpenClose(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer d.Close()
+
+	var result int
+	err = d.QueryRow("SELECT 1+1").Scan(&result)
+	if err != nil {
+		t.Fatalf("QueryRow: %v", err)
+	}
+	if result != 2 {
+		t.Fatalf("got %d, want 2", result)
+	}
+}
+
+func TestExec(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer d.Close()
+
+	_, err = d.Exec("CREATE TABLE test(id INTEGER PRIMARY KEY, val TEXT)")
+	if err != nil {
+		t.Fatalf("Exec CREATE: %v", err)
+	}
+
+	_, err = d.Exec("INSERT INTO test(val) VALUES(?)", "hello")
+	if err != nil {
+		t.Fatalf("Exec INSERT: %v", err)
+	}
+
+	var val string
+	err = d.QueryRow("SELECT val FROM test WHERE id=1").Scan(&val)
+	if err != nil {
+		t.Fatalf("QueryRow: %v", err)
+	}
+	if val != "hello" {
+		t.Fatalf("val = %q, want %q", val, "hello")
+	}
+}
+
+func TestApplicationID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer d.Close()
+
+	err = d.SetApplicationID(252006673)
+	if err != nil {
+		t.Fatalf("SetApplicationID: %v", err)
+	}
+
+	id, err := d.ApplicationID()
+	if err != nil {
+		t.Fatalf("ApplicationID: %v", err)
+	}
+	if id != 252006673 {
+		t.Fatalf("application_id = %d, want 252006673", id)
+	}
+}
+
+func TestTransaction(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer d.Close()
+
+	d.Exec("CREATE TABLE test(id INTEGER PRIMARY KEY, val TEXT)")
+
+	// Commit case
+	err = d.WithTx(func(tx *Tx) error {
+		_, err := tx.Exec("INSERT INTO test(val) VALUES(?)", "committed")
+		return err
+	})
+	if err != nil {
+		t.Fatalf("WithTx commit: %v", err)
+	}
+
+	var count int
+	d.QueryRow("SELECT count(*) FROM test").Scan(&count)
+	if count != 1 {
+		t.Fatalf("count after commit = %d, want 1", count)
+	}
+
+	// Rollback case
+	err = d.WithTx(func(tx *Tx) error {
+		tx.Exec("INSERT INTO test(val) VALUES(?)", "rolled-back")
+		return fmt.Errorf("deliberate error")
+	})
+	if err == nil {
+		t.Fatal("WithTx should return error")
+	}
+
+	d.QueryRow("SELECT count(*) FROM test").Scan(&count)
+	if count != 1 {
+		t.Fatalf("count after rollback = %d, want 1", count)
+	}
+}
+
+func TestCreateRepoSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.fossil")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer d.Close()
+
+	err = CreateRepoSchema(d)
+	if err != nil {
+		t.Fatalf("CreateRepoSchema: %v", err)
+	}
+
+	// Verify repo1 (static) tables exist
+	repo1Tables := []string{"blob", "delta", "rcvfrom", "user", "config", "shun", "private", "reportfmt", "concealed"}
+	for _, table := range repo1Tables {
+		var name string
+		err := d.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name)
+		if err != nil {
+			t.Errorf("repo1 table %q not found: %v", table, err)
+		}
+	}
+
+	// Verify repo2 (transient) tables exist
+	repo2Tables := []string{"filename", "mlink", "plink", "leaf", "event", "phantom", "orphan", "unclustered", "unsent", "tag", "tagxref", "backlink", "attachment", "cherrypick"}
+	for _, table := range repo2Tables {
+		var name string
+		err := d.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name)
+		if err != nil {
+			t.Errorf("repo2 table %q not found: %v", table, err)
+		}
+	}
+
+	// Verify application_id
+	id, err := d.ApplicationID()
+	if err != nil {
+		t.Fatalf("ApplicationID: %v", err)
+	}
+	if id != 252006673 {
+		t.Fatalf("application_id = %d, want 252006673", id)
+	}
+
+	// Verify seed rcvfrom row
+	var rcvid int
+	err = d.QueryRow("SELECT rcvid FROM rcvfrom WHERE rcvid=1").Scan(&rcvid)
+	if err != nil {
+		t.Fatalf("seed rcvfrom row missing: %v", err)
+	}
+
+	// Verify seed tag rows (1-11)
+	var tagCount int
+	err = d.QueryRow("SELECT count(*) FROM tag").Scan(&tagCount)
+	if err != nil {
+		t.Fatalf("tag count: %v", err)
+	}
+	if tagCount != 11 {
+		t.Fatalf("tag count = %d, want 11", tagCount)
+	}
+
+	// Verify specific seed tags
+	var tagName string
+	err = d.QueryRow("SELECT tagname FROM tag WHERE tagid=8").Scan(&tagName)
+	if err != nil {
+		t.Fatalf("tag 8: %v", err)
+	}
+	if tagName != "branch" {
+		t.Fatalf("tag 8 name = %q, want %q", tagName, "branch")
+	}
+}
+
+func TestCreateRepoSchema_FossilValidation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping fossil CLI validation in short mode")
+	}
+
+	path := filepath.Join(t.TempDir(), "test.fossil")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	err = CreateRepoSchema(d)
+	if err != nil {
+		t.Fatalf("CreateRepoSchema: %v", err)
+	}
+
+	err = SeedConfig(d, simio.CryptoRand{})
+	if err != nil {
+		t.Fatalf("SeedConfig: %v", err)
+	}
+
+	err = SeedUser(d, "testuser")
+	if err != nil {
+		t.Fatalf("SeedUser: %v", err)
+	}
+
+	d.Close()
+
+	// fossil rebuild should pass on Go-created schema
+	cmd := exec.Command("fossil", "rebuild", path)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fossil rebuild failed: %v\n%s", err, out)
+	}
+}
