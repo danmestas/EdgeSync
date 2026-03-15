@@ -2,113 +2,31 @@ package sim
 
 import (
 	"fmt"
-	"math/rand"
 	"os/exec"
 	"testing"
 	"time"
-
-	"github.com/dmestas/edgesync/go-libfossil/repo"
 )
-
-func TestSimulationWithFaults(t *testing.T) {
-	if !hasFossil() {
-		t.Skip("fossil not found")
-	}
-	if testing.Short() {
-		t.Skip("skipping simulation in short mode")
-	}
-
-	cfg := SimConfig{
-		Seed:           *flagSeed,
-		NumLeaves:      *flagLeaves,
-		BlobsPerLeaf:   3,
-		MaxBlobSize:    1024,
-		FaultDuration:  10 * time.Second,
-		QuiesceTimeout: 30 * time.Second,
-		Severity:       ParseLevel(*flagSeverity),
-	}
-
-	h := NewHarness(cfg)
-	if err := h.SetupInfra(); err != nil {
-		t.Fatalf("SetupInfra: %v", err)
-	}
-	defer func() {
-		h.Config.KeepOnFailure = t.Failed()
-		h.Teardown()
-	}()
-
-	rng := rand.New(rand.NewSource(cfg.Seed))
-	for i, path := range h.LeafPaths() {
-		r, err := repo.Open(path)
-		if err != nil {
-			t.Fatalf("open leaf-%d: %v", i, err)
-		}
-		_, err = SeedLeaf(r, rng, cfg.BlobsPerLeaf, cfg.MaxBlobSize)
-		r.Close()
-		if err != nil {
-			t.Fatalf("seed leaf-%d: %v", i, err)
-		}
-	}
-
-	if err := h.StartAgents(); err != nil {
-		t.Fatalf("StartAgents: %v", err)
-	}
-
-	schedule := GenerateSchedule(cfg.Seed, cfg.Severity, cfg.FaultDuration, cfg.NumLeaves)
-	t.Logf("Fault schedule:\n%s", schedule)
-
-	h.ExecuteSchedule(schedule, t)
-
-	t.Log("Quiescing...")
-	time.Sleep(cfg.QuiesceTimeout)
-
-	for _, a := range h.leaves {
-		a.Stop()
-	}
-	h.bridge.Stop()
-
-	var repos []*repo.Repo
-	var labels []string
-	sr, err := repo.Open(h.FossilRepoPath())
-	if err != nil {
-		t.Fatalf("open server: %v", err)
-	}
-	defer sr.Close()
-	repos = append(repos, sr)
-	labels = append(labels, "server")
-	for i, path := range h.LeafPaths() {
-		r, err := repo.Open(path)
-		if err != nil {
-			t.Fatalf("open leaf-%d: %v", i, err)
-		}
-		defer r.Close()
-		repos = append(repos, r)
-		labels = append(labels, fmt.Sprintf("leaf-%d", i))
-	}
-
-	report := &SimReport{
-		Seed:      cfg.Seed,
-		Severity:  cfg.Severity,
-		NumLeaves: cfg.NumLeaves,
-		Schedule:  schedule,
-		Invariants: []InvariantResult{
-			CheckBlobConvergence(repos, labels),
-			CheckContentIntegrity(repos, labels),
-			CheckNoDuplicates(repos, labels),
-		},
-	}
-	t.Log(report)
-	if report.Failed() {
-		t.Fail()
-	}
-}
 
 func hasFossil() bool {
 	_, err := exec.LookPath("fossil")
 	return err == nil
 }
 
-func TestSimulationCleanSync(t *testing.T) {
+func parseSeeds() []int64 {
+	if *flagSeeds != "" {
+		var lo, hi int64
+		if _, err := fmt.Sscanf(*flagSeeds, "%d-%d", &lo, &hi); err == nil && hi >= lo {
+			seeds := make([]int64, 0, hi-lo+1)
+			for s := lo; s <= hi; s++ {
+				seeds = append(seeds, s)
+			}
+			return seeds
+		}
+	}
+	return []int64{*flagSeed}
+}
+
+func TestSimulation(t *testing.T) {
 	if !hasFossil() {
 		t.Skip("fossil binary not found in PATH")
 	}
@@ -116,93 +34,35 @@ func TestSimulationCleanSync(t *testing.T) {
 		t.Skip("skipping simulation in short mode")
 	}
 
-	cfg := SimConfig{
-		Seed:           *flagSeed,
-		NumLeaves:      *flagLeaves,
-		BlobsPerLeaf:   3,
-		MaxBlobSize:    1024,
-		QuiesceTimeout: 30 * time.Second,
-		Severity:       LevelNormal,
-		KeepOnFailure:  true,
-	}
+	seeds := parseSeeds()
+	for _, seed := range seeds {
+		seed := seed
+		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
+			t.Parallel()
 
-	h := NewHarness(cfg)
-	if err := h.SetupInfra(); err != nil {
-		t.Fatalf("SetupInfra: %v", err)
-	}
-	defer func() {
-		h.Config.KeepOnFailure = t.Failed()
-		h.Teardown()
-		if t.Failed() && h.tmpDir != "" {
-			t.Logf("Temp dir preserved: %s", h.tmpDir)
-		}
-	}()
+			cfg := SimConfig{
+				Seed:           seed,
+				NumLeaves:      *flagLeaves,
+				BlobsPerLeaf:   5,
+				MaxBlobSize:    4096,
+				Severity:       ParseLevel(*flagSeverity),
+				FaultDuration:  20 * time.Second,
+				QuiesceTimeout: 60 * time.Second,
+			}
+			if testing.Short() {
+				cfg.FaultDuration = 5 * time.Second
+				cfg.QuiesceTimeout = 15 * time.Second
+				cfg.BlobsPerLeaf = 2
+			}
 
-	// Seed blobs into each leaf repo BEFORE starting agents.
-	rng := rand.New(rand.NewSource(cfg.Seed))
-	var allSeeded []SeedResult
-	for i, path := range h.LeafPaths() {
-		r, err := repo.Open(path)
-		if err != nil {
-			t.Fatalf("open leaf-%d for seeding: %v", i, err)
-		}
-		uuids, err := SeedLeaf(r, rng, cfg.BlobsPerLeaf, cfg.MaxBlobSize)
-		r.Close()
-		if err != nil {
-			t.Fatalf("seed leaf-%d: %v", i, err)
-		}
-		allSeeded = append(allSeeded, SeedResult{LeafIndex: i, UUIDs: uuids})
-		t.Logf("Seeded %d blobs into leaf-%d", len(uuids), i)
-	}
-
-	// Start agents (leaves will push seeded blobs, pull from server).
-	if err := h.StartAgents(); err != nil {
-		t.Fatalf("StartAgents: %v", err)
-	}
-
-	// Wait for quiescence.
-	time.Sleep(cfg.QuiesceTimeout)
-
-	// Stop leaves and bridge before invariant checking.
-	for _, a := range h.leaves {
-		a.Stop()
-	}
-	h.bridge.Stop()
-
-	// Reopen repos for invariant checking.
-	var repos []*repo.Repo
-	var labels []string
-
-	sr, err := repo.Open(h.FossilRepoPath())
-	if err != nil {
-		t.Fatalf("reopen server repo: %v", err)
-	}
-	defer sr.Close()
-	repos = append(repos, sr)
-	labels = append(labels, "server")
-
-	for i, path := range h.LeafPaths() {
-		r, err := repo.Open(path)
-		if err != nil {
-			t.Fatalf("reopen leaf-%d repo: %v", i, err)
-		}
-		defer r.Close()
-		repos = append(repos, r)
-		labels = append(labels, fmt.Sprintf("leaf-%d", i))
-	}
-
-	// Check invariants.
-	results := []InvariantResult{
-		CheckBlobConvergence(repos, labels),
-		CheckContentIntegrity(repos, labels),
-		CheckNoDuplicates(repos, labels),
-	}
-
-	for _, r := range results {
-		if r.Passed {
-			t.Logf("PASS: %s — %s", r.Name, r.Details)
-		} else {
-			t.Errorf("FAIL: %s\n%s", r.Name, r.Details)
-		}
+			report, err := RunSimulation(cfg)
+			if err != nil {
+				t.Fatalf("RunSimulation: %v", err)
+			}
+			t.Log(report)
+			if report.Failed() {
+				t.Fail()
+			}
+		})
 	}
 }
