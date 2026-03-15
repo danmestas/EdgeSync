@@ -2,6 +2,7 @@ package sim
 
 import (
 	"fmt"
+	"math/rand"
 	"net"
 	"os"
 	"os/exec"
@@ -40,6 +41,110 @@ type Harness struct {
 func NewHarness(cfg SimConfig) *Harness {
 	cfg.applyDefaults()
 	return &Harness{Config: cfg}
+}
+
+// RunSimulation executes a full simulation run and returns the report.
+// Returns an error for infrastructure failures (setup, etc).
+// Invariant failures are reported in SimReport, not as errors.
+func RunSimulation(cfg SimConfig) (*SimReport, error) {
+	cfg.applyDefaults()
+	h := NewHarness(cfg)
+	if err := h.SetupInfra(); err != nil {
+		return nil, fmt.Errorf("setup infra: %w", err)
+	}
+	defer h.Teardown()
+
+	// Seed blobs into leaf repos.
+	rng := rand.New(rand.NewSource(cfg.Seed))
+	for i, path := range h.LeafPaths() {
+		r, err := repo.Open(path)
+		if err != nil {
+			return nil, fmt.Errorf("open leaf-%d for seeding: %w", i, err)
+		}
+		_, err = SeedLeaf(r, rng, cfg.BlobsPerLeaf, cfg.MaxBlobSize)
+		r.Close()
+		if err != nil {
+			return nil, fmt.Errorf("seed leaf-%d: %w", i, err)
+		}
+	}
+
+	if err := h.StartAgents(); err != nil {
+		return nil, fmt.Errorf("start agents: %w", err)
+	}
+
+	// Generate and execute fault schedule.
+	schedule := GenerateSchedule(cfg.Seed, cfg.Severity, cfg.FaultDuration, cfg.NumLeaves)
+
+	if len(schedule.Events) > 0 {
+		start := time.Now()
+		for _, ev := range schedule.Events {
+			delay := ev.Time - time.Since(start)
+			if delay > 0 {
+				time.Sleep(delay)
+			}
+			switch ev.Type {
+			case FaultPartition:
+				h.proxy.Partition(ev.Target)
+			case FaultHealPartition:
+				h.proxy.Heal(ev.Target)
+			case FaultLatency:
+				h.proxy.SetLatency(ev.Param)
+			case FaultHealLatency:
+				h.proxy.SetLatency(0)
+			case FaultDropConns:
+				h.proxy.DropConnections()
+			case FaultHealAll:
+				h.proxy.HealAll()
+				h.proxy.SetLatency(0)
+			// Note: bridge/leaf restart not supported in headless mode
+			}
+		}
+	}
+
+	// Quiesce.
+	time.Sleep(cfg.QuiesceTimeout)
+
+	// Stop agents.
+	for _, a := range h.leaves {
+		a.Stop()
+	}
+	h.bridge.Stop()
+
+	// Check invariants.
+	var repos []*repo.Repo
+	var labels []string
+
+	sr, err := repo.Open(h.FossilRepoPath())
+	if err != nil {
+		return nil, fmt.Errorf("open server repo: %w", err)
+	}
+	defer sr.Close()
+	repos = append(repos, sr)
+	labels = append(labels, "server")
+
+	for i, path := range h.LeafPaths() {
+		r, err := repo.Open(path)
+		if err != nil {
+			return nil, fmt.Errorf("reopen leaf-%d: %w", i, err)
+		}
+		defer r.Close()
+		repos = append(repos, r)
+		labels = append(labels, fmt.Sprintf("leaf-%d", i))
+	}
+
+	report := &SimReport{
+		Seed:      cfg.Seed,
+		Severity:  cfg.Severity,
+		NumLeaves: cfg.NumLeaves,
+		Schedule:  schedule,
+		Invariants: []InvariantResult{
+			CheckBlobConvergence(repos, labels),
+			CheckContentIntegrity(repos, labels),
+			CheckNoDuplicates(repos, labels),
+		},
+	}
+
+	return report, nil
 }
 
 // SetupInfra creates the temp directory, starts a Fossil server process,
