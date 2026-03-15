@@ -18,13 +18,20 @@ const (
 	MaxGimmeBase = 200
 )
 
+// BuggifyChecker is an optional fault injection interface.
+// Pass nil in production — implementations should be nil-safe.
+type BuggifyChecker interface {
+	Check(site string, probability float64) bool
+}
+
 // SyncOpts configures a sync session.
 type SyncOpts struct {
 	Push, Pull              bool
 	ProjectCode, ServerCode string
 	User, Password          string
 	MaxSend                 int
-	Env                     *simio.Env // nil defaults to RealEnv
+	Env                     *simio.Env        // nil defaults to RealEnv
+	Buggify                 BuggifyChecker    // nil in production
 }
 
 // SyncResult reports what happened during a sync.
