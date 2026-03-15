@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"testing"
 	"time"
 
 	natsserver "github.com/nats-io/nats-server/v2/server"
@@ -27,9 +29,7 @@ type Harness struct {
 	fossilRepo string
 	nats       *natsserver.Server
 	natsURL    string
-	// proxy is nil until Phase 2 fault injection is wired in.
-	// TODO: add after proxy.go exists
-	// proxy *FaultProxy
+	proxy *FaultProxy
 	bridge    *bridge.Bridge
 	leaves    []*agent.Agent
 	leafPaths []string
@@ -91,6 +91,13 @@ func (h *Harness) SetupInfra() error {
 	}
 	h.natsURL = h.nats.ClientURL()
 
+	// Fault injection proxy between leaves and NATS.
+	natsHost := strings.TrimPrefix(h.natsURL, "nats://")
+	h.proxy, err = NewFaultProxy(natsHost)
+	if err != nil {
+		return fmt.Errorf("sim: fault proxy: %w", err)
+	}
+
 	// Create leaf repos with deterministic RNG.
 	rng := simio.NewSeededRand(h.Config.Seed)
 	for i := range h.Config.NumLeaves {
@@ -130,10 +137,9 @@ func (h *Harness) StartAgents() error {
 	}
 
 	natsTarget := h.natsURL
-	// TODO: add after proxy.go exists
-	// if h.proxy != nil {
-	// 	natsTarget = h.proxy.URL()
-	// }
+	if h.proxy != nil {
+		natsTarget = h.proxy.URL()
+	}
 	for i, repoPath := range h.leafPaths {
 		a, err := agent.New(agent.Config{
 			RepoPath:      repoPath,
@@ -167,10 +173,9 @@ func (h *Harness) Teardown() error {
 	if h.bridge != nil {
 		h.bridge.Stop()
 	}
-	// TODO: add after proxy.go exists
-	// if h.proxy != nil {
-	// 	h.proxy.Close()
-	// }
+	if h.proxy != nil {
+		h.proxy.Close()
+	}
 	if h.nats != nil {
 		h.nats.Shutdown()
 	}
@@ -182,6 +187,94 @@ func (h *Harness) Teardown() error {
 		os.RemoveAll(h.tmpDir)
 	}
 	return nil
+}
+
+// ExecuteSchedule replays a fault schedule against the harness, sleeping
+// between events so they fire at approximately the correct offsets.
+func (h *Harness) ExecuteSchedule(schedule *FaultSchedule, t *testing.T) {
+	start := time.Now()
+	for _, ev := range schedule.Events {
+		delay := ev.Time - time.Since(start)
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+		t.Logf("FAULT: %s", ev)
+		switch ev.Type {
+		case FaultPartition:
+			h.proxy.Partition(ev.Target)
+		case FaultHealPartition:
+			h.proxy.Heal(ev.Target)
+		case FaultLatency:
+			h.proxy.SetLatency(ev.Param)
+		case FaultHealLatency:
+			h.proxy.SetLatency(0)
+		case FaultDropConns:
+			h.proxy.DropConnections()
+		case FaultBridgeRestart:
+			h.restartBridge(t)
+		case FaultLeafRestart:
+			h.restartLeaf(ev.Target, t)
+		case FaultHealAll:
+			h.proxy.HealAll()
+			h.proxy.SetLatency(0)
+		}
+	}
+}
+
+func (h *Harness) restartBridge(t *testing.T) {
+	t.Helper()
+	if err := h.bridge.Stop(); err != nil {
+		t.Logf("bridge stop: %v", err)
+	}
+	var err error
+	h.bridge, err = bridge.New(bridge.Config{
+		NATSUrl:       h.natsURL,
+		FossilURL:     h.fossilURL,
+		ProjectCode:   "sim-project",
+		SubjectPrefix: "fossil",
+	})
+	if err != nil {
+		t.Logf("bridge restart new: %v", err)
+		return
+	}
+	if err := h.bridge.Start(); err != nil {
+		t.Logf("bridge restart start: %v", err)
+	}
+}
+
+func (h *Harness) restartLeaf(target string, t *testing.T) {
+	t.Helper()
+	var idx int
+	fmt.Sscanf(target, "leaf-%d", &idx)
+	if idx < 0 || idx >= len(h.leaves) {
+		t.Logf("restartLeaf: invalid target %s", target)
+		return
+	}
+	if err := h.leaves[idx].Stop(); err != nil {
+		t.Logf("leaf-%d stop: %v", idx, err)
+	}
+	natsTarget := h.natsURL
+	if h.proxy != nil {
+		natsTarget = h.proxy.URL()
+	}
+	a, err := agent.New(agent.Config{
+		RepoPath:      h.leafPaths[idx],
+		NATSUrl:       natsTarget,
+		User:          "simuser",
+		Push:          true,
+		Pull:          true,
+		PollInterval:  2 * time.Second,
+		SubjectPrefix: "fossil",
+	})
+	if err != nil {
+		t.Logf("leaf-%d restart new: %v", idx, err)
+		return
+	}
+	if err := a.Start(); err != nil {
+		t.Logf("leaf-%d restart start: %v", idx, err)
+		return
+	}
+	h.leaves[idx] = a
 }
 
 // FossilRepoPath returns the path to the server's Fossil repository.
