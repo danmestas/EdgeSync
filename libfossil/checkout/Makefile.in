@@ -1,0 +1,471 @@
+#!/usr/bin/make # help out emacs
+#
+# Top-level autosetup-filtered makefile for libfossil. This particular
+# build is for Unix-ish platforms with POSIX-compatible Make (GNU
+# make, BSD make).
+.POSIX:
+all:
+SHELL.bash = @BIN_BASH@
+PACKAGE_VERSION = @FSL_LIBRARY_VERSION@
+
+DIR.top = @top_srcdir@
+#DIR.top.abs = @abs_top_srcdir@
+DIR.build = @builddir@
+#DIR.build.abs @abs_top_builddir@
+DIR.src = $(DIR.top)/src
+DIR.sql = $(DIR.top)/sql
+DIR.f-apps = $(DIR.top)/f-apps
+DIR.extsrc = $(DIR.top)/extsrc
+DIR.tools = $(DIR.top)/tools
+DIR.client = $(DIR.top)/client
+DIR.bout = bld
+DIR.outdep = $(DIR.bout)/.mkdir
+DIR.bindings = $(DIR.top)/bindings
+CLEAN.extra =
+# Autotools-conventional dirs...
+prefix      = @prefix@
+datadir     = @datadir@
+mandir      = @mandir@
+includedir  = @includedir@
+exec_prefix = @exec_prefix@
+bindir      = @bindir@
+libdir      = @libdir@
+
+$(DIR.outdep):
+	mkdir -p $(DIR.bout)
+	touch $@
+
+CFLAGS.compile_commands =
+
+T.dll = @TARGET_DLLEXT@
+T.lib = @TARGET_LIBEXT@
+T.exe = @TARGET_EXEEXT@
+
+#CFLAGS.warn = @F_WALL@ @F_WERROR@
+CFLAGS.configure = @CFLAGS@ # $(CFLAGS.warn)
+CFLAGS.core = $(CFLAGS.configure)
+CXXFLAGS.core = @SH_CFLAGS@
+LDFLAGS.shlib = @SH_LDFLAGS@
+LDFLAGS.core = @F_PIC@
+LDFLAGS.curses = @LDFLAGS_CURSES@
+CFLAGS.curses = @CFLAGS_CURSES@
+LDFLAGS.libbsd = @LDFLAGS_LIBBSD@
+LDFLAGS.rpath = @LDFLAGS_RPATH@
+LDFLAGS.iconv = @LDFLAGS_ICONV@
+LDFLAGS.math = -lm
+LDFLAGS.zlib = -lz
+# ^^^ fixme: bring -lm/-lz in from configure flags
+# $(LDFLAGS.configure) represents any LDFLAGS=... the client passes to
+# configure. See main.mk.
+#
+LDFLAGS.configure = @LDFLAGS@
+#
+# Flags for generating .d files during compilation.
+#
+CFLAGS.dotd = @F_CC_DOT_D@
+CXXFLAGS.dotd = @F_CXX_DOT_D@
+
+CFLAGS.sqlite3 = @CFLAGS_sqlite3@
+CPPFLAGS.sqlite3 = @CPPFLAGS_sqlite3@
+LDFLAGS.sqlite3 = @LDFLAGS_sqlite3@
+
+CFLAGS.libfossil = $(CFLAGS.core) -I$(DIR.top)/include \
+  $(CFLAGS.compile_commands) $(CFLAGS.sqlite3)
+# Reminder: adding -I$(DIR.extsrc) can cause us to pick a local
+# sqlite3.h when we should be using an external one.
+LDFLAGS.libfossil.external = \
+  $(LDFLAGS.zlib) $(LDFLAGS.math) $(LDFLAGS.sqlite3)
+# ^^^ todo/fixme: when building against a separate libsqlite, add it
+# to $(LDFLAGS.libfossil.external)
+LDFLAGS.libfossil = \
+  $(LDFLAGS.core) $(LDFLAGS.rpath) \
+  $(LDFLAGS.iconv) $(LDFLAGS.libfossil.external) $(LDFLAGS.configure)
+LDFLAGS.libfossil.soname = @LDFLAGS_SONAME@
+LDFLAGS.libfossil.os-specific = \
+  @LDFLAGS_OUT_IMPLIB@
+
+INSTALL        = @BIN_INSTALL@
+INSTALL.noexec = $(INSTALL) -m 0644
+AR       ?= @AR@
+AR.flags ?= cr
+
+# B.cc = C compiler for the build platform
+B.cc = @CC_FOR_BUILD@
+# T.cc = C compiler for target platform
+T.cc = @CC@
+T.link = $(T.cc)
+T.link.shared = $(T.link) $(LDFLAGS.shlib)
+
+DEPS.common = Makefile $(DIR.outdep)
+
+#
+# $(bin.text2c) is a small tool to convert arbitrary files to C byte
+# arrays. We use (mostly) it to compile in the SQL schema from its SQL
+# sources.
+#
+bin.text2c = ./text2c$(T.exe)
+$(bin.text2c): $(DIR.tools)/text2c.c
+	$(B.cc) -o $@ $(DIR.tools)/text2c.c
+
+# All source files which make up $(libfossil.dll/lib)
+libfossil.src = @LIBFOSSIL_SRC@
+# All of the non-amalgamation headers from include include/fossil-scm
+libfossil.headers = @LIBFOSSIL_HEADERS@
+
+# All object files which make up $(libfossil.dll/lib)
+libfossil.obj = @LIBFOSSIL_OBJ@
+
+########################################################################
+# <Library Objects>
+# Compiler invocation for one core library source file
+CC.libfossil.o = $(T.cc) $(CFLAGS.libfossil) -c -o $@ $(CFLAGS.dotd)
+@RULES_LIBFOSSIL_OBJ@
+# </Library Objects>
+########################################################################
+
+#
+# $(install-dir.XYZ) = dirs for installation.
+#
+# Design note: these should arguably all be defined with surrounding
+# double-quotes so that targets which have spaces in their paths will
+# work, but that leads to Make treating the quotes as part of the dir
+# name, which in turn leads to it never finding a matching name in the
+# filesystem and always invoking ($(INSTALL) -d ...) for them. The
+# moral of this story is that spaces in installation paths will break
+# the install process.
+#
+install-dir.bin = $(DESTDIR)$(bindir)
+install-dir.lib = $(DESTDIR)$(libdir)
+install-dir.include = $(DESTDIR)$(includedir)/fossil-scm
+#install-dir.pkgconfig = $(DESTDIR)$(libdir)/pkgconfig
+#install-dir.man1 = $(DESTDIR)$(mandir)/man1
+install-dir.all = $(install-dir.bin) $(install-dir.include) \
+  $(install-dir.lib) $(install-dir.man1) \
+  $(install-dir.pkgconfig)
+$(install-dir.all):
+	@if [ ! -d "$@" ]; then set -x; $(INSTALL) -d "$@"; fi
+# ^^^^ on some platforms, install -d fails if the target already exists.
+
+########################################################################
+# <libraries>
+libfossil.dll.basename = @fossil_DLL_BASENAME@
+libfossil.dll = $(libfossil.dll.basename)$(T.dll)
+libfossil.lib = $(libfossil.dll.basename)$(T.lib)
+
+$(libfossil.dll): $(libfossil.obj)
+	$(T.link.shared) -o $@ $(libfossil.obj) \
+		$(LDFLAGS.libfossil) \
+		$(LDFLAGS.libfossil.os-specific) \
+		$(LDFLAGS.libfossil.soname)
+$(libfossil.lib): $(libfossil.obj)
+	$(AR) $(AR.flags) $@ $(libfossil.obj)
+
+libfossil.enable.shared = @LIBFOSSIL_SHARED@
+libfossil.enable.static = @LIBFOSSIL_STATIC@
+libfossil-dll-1: $(libfossil.dll)
+libfossil-dll-0:
+all: libfossil-dll-$(libfossil.enable.shared)
+libfossil-lib-1: $(libfossil.lib)
+libfossil-lib-0:
+all: libfossil-lib-$(libfossil.enable.static)
+dll: libfossil-dll-1
+lib: libfossil-lib-1
+libfossil.dll.install-rules = @LIBFOSSIL_DLL_INSTALL_RULES@
+
+#
+# Install $(libfossil.dll)...
+#
+libfossil.out.implib = @fossil_OUT_IMPLIB@
+install-dll-out-implib: $(libfossil.dll) $(install-dir.lib)
+	@if [ x != "x$(libfossil.out.implib)" ] && [ -f "$(libfossil.out.implib)" ]; then \
+		set -x; $(INSTALL.noexec) $(libfossil.out.implib) "$(install-dir.lib)"; \
+	fi
+
+libfossil.dll.version = 0
+install-dll-unix-generic: install-dll-out-implib
+	$(INSTALL) $(libfossil.dll) "$(install-dir.lib)"
+	@echo "Setting up $(libfossil.dll) version symlinks..."; \
+	cd "$(install-dir.lib)" || exit $$?; \
+	rm -f $(libfossil.dll).$(libfossil.dll.version) $(libfossil.dll).$(PACKAGE_VERSION) || exit $$?; \
+	mv $(libfossil.dll) $(libfossil.dll).$(PACKAGE_VERSION) || exit $$?; \
+	ln -s $(libfossil.dll).$(PACKAGE_VERSION) $(libfossil.dll) || exit $$?; \
+	ln -s $(libfossil.dll).$(PACKAGE_VERSION) $(libfossil.dll).$(libfossil.dll.version) || exit $$?; \
+	ls -la $(libfossil.dll)*
+
+install-dll-msys: install-dll-out-implib $(install-dir.bin)
+	$(INSTALL) $(libfossil.dll) "$(install-dir.bin)"
+# -------------------------------------------^^^ yes, bin
+install-dll-mingw:  install-dll-msys
+install-dll-cygwin: install-dll-msys
+
+install-dll-darwin: $(install-dir.lib) $(libfossil.dll)
+	$(INSTALL) $(libfossil.dll) "$(install-dir.lib)"
+	@echo "Setting up $(libfossil.dll) version symlinks..."; \
+	cd "$(install-dir.lib)" || exit $$?; \
+	rm -f libfossil.$(libfossil.dll.version)$(T.dll) libfossil.$(PACKAGE_VERSION)$(T.dll) || exit $$?; \
+	dllname=libfossil.$(PACKAGE_VERSION)$(T.dll); \
+	mv $(libfossil.dll) $$dllname || exit $$?; \
+	ln -s $$dllname $(libfossil.dll) || exit $$?; \
+	ln -s $$dllname libfossil.$(libfossil.dll.version)$(T.dll) || exit $$?; \
+	ls -la $$dllname $(libfossil.dll) libfossil.$(libfossil.dll.version)$(T.dll)
+
+install-dll-1: install-dll-$(libfossil.dll.install-rules)
+install-dll-0 install-dll-:
+install-dll: install-dll-$(libfossil.enable.shared)
+install: install-dll
+
+#
+# Install $(libfossil.lib)
+#
+install-lib-1: $(install-dir.lib) $(libfossil.lib)
+	$(INSTALL.noexec) $(libfossil.lib) "$(install-dir.lib)"
+install-lib-0 install-lib-:
+install-lib: install-lib-$(libfossil.enable.static)
+install: install-lib
+# </libraries>
+########################################################################
+
+########################################################################
+# <f-apps>
+f-apps.link.libf.static = @FAPPS_LINK_LIBF_STATIC@
+#
+# Deps issue: when f-apps link against the DLL, they need to have the
+# DLL as a depency to ensure that it's built, but it also means
+# they'll be rebuilt as well, which isn't necessarily useful when
+# they're dynamically linking.
+#
+# 1=static, 0=dynamic
+DEPS.f-apps.1      = $(libfossil.lib)
+DEPS.f-apps.0      = $(libfossil.dll)
+DEPS.f-apps        = $(DEPS.f-apps.$(f-apps.link.libf.static))
+LDFLAGS.f-apps.1   = $(libfossil.lib) $(LDFLAGS.libfossil.external)
+LDFLAGS.f-apps.0   = -L. -lfossil $(LDFLAGS.rpath)
+LDFLAGS.f-apps     = $(LDFLAGS.core) $(LDFLAGS.f-apps.$(f-apps.link.libf.static)) \
+                     $(LDFLAGS.sqlite3) @LDFLAGS_FAPPS_STATIC@
+CFLAGS.f-apps      = $(CFLAGS.core) -I$(DIR.top)/include $(CFLAGS.sqlite3) $(CFLAGS.compile_commands)
+CC.f-apps.o        = $(T.cc) -c -o $@ $(CFLAGS.f-apps) $(CFLAGS.dotd)
+T.link.f-apps      = $(T.link) -o $@
+# ^^^^ $(LDFLAGS.f-apps) has to be last in those invocations
+@RULES_FAPPS@
+# </f-apps>
+########################################################################
+
+
+jimsh0$(T.exe): $(DIR.top)/autosetup/jimsh0.c
+	$(CC) -o $@ -DHAVE_REALPATH $(DIR.top)/autosetup/jimsh0.c
+
+jim: jimsh0$(T.exe)
+
+########################################################################
+# <Amalgamation>
+bin.make-amal  = $(DIR.tools)/make-amalgamation.bash
+amal.zip       = libfossil-amalgamation.zip
+amal.deps      = $(bin.make-amal) $(DIR.top)/auto.def Makefile \
+  $(libfossil.src) $(libfossil.headers)
+amal.flags     = -nc
+amal.run       = TOPDIR="$(DIR.top)" $(SHELL.bash) $(bin.make-amal) --quiet
+
+libfossil.c: $(amal.deps)
+	$(amal.run) $(amal.flags)
+libfossil.h: libfossil.c
+all: libfossil.c
+@if ENABLE_CXX
+libfossil.hpp: libfossil.c
+libfossil.c++: libfossil.c
+amal.flags += -c++
+@endif
+
+.PHONY: amal
+amal: libfossil.c
+@if IS_IN_TREE_BUILD
+@if SRCDIR_IS_FOSSIL_CKOUT
+.PHONY: amal-zip amal-uv upload
+amal-zip:
+	$(amal.run) -uv
+amal-uv: amal-zip
+upload: amal-uv
+	fossil uv sync
+@endif
+@endif
+
+install: install-headers
+install-headers: libfossil.h $(install-dir.include)
+	$(INSTALL.noexec) libfossil.h $(install-dir.include)
+@if ENABLE_CXX
+libfossil++.hpp: libfossil.h
+libfossil++.cpp: libfossil++.hpp
+all: libfossil++.cpp
+install-headers: install-headers++
+install-headers++: libfossil++.hpp $(install-dir.include)
+	$(INSTALL.noexec) libfossil++.hpp $(install-dir.include)
+@endif # ENABLE_CXX
+clean: clean-amalgamation
+clean-amalgamation:
+	rm -f libfossil.c libfossil.h libfossil++.cpp libfossil++.hpp
+	rm -f libfossil-config.h libfossil-amalgamation.zip VERSION.h
+# </Amalgamation>
+########################################################################
+
+@if ENABLE_CXX
+########################################################################
+# <C++>
+DIR.cpp       = $(DIR.top)/bindings/cpp
+plus-tester   = ./plus-tester$(T.exe)
+CLEAN.f-apps += $(plus-tester)
+CXXFLAGS.plus = $(CXXFLAGS.core) -I$(DIR.top)/include $(CFLAGS.sqlite3)
+CXX.plus.o    = $(CXX) -c -o $@ $(CXXFLAGS.plus) $(CXXFLAGS.dotd)
+@RULES_PLUS_TESTER@
+plus-tester.obj = @PLUS_TESTER_OBJ@
+$(plus-tester): $(plus-tester.obj) $(DEPS.f-apps)
+	$(CXX) -o $@ $(plus-tester.obj) $(LDFLAGS.f-apps)
+all: $(plus-tester)
+# </C++>
+########################################################################
+@endif # ENABLE_CXX
+
+@if BUILD_CLIENT_FNC
+########################################################################
+# <fnc>
+#
+# To build fnc, we need the curses and pthread libraries, plus:
+#
+# -lz for libfossil
+# -liconv for libfossil on macOS
+# -lutil is... ???
+# -lm for sqlite3
+# -lbsd is needed on _some_ Linux systems
+#
+DIR.fnc = $(DIR.client)/fnc
+bin.fnc = fnc$(T.exe)
+CFLAGS.fnc = @CFLAGS_FNC@ \
+  $(CFLAGS.core) \
+  '-DFNC_VERSION=@FNC_VERSION@' \
+  '-DFNC_HASH=@FNC_HASH@' \
+  '-DFNC_DATE=@FNC_DATE@'
+
+fnc.link.libf.static  = @FNC_LINK_LIBF_STATIC@
+# ^^^ TODO: configurable and default to dynamic
+#fnc.link.libf.static ?= $(f-apps.link.libf.static)
+DEPS.fnc.       = $(libfossil.lib)
+DEPS.fnc.0      = $(libfossil.dll)
+DEPS.fnc        = $(DEPS.fnc.$(fnc.link.libf.static))
+LDFLAGS.fnc.1   = $(LDFLAGS.f-apps.1)
+LDFLAGS.fnc.0   = $(LDFLAGS.f-apps.0)
+LDFLAGS.fnc     = $(LDFLAGS.fnc.$(fnc.link.libf.static)) @LDFLAGS_FNC@
+LDFLAGS.fnc    += @LDFLAGS_FAPPS_STATIC@
+fnc.obj         = @FNC_OBJ@
+$(fnc.obj):  libfossil.c
+# libfossil.c dep is actually for the amalgamation libfossil.h, but
+# they're generated together.
+$(bin.fnc): $(fnc.obj) $(DEPS.fnc)
+	$(T.cc) -o $@ $(fnc.obj) $(LDFLAGS.fnc)
+fnc-0:
+fnc-1: $(bin.fnc)
+all: fnc-@BUILD_CLIENT_FNC@
+
+CC.fnc.o = $(T.cc) -c -o $@ $(CFLAGS.f-apps) $(CFLAGS.fnc) $(CFLAGS.dotd)
+@RULES_FNC@
+clean: clean-fnc
+clean-fnc:
+	rm -f $(bin.fnc)
+# </fnc>
+########################################################################
+@endif # BUILD_CLIENT_FNC
+
+########################################################################
+# <cflags-eflags>
+TAG.dirs = $(DIR.src) $(DIR.include) $(DIR.f-apps) $(DIR.client) $(DIR.bindings)
+# ^^^ don't scan "." because we need to avoid that libfossil[-.]*[ch]
+# to get tagged (it breaks tag navigation during development).
+TAG.find.files = find $(TAG.dirs) -name '*.[ch]' -o -name '*.?pp'
+# TODO: move this list of files into the configure script.
+@if BIN_ETAGS
+BIN.ETAGS = @BIN_ETAGS@
+TAGS.etags.tagfile = $(DIR.build)/TAGS
+$(TAGS.etags.tagfile): Makefile
+	$(BIN.ETAGS) $$($(TAG.find.files))
+etags: $(TAGS.etags.tagfile)
+tags: etags
+all: etags
+CLEAN.extra += $(TAGS.etags.tagfile)
+@endif # BIN_ETAGS
+
+@if BIN_CTAGS
+BIN.CTAGS = @BIN_CTAGS@
+TAGS.ctags.tagfile = $(DIR.build)/tags
+# Reminder: we use $(DIR.build)/tags instead of tags because it
+# otherwise confuses with the dummy tags target.
+$(TAGS.ctags.tagfile): Makefile
+	$(BIN.CTAGS) $$($(TAG.find.files))
+ctags: $(TAGS.ctags.tagfile)
+tags: ctags
+all: ctags
+CLEAN.extra += $(TAGS.ctags.tagfile)
+@endif # BIN_CTAGS
+# </cflags-eflags>
+########################################################################
+
+@if HAVE_COMPILE_COMMANDS
+########################################################################
+# <compile_commands>
+CFLAGS.compile_commands = -MJ $(DIR.bout)/`basename $@`.json
+compile_commands.json: # deps are set up via configure script
+	@rm -f $@
+	@{ echo -n '['; cat $(DIR.bout)/*.o.json | tr '\n' ' ' | sed -e 's/, $$//'; echo ']'; } > $@
+	@echo "Generated $@"
+all: compile_commands.json
+clean: clean-compile_commands
+clean-compile_commands:
+	rm -f compile_commands.json
+# </compile_commands>
+########################################################################
+@endif # HAVE_COMPILE_COMMANDS
+
+@if F_CC_DOT_D
+########################################################################
+# <deps>
+-include $(DIR.bout)/*.d
+# ^^^ bmake does not document the -include syntax but appears to
+# support it. There is apparently no documented "include" syntax with
+# those semantics which is supported by both GNU make and BSD make.
+# </deps>
+########################################################################
+@endif
+
+Makefile: $(DIR.top)/Makefile.in @AUTODEPS@
+	@AUTORECONFIG@
+
+.PHONY: config reconfigure
+config reconfigure:
+	@AUTORECONFIG@
+
+.PHONY: .made
+.made:
+	touch $@
+all: .made
+
+clean:
+	rm -f $(libfossil.dll) $(libfossil.lib) $(libfossil.out.implib) .made
+	rm -f $(CLEAN.f-apps) $(CLEAN.extra)
+	rm -f $(DIR.bout)/*.o
+@if F_CC_DOT_D
+	rm -f $(DIR.bout)/*.d
+@endif
+@if HAVE_COMPILE_COMMANDS
+	rm -f $(DIR.bout)/*.json
+@endif
+
+distclean: clean
+	rm -f config.log config.defines.txt Makefile jimsh0$(T.exe) $(bin.text2c)
+	rm -fr $(DIR.bout)
+	rm -f include/fossil-scm/autoconfig.h
+@if IS_IN_TREE_BUILD
+	rm -f doc/Doxyfile .clangd
+@endif
+@if !IS_IN_TREE_BUILD
+	-rmdir include/fossil-scm include || true
+@endif
+
+@if F_CC_DOT_D
+-include $(DIR.bout)/*.d
+@endif

@@ -1,0 +1,159 @@
+<title>Coding Style</title>
+
+Fossil source code should follow the style guidelines below.
+
+<em> The Fossil source tree includes a few files taken from external
+sources
+(examples: [https://github.com/antirez/linenoise|linenoise] and
+[http://zlib.net/|zLib])
+and this externally sourced code might not comply with these style guidelines.
+</em>
+
+<b>1. General points</b>:
+
+<ol>
+  <li value=10>  No line of code exceeds 80 characters in length.  (Occasional
+       exceptions are made for HTML text on @-lines.)
+
+  <li>  There are no tab characters.
+
+  <li>  Line terminators are \n only.  Do not use a \r\n line terminator.
+
+  <li>  2-space indentation is used.  Remember:  No tabs.
+
+  <li>  Comments contain no spelling or grammatical errors.  (Abbreviations
+       and sentence fragments are acceptable when trying to fit a comment
+       on a single line as long as the meaning is clear.)
+
+  <li>  The tone of comments is professional and courteous.  Comments
+       contain no profanity, obscenity, or innuendo.
+
+  <li>  All C-code conforms to ANSI C-89.
+        Three well-defined existing exceptions are:
+    <ol type="a">
+
+      <li>  -Wno-overlength-strings: The Fossil build system converts (some of the) source code comments
+        into strings, which may exceed the 509 character limit defined by ANSI.
+        (example: bld/page_index.h)
+
+      <li>  -Wno-long-long: Fossil uses the 'long long' integer type, which is not strictly ANSI C-89 (defined in C99).
+        The use of 'long long' resolves many problems with 64-bit arithmetics, especially on 32-bit machines.
+        (http_ssl.c, sha3.c, shell.c, util.c)
+
+      <li>  alloca(): By default, sqlite3.c was compiled with the -DSQLITE_USE_ALLOCA flag to use the alloca() function.
+        This is no longer the case as of 20220119.  alloca() is not considered ANSI C, and normally not
+        recommended due to portability issues, but performance and/or memory consumption
+        improvement may have been a stronger argument in favor of its usage.
+        (sqlite3.c)
+     </ol>
+
+  <li>  All comments and identifiers are in English.
+
+  <li>  The program is single-threaded.  Do not use threads.
+       (One exception to this is the HTTP server implementation for Windows,
+       which we do not know how to implement without the use of threads.)
+
+</ol>
+
+<b>2. C preprocessor macros</b>:
+
+<ol>
+
+  <li value=20>  The purpose of every preprocessor macros is clearly explained in a
+       comment associated with its definition.
+
+  <li>  Every preprocessor macro is used at least once.
+
+  <li>  The names of preprocessor macros clearly reflect their use.
+
+  <li>  Assumptions about the relative values of related macros are
+       verified by asserts.  Example: <tt>assert(READ_LOCK+1==WRITE_LOCK);</tt>
+
+</ol>
+
+
+<b>3. Function header comments</b>:
+
+<ol>
+  <li value=30>  Every function has a header comment describing the purpose and use
+       of the function.
+
+  <li> A function header comment defines the behavior of the function in
+       sufficient detail to allow the function to be re-implemented from
+       scratch without reference to the original code.
+
+  <li>  Functions that perform dynamic memory allocation (either directly
+       or indirectly via subfunctions) say so in their header comments.
+
+</ol>
+
+
+<b>4. Function bodies</b>:
+
+<ol>
+  <li value=40>  The name of a function clearly reflects its purpose.
+
+  <li> Automatic variables are small, not large objects or arrays.  Avoid
+       excessive stack usage.
+
+  <li>  The check-list items for functions also apply to major subsections
+     within a function.
+
+  <li>  All code subblocks are enclosed in {...}.
+
+
+  <li> <b>assert() macros are used as follows</b>:
+    <ol type="a">
+
+  <li>  Function preconditions are clearly stated and verified by asserts.
+
+  <li>  Invariants are identified by asserts.
+    </ol>
+
+</ol>
+
+
+<b>5. Class (struct) declarations</b>:
+
+<ol>
+  <li value=50>  The purpose and use of every class (a.k.a. structure) is clearly defined
+     in the header comment of its declaration.
+
+  <li>  The purpose and use of every class member is clearly defined either
+     in the header comment of the class declaration or when the member is
+     declared or both.
+
+  <li>  The names of class members clearly reflect their use.
+
+  <li>  Invariants for classes are clearly defined.
+
+</ol>
+
+<b>6. Variables and class instances</b>:
+
+<ol>
+  <li value=60>  The purpose and use of every variable is defined by a comment at the
+     variable definition.
+
+  <li>  The names of variables clearly reflect their use.
+
+  <li>  Related variables have related names. (ex: aSavepoint and nSavepoint.)
+
+  <li>  Variables have minimum practical scope.
+
+  <li>  Automatic variables are small, not large objects or arrays.
+
+  <li>  Constants are "const".
+
+  <li>  Invariants on variables or groups of variables are defined and
+     tested by asserts.
+
+  <li>  When a variable that refers to the same value is used within
+     multiple scopes, the same name is used in all cases.
+
+  <li>  When variables refer to different values, different names are used
+     even when the names are in different scopes.
+
+  <li>  Variable names with wide scope are sufficiently distinctive to allow
+     searching for them using grep.
+</ol>

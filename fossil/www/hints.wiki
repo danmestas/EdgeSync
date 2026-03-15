@@ -1,0 +1,74 @@
+<title>Fossil Tips And Usage Hints</title>
+
+A collection of useful hints and tricks in no particular order:
+
+  1.  Click on two nodes of any timeline graph in succession
+      to see a diff between the two versions.
+
+  2.  Add the "--tk" option to "[/help/diff | fossil diff]" commands
+      to get a pop-up
+      window containing a complete side-by-side diff.  (NB:  The pop-up
+      window is run as a separate Tcl/Tk process, so you will need to
+      have Tcl/Tk installed on your machine for this to work.  Visit
+      [http://www.activestate.com/activetcl] for a quick download of
+      Tcl/Tk if you do not already have it on your system.)
+
+  3.  The "[/help/clean | fossil clean -x]" command is a great
+      alternative to "make clean". You can use "[/help/clean | fossil clean -f]"
+      as a slightly safer alternative if the "ignore-glob" setting is
+      not set. WARNING: make sure you did a "fossil add" for all source-files
+      you plan to commit, otherwise those files will be deleted without warning.
+
+  4.  Use "[/help/all | fossil all changes]" to look for any uncommitted
+      edits in any of your Fossil projects.  Use
+      "[/help/all | fossil all pull]" on your laptop
+      prior to going off network (for example, on a long plane ride)
+      to make sure you have all the latest content locally.  Then run
+      "[/help/all|fossil all push]" when you get back online to upload
+      your changes.
+
+  5.  To see an entire timeline, type "all" into the "Max:" entry box.
+
+  6.  You can manually add a "c=CHECKIN" query parameter to the timeline
+      URL to get a snapshot of what was going on about the time of some
+      check-in.  The "CHECKIN" can be
+      [./checkin_names.wiki | any valid check-in or version name], including
+      tags, branch names, and dates.  For example, to see what was going
+      on in the Fossil repository on 2008-01-01, visit
+      [/timeline?c=2008-01-01].
+
+  7.  Further to the previous two hints, there are lots of query parameters
+      that you can add to timeline pages.  The available query parameters
+      are tersely documented [/help/www/timeline | here].
+
+  8.  You can run "[/help/xdiff | fossil xdiff --tk $file1 $file2]"
+      to get a Tk pop-up window with side-by-side diffs of two files, even if
+      neither of the two files is part of any Fossil repository.  Note that
+      this command is "xdiff", not "diff".  Change <nobr>--tk</nobr> to
+      <nobr>--by</nobr> to see the diff in your web browser.
+
+  9.  On web pages showing the content of a file (for example
+      [/artifact/c7dd1de9f]) you can manually
+      add a query parameter of the form "ln=FROM,TO" to the URL that
+      will cause the range of lines indicated to be highlighted.  This
+      is useful in pointing out a few lines of code using a hyperlink
+      in an email or text message.  Example:
+      [/artifact/c7dd1de9f?ln=28,30].
+      Adding the "ln" query parameter without any argument simply turns
+      on line numbers.   This feature only works right with files with
+      a mimetype of text/plain, of course.
+
+  10.  When editing documentation to be checked in as managed files, you can
+       preview what the documentation will look like by using the special
+       "ckout" branch name in the "doc" URL while running "fossil ui".
+       See the [./embeddeddoc.wiki | embedded documentation] for details.
+
+  11.  Use the "[/help/ui|fossil ui /]" command to bring up a menu of
+       all of your local Fossil repositories in your web browser.
+
+  12.  If you have a bunch of Fossil repositories living on a remote machine
+       that you are able to access using ssh using a command like
+       "ssh login@remote", then you can bring up a user interface for all
+       those remote repositories using the command:
+       "[/help/ui|fossil ui login@remote:/]".  This works by tunneling
+       all HTTP traffic through SSH to the remote machine.

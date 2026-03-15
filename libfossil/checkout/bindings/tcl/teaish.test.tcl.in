@@ -1,0 +1,168 @@
+#tclfossil
+#
+# Test code for the libfossil tcl extension.
+#
+# The fossil command object plays 2 roles:
+#
+# First, it acts like a fsl_cx instance. Secondly, it offers access to
+# library-level state and creating new fsl_cx instances.
+#
+# Example:
+#
+#   fossil --new-instance f file|dir
+#   or: set f [fossil --new-instance - file|dir]
+#   or: set f [fossil -new-instance file|dir]
+#   ...
+#   $f close
+#
+# $f is the name of a new command object which wraps a separate fsl_cx
+# instance.
+#
+
+array set ::config {
+  loudly 1
+  family "test-family not set"
+  test-count 0
+  test-running 0
+  banner {***************}
+}
+
+set ::config(tdir) [file normalize ./tests]
+if {[llength $::argv] > 1} {
+  set ::config(tlist) [lassign $::argv -]
+} else {
+  set ::config(tlist) {
+    f-1
+    info
+    db-1
+    random-1
+    ls-1
+    udf-1
+    stmt-1
+  }
+}
+
+proc test-family {name args} {
+  set ::config(family) $name
+  puts "$::config(banner) $name"
+  set n [llength $args]
+  if {1 == $n} {
+    # Treat it as a script
+    set rv [uplevel 1 {*}$args]
+  } elseif {$n} {
+    # Treat it as commands
+    set rv [uplevel 1 $args]
+  } else {
+    return
+  }
+  puts ""
+  set rv
+}
+
+proc test-subfamily {name args} {
+  set fn $::config(family)
+  set rc [test-family "$fn: $name" {*}$args]
+  set ::config(family) $fn
+  return $rc
+}
+
+
+proc test {id args} {
+  set prefix ""
+  if {[incr ::config(test-running)] > 1} {
+    set prefix "\n"
+    append prefix [string repeat " + " \
+                     [expr {$::config(test-running) - 1}]]
+  }
+  set n [incr ::config(test-count)]
+  puts -nonewline "${prefix}Test $n \[$::config(family)\] $id: "
+  flush stdout
+  set rc [catch {
+    if {1 == [llength $args]} {
+      # Treat it as a script
+      uplevel 1 {*}$args
+    } else {
+      # Treat it as a command
+      uplevel 1 $args
+    }
+  } xrc xopt]
+  if {$rc} {
+    if {$::config(test-count) != $n} {
+      puts -nonewline "/Test $n \[$::config(family)\] $id: "
+    }
+    puts "💥FAILED:\n$args\n$xrc"
+  } else {
+    if {$::config(test-count) != $n} {
+      puts -nonewline "/Test $n \[$::config(family)\] $id: "
+    }
+    puts "OK"
+  }
+  incr ::config(test-running) -1
+  return {*}$xopt $xrc
+}
+
+proc test-file fn {
+  set rc [catch {
+    uplevel 1 [list source $fn]
+  } xrc xopt]
+  if {$rc} {
+    puts "💥FILE FAILED: $fn"
+  }
+  return {*}$xopt $xrc
+}
+
+proc skip {args} {}
+
+proc TODO {args} {
+  puts "TODO: $args"
+}
+
+proc loudly {args} {
+  if {$::config(test-running)} {
+    puts ""
+  }
+  if {$::config(loudly)} {
+    puts "> $args"
+  }
+  set rc [uplevel 1 $args]
+  if {$::config(loudly) && "" ne $rc} {
+    puts "  ==> $rc"
+  }
+  set rc
+}
+
+
+test lib-version fossil lib-version
+test pkgname assert-matches \
+  {@TEAISH_PKGNAME@ @TEAISH_VERSION@ using libfossil*} \
+  [fossil lib-version]
+
+
+if {[file isdirectory $::config(tdir)]} {
+  fossil close
+  foreach t $::config(tlist) {
+    if {"-" eq $t} break
+    set x tests/${t}.tcl
+    test-family $x
+    apply {{x dir} {test-file $x}} $x $::config(tdir)
+    # ^^^ so that each has a clean scope
+    #puts "$::config(banner) </$x>"
+    fossil close
+  }
+} else {
+  puts "Did not find $tdir, so not running external tests."
+}
+
+test-family "Wrapping up" {
+  #loudly test checking-leak-count fossil db -? a b c d e --f
+  #loudly fossil db -? a b c d e --f
+  #loudly fossil db -? a b c d e --f
+  #loudly fossil db -? a b c d e --f
+  test verbosity-back-on fossil option --verbosity 3
+  test rename-to-{}-look-for-finalizer rename fossil ""; # look for the finalizer call
+  test no-more-fossil assert {"" eq [info command fossil]}
+}
+
+puts "If you made it this far, you win!"
+puts "Total of $::config(test-count) unit tests run"
+#puts "::argv=$::argv"

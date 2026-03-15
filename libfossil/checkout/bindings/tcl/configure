@@ -1,0 +1,19 @@
+#!/bin/sh
+dir0=`dirname "$0"`
+if [ -d "$dir0/autosetup" ]; then
+    dir="$dir0/autosetup"
+elif [ -f "$dir0/../../autosetup/wh-common.tcl" ]; then
+    # This is the case in the libfossil source tree.
+    dir="$dir0/../../autosetup"
+else
+    echo "Cannot find autosetup dir" 1>&2
+    exit 1
+fi
+#
+# "It would be really cool" to look through $@ for --with-tcl=...
+# and/or --with-tclsh=... here and use that tclsh to run this script,
+# but doing that level of arg parsing with only the Bourne Shell
+# is beyond my current ambitions.
+#
+#@@INITCHECK@@#
+WRAPPER="$0"; export WRAPPER; exec "`"$dir/autosetup-find-tclsh"`" "$dir/autosetup" "$@"

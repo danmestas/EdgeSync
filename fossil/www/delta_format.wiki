@@ -1,0 +1,316 @@
+<title>Fossil Delta Format</title>
+<h1>1.0 Overview</h1>
+
+Fossil achieves efficient storage and low-bandwidth synchronization
+through the use of delta-compression.  Instead of storing
+or transmitting the complete content of an artifact, Fossil stores or
+transmits only the changes relative to a related artifact.
+
+This document describes the delta-encoding format used by Fossil.
+The intended audience is developers working on either
+<a href="index.wiki">Fossil</a> itself, or on tools compatible with
+Fossil. Understanding of this document is <em>not</em> required for
+ordinary users of Fossil.  This document is an implementation detail.
+
+This document only describes the delta file format.  A 
+[./delta_encoder_algorithm.wiki|separate document] describes one possible
+algorithm for generating deltas in this format.
+
+<h2>1.1 Sample Software And Analysis Tools</h2>
+
+The core routines used to generate and apply deltas in this format
+are contained in the [../src/delta.c|delta.c] source file.  Interface
+logic, including "test-*" commands to directly manipulate deltas are
+contained in the [../src/deltacmd.c|deltacmd.c] source file.  SQL functions
+to create, apply, and analyze deltas are implemented by code in the
+[../src/deltafunc.c|deltafunc.c] source file.
+
+The following command-line tools are available to create and apply
+deltas and to test the delta logic:
+
+   *   [/help/test-delta|fossil test-delta] &rarr; Run self-tests of
+       the delta logic
+
+   *   [/help/test-delta-create|fossil test-delta-create X Y] &rarr; compute
+       a delta that converts file X into file Y.  Output that delta.
+
+   *   [/help/test-delta-apply|fossil test-delta-apply X D] &rarr; apply
+       delta D to input file X and output the result.
+
+   *   [/help/test-delta-analyze|fossil test-delta-analyze X Y] &rarr; compute
+       and delta that converts file X into file Y but instead of writing the
+       delta to output, write performance information about the delta.
+
+When running the [/help/sqlite3|fossil sql] command to get an
+interactive SQL session connected to the repository, the following
+additional SQL functions are provided:
+
+   *   <b>delta_create(</b><i>X</i><b>,</b><i>Y</i><b>)</b> &rarr;
+       Compute a data that carries blob X into blob Y and return that delta
+       as a blob.
+
+   *   <b>delta_apply(</b><i>X</i><b>,</b><i>D</i><b>)</b> &rarr;
+       Apply delta D to input blob X return a new blob which is the result.
+
+
+   *   <b>delta_output_size(</b><i>D</i>)</b> &rarr;
+       Return the size of the output that would result from applying delta D.
+
+   *   <b>delta_parse(</b><i>D</i>)</b> &rarr; This is a table-valued function
+       that returns one row for the header, for the trailer, and for each segment
+       in delta D.
+
+
+<h1 id="structure">2.0 Structure</h1>
+<verbatim type="pikchr">
+    leftmargin = 0.1
+    box height 50% "Header"
+    box same "Segments"
+    box same "Trailer"
+</verbatim>
+
+A delta consists of three parts, a "header", a "trailer", and a
+"segment-list" between them.
+
+Both header and trailer provide information about the target
+helping the decoder, and the segment-list describes how the target can
+be constructed from the original.
+
+<h2 id="header">2.1 Header</h2>
+<verbatim type="pikchr">
+    leftmargin = 0.1
+    box height 50% "Size"
+    box same "\"\\n\""
+</verbatim>
+
+The header consists of a single number followed by a newline
+character (ASCII 0x0a). The number is the length of the target in
+bytes.
+
+This means that, given a delta, the decoder can compute the size of
+the target (and allocate any necessary memory based on that) by simply
+reading the first line of the delta and decoding the number found
+there. In other words, before it has to decode everything else.
+
+<h2 id="trailer">2.2 Trailer</h2>
+<verbatim type="pikchr">
+    leftmargin = 0.1
+    box height 50% "Checksum"
+    box same "\";\""
+</verbatim>
+
+The trailer consists of a single number followed by a semicolon (ASCII
+0x3b). This number is a checksum of the target and can be used by a
+decoder to verify that the delta applied correctly, reconstructing the
+target from the original.
+
+The checksum is computed by treating the target as a series of
+32-bit integer numbers (MSB first), and summing these up, modulo
+2^32-1. A target whose length is not a multiple of 4 is padded with
+0-bytes (ASCII 0x00) at the end.
+
+By putting this information at the end of the delta a decoder has
+it available immediately after the target has been reconstructed
+fully.
+
+<h2 id="slist">2.3 Segment-List</h2>
+<verbatim type="pikchr">
+    leftmargin = 0.1
+    PART1: [
+        B1: box height 50% width 15% ""
+        B2: box same ""
+        B3: box same ""
+            "***"
+            box height 50% width 15% ""
+        I1: line down 50% from B2 .s
+            arrow right until even with B3.e
+            box "Insert Literal" height 50%
+            line down 75% from I1 .s
+            arrow right until even with B3.e
+            box "Copy Range" height 50%
+    ]
+    down
+    PART2: [
+        ""
+        box "Length" height 50%
+        right
+        box "\":\"" same
+        box "Bytes" same
+    ] with .nw at previous.sw
+</verbatim>
+
+The segment-list of a delta describes how to create the target from
+the original by a combination of inserting literal byte-sequences and
+copying ranges of bytes from the original. This is where the
+compression takes place, by encoding the large common parts of
+original and target in small copy instructions.
+
+The target is constructed from beginning to end, with the data
+generated by each instruction appended after the data of all previous
+instructions, with no gaps.
+
+<h3 id="insertlit">2.3.1 Insert Literal</h3>
+
+A literal is specified by two elements, the size of the literal in
+bytes, and the bytes of the literal itself.
+
+<verbatim type="pikchr">
+    leftmargin = 0.1
+    box "Length" height 50%
+    box "\":\"" same
+    box "Bytes" same
+</verbatim>
+
+The length is written first, followed by a colon character (ASCII
+0x3a), followed by the bytes of the literal.
+
+<h3 id="copyrange">2.3.2 Copy Range</h3>
+
+A range to copy is specified by two numbers, the offset of the
+first byte in the original to copy, and the size of the range, in
+bytes. The size zero is special, its usage indicates that the range
+extends to the end of the original.
+
+<verbatim type="pikchr">
+    leftmargin = 0.1
+    box "Length" height 50%
+    box "\"@\"" same
+    box "Offset" same
+    box "\",\"" same
+</verbatim>
+
+
+The length is written first, followed by an "at" character (ASCII
+0x40), then the offset, followed by a comma (ASCII 0x2c).
+
+<h1 id="intcoding">3.0 Encoding of integers</h1>
+
+The format currently handles only 32 bit integer numbers. They are
+written base-64 encoded, MSB first, and without leading
+"0"-characters, except if they are significant (i.e. 0 => "0").
+
+The base-64 encoding uses one character for each 6 bits of
+the integer to be encoded.  The encoding characters are:
+
+<pre>
+0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz~
+</pre>
+
+The least significant 6 bits of the integer are encoded by
+the first character, followed by
+the next 6 bits, and so on until all non-zero bits of the integer
+are encoded.  The minimum number of encoding characters is used.
+Note that for integers less than 10, the base-64 coding is a
+ASCII decimal rendering of the number itself.
+
+<h1 id="examples">4.0 Examples</h1>
+
+<h2 id="examplesint">4.1 Integer encoding</h2>
+
+<table>
+<tr>
+<th>Value</th>
+<th>Encoding</th>
+</tr>
+<tr>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr>
+<td>6246</td>
+<td>1Xb</td>
+</tr>
+<tr>
+<td>-1101438770</td>
+<td>2zMM3E</td>
+</tr>
+</table>
+
+<h2 id="examplesdelta">4.2 Delta encoding</h2>
+
+An example of a delta using the specified encoding is:
+
+<pre>
+1Xb
+4E@0,2:thFN@4C,6:scenda1B@Jd,6:scenda5x@Kt,6:pieces79@Qt,F: Example: eskil~E@Y0,2zMM3E;</pre>
+</pre>
+
+This can be taken apart into the following parts:
+
+<table>
+<tr><th>What  </th> <th>Encoding         </th><th>Meaning </th><th>Details</th></tr>
+<tr><td>Header</td> <td>1Xb              </td><td>Size    </td><td> 6246         </td></tr>
+<tr><td>S-List</td> <td>4E@0,            </td><td>Copy    </td><td> 270 @ 0      </td></tr>
+<tr><td>&nbsp;</td> <td>2:th             </td><td>Literal </td><td> 2 'th'       </td></tr>
+<tr><td>&nbsp;</td> <td>FN@4C,           </td><td>Copy    </td><td> 983 @ 268        </td></tr>
+<tr><td>&nbsp;</td> <td>6:scenda         </td><td>Literal </td><td> 6 'scenda'       </td></tr>
+<tr><td>&nbsp;</td> <td>1B@Jd,           </td><td>Copy    </td><td> 75 @ 1256        </td></tr>
+<tr><td>&nbsp;</td> <td>6:scenda         </td><td>Literal </td><td> 6 'scenda'       </td></tr>
+<tr><td>&nbsp;</td> <td>5x@Kt,           </td><td>Copy    </td><td> 380 @ 1336       </td></tr>
+<tr><td>&nbsp;</td> <td>6:pieces     </td><td>Literal </td><td> 6 'pieces'       </td></tr>
+<tr><td>&nbsp;</td> <td>79@Qt,           </td><td>Copy    </td><td> 457 @ 1720     </td></tr>
+<tr><td>&nbsp;</td> <td>F: Example: eskil</td><td>Literal </td><td> 15 ' Example: eskil'</td></tr>
+<tr><td>&nbsp;</td> <td>~E@Y0,           </td><td>Copy    </td><td>  4046 @ 2176        </td></tr>
+<tr><td>Trailer</td><td>2zMM3E           </td><td>Checksum</td><td> -1101438770         </td></tr>
+</table>
+
+The unified diff behind the above delta is
+
+<verbatim>
+bluepeak:(761) ~/Projects/Tcl/Fossil/Devel/devel > diff -u ../DELTA/old ../DELTA/new
+--- ../DELTA/old        2007-08-23 21:14:40.000000000 -0700
++++ ../DELTA/new        2007-08-23 21:14:33.000000000 -0700
+@@ -5,7 +5,7 @@
+
+  *  If the server does not have write permission on the database
+     file, or on the directory containing the database file (and
+-    it is thus unable to update database because it cannot create
++    it is thus unable to update the database because it cannot create
+     a rollback journal) then it currently fails silently on a push.
+     It needs to return a helpful error.
+
+@@ -27,8 +27,8 @@
+  *  Additional information displayed for the "vinfo" page:
+
+      +  All leaves of this version that are not included in the
+-        descendant list.  With date, user, comment, and hyperlink.
+-        Leaves in the descendant table should be marked as such.
++        descendant list.  With date, user, comment, and hyperlink.
++        Leaves in the descendant table should be marked as such.
+         See the compute_leaves() function to see how to find all
+         leaves.
+      +  Add file diff links to the file change list.
+@@ -37,7 +37,7 @@
+
+  *  The /xfer handler (for push, pull, and clone) does not do
+     delta compression.  This results in excess bandwidth usage.
+-    There are some code in xfer.c that are sketches of ideas on
++    There are some pieces in xfer.c that are sketches of ideas on
+     how to do delta compression, but nothing has been implemented.
+
+  *  Enhancements to the diff and tkdiff commands in the cli.
+@@ -45,7 +45,7 @@
+     single file.  Allow diffs against any two arbitrary versions,
+     not just diffs against the current check-out.  Allow
+     configuration options to replace tkdiff with some other
+-    visual differ of the users choice.
++    visual differ of the users choice. Example: eskil.
+
+  *  Ticketing interface (expand this bullet)
+</verbatim>
+
+
+
+<h1 id="notes">Notes</h1>
+
+<ul>
+<li>Pure text files generate a pure text delta.
+</li>
+<li>Binary files generate a delta that may contain some binary data.
+</li>
+<li>The delta encoding does not attempt to compress the content.
+It was considered to be much
+more sensible to do compression using a separate general-purpose
+compression library, like <a href="http://www.zlib.net">zlib</a>.
+</li>
+</ul>

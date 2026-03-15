@@ -1,0 +1,2258 @@
+<title>Change Log</title>
+
+<h2 id='v2_28'>Changes for version 2.28 (2026-03-11)</h2><ol>
+  <li> Improvements to [./antibot.wiki|anti-robot defenses]:<ol type="a">
+      <li> The default configuration now allows robots to download any tarball
+           or similar, to better support of automated build systems.
+      <li> New special tag "zipX" for the [/help/robot-restrict|robot-restrict]
+           setting blocks robot access to tarballs, but with exceptions to support
+           automated build systems.
+      <li> Tags of the form "ext/PATH" in the robot-restrict setting block access
+           by robots to specific [./serverext.wiki|CGI extension] at PATH.
+      <li> Enhancements to the default value for the
+           [/help/robot-restrict|robot-restrict setting].
+      </ol>
+  <li> A drop-down menu of recent branches is now possible for the submenu, and
+       is used in the [/dir?ci=trunk|code browser].
+  <li> Simplified access to tarballs and ZIPs:<ol type="a">
+       <li> When in the [/dir?ci=trunk|code browser] at the top-level,
+            a new "Download" submenu option is available to take the
+            user to a page where he can download a tarball or ZIP archive.
+       <li> New [/help/www/download|/download page] is available. When
+            configured using the new
+            [/help/suggested-downloads|suggested-downloads setting], a
+            link to [/download] named "Tarballs and ZIPs" appears in the
+            [/sitemap] and thus on the hamburger menu.
+       <li> The robot-resistant [/help/www/rchvdwnld|/rchvdwnld page] can be
+            used to provide human access to on-demand generated ZIP archives
+            and tarballs.  This page is used to help implement the two previous
+            subitems.
+       <li> The filenames for tarballs and ZIPs are now standardized to
+            include a timestamp and a hash prefix.
+       <li> New "[/help/get|fossil get]" command downloads and unpacks a specific
+            check-in without having to clone the repository.
+       </ol>
+  <li> Web-based [/help/www/timeline|timeline] enhancements:<ol type="a">
+       <li> A new "Simple" view is available.  This is compromise between "Verbose"
+            and "Compact" that shows only the check-in hash rather than the full
+            detail section.  There is an ellipsis that one can click on to see the
+            full detail text.
+       <li> The artifact hash in the detail section of each timeline entry is now
+            emphasized (controlled by CSS) to make it easier to locate amid all
+            the other text and links.
+       <li> When clicking on the ellipsis in "Compact" or "Simple" views, the
+            ellipsis is replaced by a left arrow ("←") which can be clicked to
+            hide the extra detail again.
+       <li> New setting [/help/timeline-mark-leaves|timeline-mark-leaves] controls
+            whether or not leaf check-ins are marked in the timeline.
+       <li> "No-graph" timelines (using the "ng" query parameter) now show
+            branch colors and bare check-in circles on the left.  The check-in
+            circles appear, but no lines connecting them.
+            ([/timeline?ng|example]).
+       </ol>
+  <li> Labels in Markdown now have IDs generated using the GitHub "slugify"
+       algorithm.
+  <li> The [/help/timeline|timeline command] is enhanced with the new options
+       "<tt>-u|--for-user</tt>" to filter by user, and "<tt>-r</tt>" to display
+       entries in chronological order.
+  <li> The [/help/open|open command]'s new "<tt>--reopen REPOFILE</tt>" flag
+       can be used to fix a checkout after moving its repository file.
+  <li> Update internal Unicode character tables, used in regular expression
+       handling, from version 13 to 17.
+  <li> Add a zoom-message option to [/help/www/chat|/chat] to better support
+       pikchr diagrams.
+  <li> The new [/help/system|fossil system] (often abbreviated as just "fossil sys")
+       provides a few common unix-like commands that are missing on some
+       platforms.  This is a convenience for Unix-based developers who occasionally
+       need to work on ill-provisioned alternative platforms.  The set of commands
+       currently offered is small, but is expected to grow in future releases.
+  <li> The [/help/www/help|/help webpage] now accepts queries of the form
+       "/help/CMD" to show help for the command or setting CMD and
+       "/help/www/PAGE" to show help for webpage PAGE.
+  <li> Add the -t and -T options to the [/help/praise|fossil praise] command.
+  <li> The [/help/clone|fossil clone] command adds the --ipv6 option.
+  <li> Add "-s" and "--stop" as aliases for the "--stop-on-error" option in
+       the [/help/all|fossil all] command.
+  <li> Add the "-h|--hash" option to the [/help/whatis|fossil whatis] command.
+</ol>
+
+<h2 id='v2_27'>Changes for version 2.27 (2025-09-30)</h2><ol>
+  <li> Close a potential Denial-of-Service attack against any public-facing Fossil
+       server involving exponential behavior in Fossil's regexp implementation.
+  <li> Fix a SQL injection on the [/help/www/file|/file page].  Thanks to
+       additional defenses built into Fossil, as well as good luck, this injection
+       is not exploitable for either data exfiltration or privilege escalation.  The
+       only possible result of invoking the injection is a harmless SQL syntax error.
+  <li> Strengthen robot defenses to help prevent public-facing servers from being
+       overwhelmed by the latest generation of AI spiders.
+  <ol type="a">
+    <li> New javascript captcha used to restrict access by user "nobody" to pages
+         listed in the [/help/robot-restrict|robot-restrict setting].
+    <li> The [/help/robot-exception|robot-exception setting] is available to allow
+         access to pages that match a regular expression.  Use this, for example, to
+         allow curl scripts and similar to download release tarballs.
+    <li> Require at least an anonymous login to access the /blame page and similar.
+  </ol>
+  <li> [/help/www/timeline|Timeline] enhancements:
+  <ol type="a">
+    <li> The chng= query parameter on the [/help/www/timeline|timeline page]
+         so that it works with other query parameters like p=, d=, from=, and to=.
+    <li> Always include nodes identify by sel1= and sel2= in the /timeline display.
+    <li> Improved title when p= and d= are different.
+  </ol>
+  <li> Enable the --editor option on the [/help/amend|fossil amend] command.
+  <li> When walking the filesystem looking for Fossil repositories, avoid descending
+       into directories named "/proc".
+  <li> Reduce memory requirements for sending authenticated sync protocol
+       messages.
+  <li> Show numstat-style change statistics in the /info and /ckout pages.
+  <li> Add the [/help/stash | stash rename] subcommand.
+  <li> Add the "-h" option to the "[/help/ls|ls]" command to display
+       file hashes for a specific check-in when in verbose mode.
+   </ol>
+
+<h2 id='v2_26'>Changes for version 2.26 (2025-04-30)</h2><ol>
+ <li>Enhancements to [/help/diff|fossil diff] and similar:
+     <ol type="a">
+     <li> The argument to the --from option can be a directory name, causing
+          Fossil to use files under that directory as the baseline for the diff.
+     <li> For "gdiff", if no [/help/gdiff-command|gdiff-command setting]
+          is defined, Fossil tries to do a --tk diff if "tclsh" and "wish"
+          are available, or a --by diff if not.
+     <li> The "Reload" button is added to --tk diffs, to bring the displayed
+          diff up to date with the latest changes on disk.
+     <li> Add the "Hide diffs/Show diffs" toggle to web-UI diff pages that show
+          diffs of multiple files.
+     </ol>
+ <li>Added the [/help/www/ckout|/ckout web page] to provide information
+     about pending changes in a working check-out
+ <li>Enhancements to the [/help/ui|fossil ui] command:
+     <ol type="a">
+     <li> Defaults to using the new [/help/www/ckout|/ckout page] as its
+          start page.  Or, if the new "--from PATH" option is present, the
+          default start page becomes "/ckout?exbase=PATH".
+     <li> The new "--extpage FILENAME" option opens the named file as if it
+          where in a [./serverext.wiki|CGI extension].  Example usage: the
+          person editing this change log has
+          "fossil ui --extpage www/changes.wiki" running and hence can
+          press "Reload" on the web browser to view edits.
+     <li> Accept both IPv4 and IPv6 connections on all platforms, including
+          Windows and OpenBSD.  This also applies to the "fossil server"
+          command.
+     </ol>
+ <li>Enhancements to [/help/merge|fossil merge]:
+     <ol type="a">
+     <li> Added the [/help/merge-info|fossil merge-info] command and
+          especially the --tk option to that command, to provide analysis
+          of the most recent merge or update operation.
+     <li> When a merge conflict occurs, a new section is added to the conflict
+          text that shows Fossil's suggested resolution to the conflict.
+     </ol>
+ <li>Enhancements to [/help/commit|fossil commit]:
+     <ol type="a">
+     <li> If Fossil sees potential formatting mistakes (ex: bad hyperlinks)
+          in the check-in comment, it will alert the developer and give
+          him or her the opportunity to edit the comment before continuing.
+          This feature is controllable by the
+          [/help/verify-comments|verify-comments setting].
+     <li> The new "--if-changes" option causes the commit to become
+          a quiet no-op if there are no pending changes.
+     <li> Added the ability to sign check-ins with SSH keys. Artifacts signed
+          this way are ignored by all previous fossil versions, as if they
+          were plain-text file content instead of Fossil artifacts.
+     <li> Issue a warning if a user tries to commit on a check-in where the
+          branch has been changed.
+     <li> The interactive checkin comment prompt shows the formatting rules
+          set for that repository.
+     <li> Add the "--editor" option.
+     </ol>
+ <li>Deprecate the --comfmtflags and --comment-format global options and
+     no longer list them in the built-in help, but keep them working for
+     backwards compatibility.
+     Alternative TTY comment formatting can still be specified using the
+     [/help/comment-format|comment-format setting], if desired.  The
+     default comment format is now called "canonical", not "legacy".
+ <li>Enhancements to the [/help/www/timeline|/timeline page]:
+     <ol type="a">
+     <li> Added the "ml=" ("Merge-in List") query parameter that works
+          like "rl=" ("Related List") but adds "mionly" style related
+          check-ins instead of the full "rel" style.
+     <li> For "tl=", "rl=", and "ml=", the order of the branches in the
+          graph now tries to match the order of the branches named in
+          the list.
+     <li> The "ms=" ("Match Style") query parameter is honored for
+          "tl=", "rl=", and "ml=".
+     <li> New query parameter "sl=BRANCHLIST" ("Sort List") strives to
+          put branches in the specified order in the graph. This
+          overrides any "tl=" or similar ordering.
+     <li> In the various "from=","to=" query formats, if the one of the
+          end points is an ancestor of the other, then the "rel" modifier
+          omits check-ins that are not ancestors of the newer endpoint.
+     <li> For "tl=" and similar query parameters, if the pattern contains
+          GLOB characters, then the matching style ("ms=") is set to GLOB
+          automatically and the "ms=" query parameter can be omitted.
+     <li> Enhance the "ymd" query parameter so that when used like
+          "ymd=YYYYMMDD-YYYYMMDD" it shows all events in the range of
+          dates specified.
+     <li> Accept the "Z" (Zulu-time) suffix on date arguments for the
+          "ymd" and "yw" query parameters.
+     <li> The new "min" query parameter, when added to a from=,to= query,
+          collapses long runs of check-ins on the same branch into just
+          end-points.
+     <li> The p= and d= parameters can now reference different check-ins,
+          in which case the timeline shows those check-ins that are both
+          ancestors of p= and descendants of d=.
+     <li> The saturation and intensity of user-specified checkin and branch
+          background colors are automatically adjusted to keep the colors
+          compatible with the current skin, unless the
+          [/help/raw-bgcolor|raw-bgcolor setting] is turned on.
+     </ol>
+ <li>The [/help/www/docfile|/docfile webpage] was added.  It works like
+     /doc but keeps the title of markdown documents with the document rather
+     that moving it up to the page title.
+ <li>Added the [/help/www/clusterlist|/clusterlist page] for analysis
+     and debugging
+ <li>Added the "artifact_to_json(NAME)" SQL function that returns a JSON
+     decoding of the artifact described by NAME.
+ <li>Improvements to the [/help/patch|fossil patch] command:
+     <ol type="a">
+     <li> Fix a bug in "fossil patch create" that causes
+          [/help/revert|fossil revert] operations that happened
+          on individualfiles after a [/help/merge|fossil merge]
+          to be omitted from the patch.
+     <li>  Added the [/help/patch|patch alias] command for managing
+           aliases for remote checkout names.
+     </ol>
+ <li>Enhancements to on-line help and the [/help/help|fossil help] command:
+     <ol type="a">
+     <li> Add the ability to search the help text, either in the UI
+          (on the [/help/www/search|/search page]) or from the command-line
+          (using the "[/help/search|fossil search -h PATTERN]" command.)
+     <li> Accepts an optional SUBCOMMAND argument following the
+          COMMAND argument and only shows results for the specified
+          subcommand, not the entire command.
+     <li> The -u (--usage) option shows only the command-line syntax
+     <li> The -o (--options) option shows only the command-line options
+     </ol>
+ <li>Enhancements to the [./tickets.wiki|ticket system]:
+     <ol type="a">
+     <li> Added the ability to attach wiki pages to a ticket for extended
+          descriptions.
+     <li> Added submenu to the 'View Ticket' page, to use it as
+          template for a new ticket.
+     <li> Added button 'Submit and New' to create multiple tickets
+          in a row.
+     <li> Link the version field in ticket view to a matching checkin or tag.
+     <li> Show creation time in report and ticket view.
+     <li> Show previous comments in edit ticket as reference.
+     </ol>
+ <li>Added the "hash" query parameter to the
+     [/help/www/whatis|/whatis webpage].
+ <li>Add a "user permissions changes" [/doc/trunk/www/alerts.md|subscription]
+     which alerts subscribers when an admin creates a new user or
+     when a user's permissions change.
+ <li>If the FOSSIL_REPOLIST_SHOW environment variable exists and contains
+     the substring "description", then the project description for each repository
+     is shown on the repository list page.  The login-group for each project is
+     now only shown if the FOSSIL_REPOLIST_SHOW environment variable exists and
+     contains the substring "login-group". ([./cgi.wiki#repolist|More information])
+ <li>The [/doc/trunk/www/th1.md|TH1 script language] is enhanced for improved
+     security:
+     <ol type="a">
+     <li> TH1 now makes a distinction between
+          [/doc/trunk/www/th1.md#taint|tainted and untainted string values].
+          This makes it more difficult to write custom TH1 scripts that
+          contain XSS or SQL-injection bugs.  The
+          [/help/vuln-report|vuln-report] setting was added to control
+          what Fossil does when it encounters a potential TH1
+          security problem.
+     <li> The "--th" option was removed from the [/help/pikchr|fossil pikchr]
+          command.
+     <li> The "enable_htmlify" TH1 command was removed.
+     </ol>
+ <li>Make [/help/www/chat|/chat] better-behaved during server outages, reducing
+     the frequency of reconnection attempts over time and providing feedback
+     to the user when the connection is down.
+ <li>The [/help/www/sqlar|/sqlar] page does not work for users who are not logged
+     in, nor are links to that page displayed to users who are not logged in.  Being
+     logged in as "anonymous" is sufficient to overcome this restriction, assuming
+     that "anonymous" can download tarballs and ZIP archives.
+ <li>Many other minor fixes and additions.
+</ol>
+
+<h2 id='v2_25'>Changes for version 2.25 (2024-11-06)</h2>
+
+  *  The "[/help/ui|fossil ui /]" command now works even for repositories
+     that have non-ASCII filenames
+  *  Add the [/help/tree|fossil tree] command.
+  *  On case-insensitive filesystems, store files using the filesystem's
+     preferred case rather than the case typed in by the user.
+  *  Change the name "fossil cherry-pick" command to "fossil cherrypick",
+     which is more familiar to Git users.  Retain the legacy name for
+     compatibility.
+  *  Add new query parameters to the [/help/www/timeline|/timeline page]:
+     d2=, p2=, and dp2=.
+  *  Add options to the [/help/tag|fossil tag] command that will list tag values.
+  *  Add the -b|--brief option to the [/help/status|fossil status] command.
+  *  Add ability to upload unversioned files via the [/help/www/uvlist|/uvlist page].
+  *  Add history search to the [/help/www/chat|/chat page].
+  *  Add Unix socket support to the [/help/server|server command].
+  *  On Windows, use the root certificates managed by the operating system
+     (requires OpenSSL 3.2.0 or greater).
+  *  Take into account zero-width and double-width unicode characters when
+     formatting the command-line timeline.
+  *  Update the built-in SQLite to version 3.47.0.  Precompiled binaries are
+     linked against OpenSSL 3.4.0.
+  *  Numerous minor fixes and additions.
+
+
+<h2 id='v2_24'>Changes for version 2.24 (2024-04-23)</h2>
+
+  *  Apache change work-around &rarr; As part of a security fix, the Apache webserver
+     mod_cgi module has stopped relaying the Content-Length field of the HTTP
+     reply header from the CGI programs back to the client in cases where the
+     connection is to be closed and the client is able to read until end-of-file.
+     The HTTP and CGI specs allow for this, though it does seem rude.
+     Older versions of Fossil were depending on the Content-Length header field
+     being set.  To work around the change to Apache, Fossil has
+     been enhanced to cope with a missing Content-Length in the reply header.  See
+     [forum:/forumpost/12ac403fd29cfc89|forum thread 12ac403fd29cfc89].
+  *  [./customskin.md|Skin] enhancements:
+     <ul>
+     <li>  Reworked the default skin to make everything more readable: larger
+           fonts, more whitespace, deeper indents to show hierarchy and to
+           offset command examples, etc.  Adjusted colors slightly to bring
+           things into better accord with the WCAG accessibility guidelines.
+           This constitutes a <strong>breaking change</strong> for those with
+           custom skins; see [./customskin.md#version-2.24 | this section of
+           the docs] for migration advice.
+     <li>  Add a new link added to the [/login] page that allows the user to
+           [/skins|select their preferred skin]. This preference is stored in
+           the [/fdscookie|fossil display_settings cookie].
+     <li>  The /setup_skin_admin page is simplified to let administrators easily
+           select one of the built-in skins as a default, or to specify a
+           custom skin.
+     </ul>
+  *  If an "ssh:" sync fails in a way that suggests that the fossil executable
+     could not be found on the remote host, then retry after adding a PATH=
+     prefix to the command.  This helps "ssh:" to "just work" when the server
+     is a Mac.
+  *  Enhancements to the [/help/www/timeline|/timeline page]:
+     <ul>
+     <li> Add the x= query paramater
+     <li> Add the shortcut tl= and rl= query parameters
+     <li> Add support for from=,ft= and from=,bt= query parameter combinations
+     <li> Automatically highlight the endpoints for from=,to= queries.
+     <li> Add the to2=Z query parameter to augment from=X,to=Y so that the
+          path from X to Z is shown if Y cannot be found.
+     </ul>
+  *  Moved the /museum/repo.fossil file referenced from the Dockerfile from
+     the ENTRYPOINT to the CMD part to allow use of --repolist mode.
+  *  The [/uvlist] page now shows the hash algorithm used so that
+     viewers don't have to guess.  The hash is shown in a fixed-width
+     font for a more visually pleasing display.
+  *  If the [/help/autosync|autosync setting] contains keyword "all",
+     the automatic sync occurs against all defined remote repositories, not
+     just the default.
+  *  Markdown formatter: improved handling of indented fenced code blocks
+     that contain blank lines.
+  *  When doing a "[/help/add|fossil add]" on a system with case-insensitive
+     but case-preserving filenames (Mac and Windows) try to use the filename
+     case as it is known to the filesystem, not the case entered by the
+     user on the command-line.  See
+     [forum:/forumpost/30d9c0d131610f53|forum thread 30d9c0d131610f53].
+  *  Fix problems with one-click unsubscribe on email notifications.
+  *  Import the latest [/doc/trunk/www/pikchr.md|Pikchr] containing support
+     for "diamond" objects.
+  *  Add ability to render committed Pikchr files to SVG via
+     <samp>/doc/…/foo.pikchr?popup</samp> URLs.
+  *  Update Fossil's internal robot detection logic so that it correctly
+     identifies the new GoogleOther crawler as a robot.
+
+<h2 id='v2_23'>Changes for version 2.23 (2023-11-01)</h2>
+
+  *  Add ability to "close" forum threads, such that unprivileged users
+     may no longer respond to them. Only administrators can close
+     threads or respond to them by default, and the
+     [/help/forum-close-policy|forum-close-policy setting] can be
+     used to add that capability to moderators.
+  *  Add the [/help/all|fossil all whatis] command.
+  *  The [/help/status|fossil status] command and relevant UI pages now
+     correctly report files which were both renamed <b>and</b> edited as such.
+  *  Show default value of settings that have a default in
+     [/help/help|fossil help SETTING] output.
+  *  On timeline graphs, show closed check-ins using an X in the middle of the
+     node circle or box.
+  *  New options for email notification:  Get email only for the first
+     post in each new thread, and/or posts that are in reply to my posts.
+  *  Fix a regression bug introduced in version 2.22 that caused FTS5 searches
+     to fail for terms containing non-ASCII characters.
+  *  Improved defense-in-depth against malicious attack:
+     <ul>
+     <li> When an attempted SQL injection attack is detected, return
+          HTTP result code 418, which can signal the web server to sanction
+          the attacking IP address.
+     <li> Better defense against cross-site request forgery (CSRF)
+          attacks.
+     <li> Improvements to static analysis of source code (the codecheck1.c
+          file in the source tree).
+     </ul>
+  *  Enhance the [/help/www/dir|treeview file listings]
+     ([/dir?type=tree&ci=trunk|example]) by displaying file sizes
+     and adding the option to sort by file size.
+  *  The [/help/fts-config|fossil fts-config] command now shows how much
+     repository space is used by the full-text index.
+  *  Changing a setting to an empty string is now the same as deleting the
+     setting, in most cases.  There are a few exceptions, indicated by the
+     keep-empty flag on the setting definition.
+  *  The [/help/branch|fossil branch list] command can now filter branches
+     that have/have not been merged into the current branch.
+  *  Improvements to interactions with remote repositories over SSH:
+     <ul>
+     <li> Print the text of the SSH command that is run to do remote interaction,
+          for full disclosure to the operator.
+     <li> Add a PATH= argument to the [/help/ui|fossil ui remote:/] and
+          [/help/patch|fossil patch push/pull remote:...] commands so that
+          they work when the "remote" machine is a Mac and the "fossil"
+          executable is in the $HOME/bin directory.
+     </ul>
+  *  Update built-in libraries SQLite, ZLib, Pikchr to their latest versions.
+  *  Documentation enhancements and typo fixes.
+
+
+<h2 id='v2_22'>Changes for version 2.22 (2023-05-31)</h2>
+  *  Enhancements to the [/help/www/timeline|/timeline webpage]: <ol type="a">
+     <li> Add the ft=TAG query parameter which in combination with d=Y
+          shows all descendants of Y up to TAG
+     <li> Enhance the s=PATTERN (search) query parameter so that forum post
+          text is also searched when the "vfx" query parameter is used
+     <li> Fix the u= (user) query parameter so that it works with a= and b=
+     <li> Add the oldestfirst query parameter to show the events in reverse order.
+          Useful in combination with y=f and vfs and perhaps also u= to show all
+          forum events in chronological order
+     <li> For the p=X and bt=Y query parameter combination, if Y is a tag that
+          identifies multiple check-ins, search backwards in time for Y beginning
+          at X
+     </ol>
+  *  Administrators can select to skip sending notifications about new forum
+     posts.
+  *  If the value N is negative in "--context N" or "-c N" to the various diff
+     commands, then treat it as infinite and show the complete file content.
+  *  The stock OCI container no longer includes BusyBox, thus no longer
+     needs to start as root to chroot that power away. That in turn
+     frees us from needing to build and install the container as root,
+     since it no longer has to create a private <tt>/dev</tt> tree
+     inside the jail for Fossil's use.
+  *  Add support for the trigram tokenizer for FTS5 search to enable
+     searching in Chinese.
+  *  Comment lines (starting with a '#') are now supported inside
+     [./settings.wiki#versionable|versioned settings].
+  *  Default permissions for anonymous users in new repositories are
+     changed to "hz".
+  *  The [/help/status|fossil status] command now detects when a
+     file used to be a symlink and has been replaced by a regular file.
+     (It previously checked for the inverse case only.)
+  *  The [/help/empty-dirs|empty-dirs setting] now reuses the same
+     parser as the *-glob settings instead of its prior idiosyncratic
+     parser, allowing quoted whitespace in patterns.
+  *  Enhancements to the [/help/www/reports|/reports webpage]:
+     <ol type="a">
+     <li> The by-week, by-month, and by-year options now show an estimated
+          size of the current week, month, or year as a dashed box.
+     <li> New sub-categories "Merge Check-ins" and "Non-Merge Check-ins".
+     </ol>
+
+<h2 id='v2_21'>Changes for version 2.21 (2023-02-25)</h2>
+  *  Users can request a password reset.  This feature is disabled by default.
+     Use the new [/help/self-pw-reset|self-pw-reset property] to enable it.
+     New web pages [/help/www/resetpw|/resetpw] and
+     [/help/www/reqpwreset|/reqpwreset] added.
+  *  Add the [/help/repack|fossil repack] command (together with
+     [/help/all|fossil all repack]) as a convenient way to optimize the
+     size of one or all of the repositories on a system.
+  *  Add the ability to put text descriptions on ticket report formats.
+  *  Upgrade the test-find-pivot command to the [/help/merge-base|merge-base command].
+  *  The [/help/www/chat|/chat page] can now embed fossil-rendered
+     views of wiki/markdown/pikchr file attachments with the caveat that such
+     embedding happens in an iframe and thus does not inherit styles and such
+     from the containing browser window.
+  *  The [/help/all|fossil all remote] subcommand added to "fossil all".
+  *  Passwords for remembered remote repositories are now stored as irreversible
+     hashes rather than obscured clear-text, for improved security.
+  *  Add the "nossl" and "nocompress" options to CGI.
+  *  Update search infrastructure from FTS4 to FTS5.
+  *  Add the [/help/www/deltachain|/deltachain] page for debugging purposes.
+  *  Writes to the database are disabled by default if the HTTP request
+     does not come from the same origin.  This enhancement is a defense in depth
+     measure only; it does not address any known vulnerabilities.
+  *  Improvements to automatic detection and mitigation of attacks from
+     malicious robots.
+
+<h2 id='v2_20'>Changes for version 2.20 (2022-11-16)</h2>
+  *  Added the [/help/chat-timeline-user|chat-timeline-user setting].  If
+     it is not an empty string, then any changes that would appear on the timeline
+     are announced in [./chat.md|the chat room].
+  *  The /unsubscribe page now requests confirmation. [./alerts.md|Email notifications]
+     now contain only an "Unsubscribe" link, and not a link to subscription management.
+  *  Added the "[/help/branch|fossil branch lsh]" subcommand to list the
+     most recently modified branches.
+  *  More elements of the /info page are now inside of an accordion.
+  *  Replace the <tt>--dryrun</tt> flag with <tt>--dry-run</tt> in all
+     commands which still used the former name, for consistency.
+  *  Rebuilt [/file/Dockerfile | the stock Dockerfile] to create a "from scratch"
+     Busybox based container image via an Alpine Linux intermediary
+  *  Added [/doc/trunk/www/containers.md | a new document] describing how to
+     customize, use, and run that container.
+  *  Added "by hour of day" report to [/reports?view=byhour|the /reports page].
+  *  Improved correctness, usability, and efficiency for the case
+     [/timeline?r=deltify-tkt-blobs|when values in a TICKET's column
+     tend to be long and volatile].
+  *  Fixed a bug [/info/ea5afad31f478396 | introduced in 2.17] that
+     prevented <tt>clone --unversioned</tt> from completing the
+     retrieval of UV files from the remote repo. While fixing that, enabled
+     UV tracing output with <tt>clone --unversioned --verbose</tt>, making it
+     consonant with <tt>uv sync --verbose</tt>.
+
+<h2 id='v2_19'>Changes for version 2.19 (2022-07-21)</h2>
+  *  On file listing pages, sort filenames using the "uintnocase" collating
+     sequence, so that filenames that contains embedded integers sort in
+     numeric order even if they contain a different number of digits.
+     (Example:  "fossil_80_..." comes before "fossil_100.png" in the
+     [/dir?ci=92fd091703a28c07&name=skins/blitz|/skins/blitz] directory listing.)
+  *  Enhancements to the graph layout algorithm design to improve readability
+     and promote better situational awareness.
+  *  Performance enhancement for the
+     [./checkin_names.wiki#root|"root:BRANCHNAME" style of tag],
+     accomplished using a Common Table Expression in the underlying SQL.
+  *  Sort tag listings (command line and webpage) by taking numbers into
+     consideration so as to cater for tags that follow semantic versioning.
+  *  On the wiki listings, omit by default wiki pages that are associated with
+     check-ins and branches.
+  *  Add the new "[/help/describe|fossil describe]" command.
+  *  Markdown subsystem extended with [../src/markdown.md#ftnts|footnotes support].
+     See corresponding [../test/markdown-test3.md|test cases],
+     [/wiki?name=branch/markdown-footnotes#il|known limitations] and
+     [forum:/forumthread/ee1f1597e46ec07a|discussion].
+  *  Add the new special name "start:BRANCH" to refer to the first check-in of
+     the branch.
+  *  Support [/wiki?name=branch/generated-tkt-mimetype&p|generated "mimetype"]
+     columns in the <var>TICKET</var> and <var>TICKETCHNG</var> tables.
+  *  Fix [/timeline?r=fix_remote_url_overwrite_with_proxy|remote-url-overwrite]
+     bug where remote-url is overwritten by the proxy setting during sync
+     operation. Also require explicit "system" proxy setting to use
+     "http_proxy" environment variable.
+  *  Reimplemented the [/pikchrshow] app to use a WebAssembly build of
+     pikchr so that it can render pikchrs on the client instead of requiring
+     a server round-trip.
+  *  Add the [/help/email-listid|email-listid setting]. If set, it is
+     used as the List-ID header for all outbound notification emails.
+  *  Add the "--branch" option to the "[/help/timeline|timeline]" command
+     to restrict the displayed items to a specific branch.
+  *  Add the "--versions" option to "[/help/diff|fossil diff]"
+     to display details about the compared versions into the patch header.
+  *  Numerous other minor enhancements.
+
+<h2 id='v2_18'>Changes for version 2.18 (2022-02-23)</h2>
+  *  Added support for [./ssl-server.md|SSL/TLS server mode] for commands
+     like "[/help/server|fossil server]" and "[/help/http|fossil http]"
+  *  The new [/help/cherry-pick|cherry-pick command] is an alias for
+     [/help/merge|merge --cherrypick].
+  *  Add new setting "[/help/large-file-size|large-file-size]".  If the size
+     of any file in a commit exceeds this size, a warning is issued.
+  *  Query parameter "year=YYYY" is now accepted by [/help/www/timeline|/timeline].
+  *  The [/help/tar|tar] and [/help/zip|zip commands] no longer
+     sterilize the manifest file.
+  *  Further improvement to diff alignment in cases that involve both
+     edits and indentation changes.
+  *  [/doc/trunk/www/chat.md|Chat] improvements:<ul>
+     <li>  [/help/www/chat|The /chat page] input options have been reworked
+           again for better cross-browser portability.
+     <li>  When sending a [/help/www/chat|/chat] message fails, it is no longer
+           immediately lost and sending may optionally be retried.
+     <li>  [/help/www/chat|/chat] can now optionally embed attachments of certain
+           types directly into message bodies via an iframe.
+     <li>  Add the "--as FILENAME" option to the "[/help/chat|fossil chat send]"
+           command.
+     <li>  Added the "[/help/chat|fossil chat pull]" command, available to
+           administrators only, for backing up the chat conversation.
+     </ul>
+  *  Promote the test-detach command into the [/help/detach|detach command].
+  *  For "[/help/pull|fossil pull]" with the --from-parent-project option,
+     if no URL is specified then use the last URL from the most recent prior
+     "fossil pull --from-parent-project".
+  *  Add options --project-name and --project-desc to the
+     "[/help/init|fossil init]" command.
+  *  The [/help/www/ext|/ext page] generates the SERVER_SOFTWARE environment
+     variable for clients.
+  *  Fix the REQUEST_URI [/doc/trunk/www/aboutcgi.wiki#cgivar|CGI variable] such
+     that it includes the query string.  This is how most other systems understand
+     REQUEST_URI.
+  *  Added the --transport-command option to [/help/sync|fossil sync]
+     and similar.
+
+<h2 id='v2_17'>Changes for version 2.17 (2021-10-09)</h2>
+
+  *  Major improvements to the "diff" subsystem, including: <ul>
+     <li> Added new [/help/diff|formatting options]: --by, -b, --webpage, --json, --tcl.
+     <li> Partial-line matching for unified diffs
+     <li> Better partial-line matching for side-by-side diffs
+     <li> Buttons on web-based diffs to show more context
+     <li> Performance improvements
+     </ul>
+  *  The --branchcolor option on [/help/commit|fossil commit] and
+     [/help/amend|fossil amend] can now take the value "auto" to
+     force Fossil to use its built-in automatic color choosing algorithm.
+  *  Fossil now [./concepts.wiki#workflow|autosyncs] prior to running
+     [/help/open|fossil open].
+  *  Add the [/help/ticket-default-report|ticket-default-report setting],
+     which if set to the title of a ticket report causes that ticket report
+     to be displayed below the search box in the /ticket page.
+  *  The "nc" query parameter to the [/help/www/timeline|/timeline] page
+     causes all graph coloring to be omitted.
+  *  Improvements and bug fixes to the new "[/help/ui|fossil ui REMOTE]"
+     feature so that it works better on a wider variety of platforms.
+  *  In [/help/www/wikiedit|/wikiedit], show the list of attachments for
+     the current page and list URLs suitable for pasting them into the page.
+  *  Add the --no-http-compression option to [/help/sync|fossil sync]
+     and similar.
+  *  Print total payload bytes on a [/help/sync|fossil sync] when using
+     the --verbose option.
+  *  Add the <tt>close</tt>, <tt>reopen</tt>, <tt>hide</tt>, and
+     </tt>unhide</tt> subcommands to [/help/branch|the branch command].
+  *  The "-p" option to [/help/branch|fossil branch list] shows only
+     private branches.
+  *  The [/md_rules|Markdown formatter] now interprets the content of
+     block HTML markup (such as &lt;table&gt;) in most cases.  Only content
+     of &lt;pre&gt; and &lt;script&gt; is passed through verbatim.
+  *  The [/help/wiki|wiki list command] no longer lists "deleted"
+     pages by default. Use the new <tt>--all</tt> option to include deleted
+     pages in the output.
+  *  The [/help/all|fossil all git status] command only shows reports for
+     the subset of repositories that have a configured Git export.
+  *  The [/help/www/chat|/chat] configuration was reimplemented and
+     provides new options, including the ability for a repository
+     administrator to
+     [./chat.md#notifications|extend the selection of notification sounds]
+     using unversioned files.
+  *  Chat now uses fossil's full complement of markdown features,
+     instead of the prior small subset of markup it previously supported.
+     This retroactively applies to all chat messages, as they are
+     markdown-processed when they are sent instead of when they
+     are saved.
+  *  Added a chat message preview mode so messages can be previewed
+     before being sent. Similarly, added a per-message ability to view
+     the raw un-parsed message text.
+  *  The hotkey to activate preview mode in [/help/www/wikiedit|/wikiedit],
+     [/help/www/fileedit|/fileedit], and [/help/www/pikchrshow|/pikchrshow]
+     was changed from ctrl-enter to shift-enter in order to align with
+     [/help/www/chat|/chat]'s new preview feature and related future
+     changes.
+
+<h2 id='v2_16'>Changes for Version 2.16 (2021-07-02)</h2>
+  *  <b>Security:</b> Fix the client-side TLS so that it verifies that the
+     server hostname matches its certificate.
+  *  The default "ssh" command on Windows is changed to "ssh" instead of the
+     legacy "plink", as ssh is now generally available on Windows systems.
+     Installations that still need to use the legacy "plink" can make that
+     happen by running: '<tt>fossil set ssh-command "plink -ssh" --global</tt>'.
+  *  Added the [./patchcmd.md|fossil patch] command.
+  *  The [/help/ui|fossil ui] command is enhanced in multiple ways:<ol>
+     <li> The REPOSITORY argument can be the name of a check-out directory.
+     <li> If the REPOSITORY argument is prefixed by "HOST:" or "USER@HOST:"
+          then the ui is run on the remote machine and tunnelled back to the local
+          machine using ssh.  (The latest version of fossil must be installed on
+          both the local and the remote for this to work correctly.)
+     <li> The new --nobrowser and --fossilcmd options is provided.
+     </ol>
+  *  The [/brlist|/brlist web page] allows the user to
+     select multiple branches to be displayed together in a single
+     timeline.
+  *  The [./forum.wiki|Forum] provides a hyperlink on the author of each
+     post that goes to a timeline of recent posts by that same author.
+  *  Added the "[/help/bisect|fossil bisect run]" command for improved
+     automation of bisects.
+  *  The [/help/merge|fossil merge] command now does a better job merging
+     branches where files have been renamed between the current branch and the
+     branch being merged.
+  *  The [/help/open|fossil open] command allows the repository file
+     to be inside the working directory without requiring the --force flag.
+  *  The [/help/www/wikiedit|/wikiedit] and [/help/www/wikinew|/wikinew]
+     pages now default to markdown format.
+  *  The [/help/www/login|/login] page now links to a user's forum post
+     timeline if the repository has forum posts.
+  *  Tags may now be propagated for forum posts, wiki pages, and technotes.
+     The [/help/tag|tag command] can now manipulate and list such tags.
+  *  [./caps/login-groups.md|Login-Groups] are now shown on the repository
+     list of the "[/help/all|fossil all ui]" command.
+  *  Administrators can configure [./alerts.md|email alerts] to expire
+     a specific number of days (ex: 365) after the last user contact with
+     the Fossil server. This prevents alert emails being sent to
+     abandoned email accounts forever.
+  *  SQL that defines [/tktsetup_tab|database objects for tickets] now
+     [/timeline?c=c717f1ef9a1a4c91|can DROP] a VIEW or an INDEX provided
+     that its name starts with '<code>ticket</code>' or '<code>fx_</code>'.
+  *  Update the built-in SQLite to version 3.36.0.
+  *  Numerous other minor enhancements.
+
+<h2 id='v2_15'>Changes for Version 2.15 (2021-03-26) and Patch 2.15.1 on (2021-04-07)
+    and 2.15.2 on (2021-06-15)</h2>
+  *  <b>Patch 2.15.2:</b> Fix the client-side TLS so that it verifies that the
+     server hostname matches its certificate. <b>Upgrading to
+     the patch is recommended.</b>
+  *  <b>Patch 2.15.1:</b> Fix a data exfiltration bug in the server.  <b>Upgrading to
+     the patch is recommended.</b>
+  *  The [./defcsp.md|default CSP] has been relaxed slightly to allow
+     images to be loaded from any URL.  All other resources are still
+     locked down by default.
+  *  The built-in skins all use the "[/help/mainmenu|mainmenu]"
+     setting to determine the content of the main menu.
+     The ability to edit the
+     "mainmenu" setting is added on the /Admin/Configuration page.
+  *  The hamburger menu is now available on most of the built-in skins.
+  *  Any built-in skin named "X" can be used instead of the standard
+     repository skin by adding the URL parameter <tt>skin=X</tt> to the
+     request.  The selection is persisted using the display
+     preferences cookie unless the "once" query parameter is also
+     included.  The [/skins] page may be used to select a skin.
+  *  The [/cookies] page now gives the user an opportunity to delete
+     individual cookies.  And the /cookies page is linked from the
+     /sitemap, so that it appears in hamburger menus.
+  *  The [/sitemap] extensions are now specified by a single new
+     "[/help/sitemap-extra|sitemap-extra setting]",
+     rather than a cluster of various
+     "sitemap-*" settings.  The older settings are no longer used.
+     <b>This change might require minor server configuration
+     adjustments on servers that use /sitemap extensions.</b>
+     The /Admin/Configuration page provides the ability to edit
+     the new "sitemap-extra" setting.
+  *  Added the "--ckout-alias NAME" option to
+     [/help/ui|fossil ui], [/help/server|fossil server], and
+     [/help/http|fossil http].  This option causes Fossil to
+     understand URIs of the form "/doc/NAME/..." as if they were
+     "[/help/www/doc|/doc/ckout/...]", to facilitate testing of
+     [./embeddeddoc.wiki|embedded documentation] changes prior to
+     check-in.
+  *  For diff web pages, if the diff type (unified versus side-by-side)
+     is not specified by a query parameter, and if the
+     "[/help/preferred-diff-type|preferred-diff-type]"
+     setting is omitted or less than 1, then select the diff type based
+     on a guess of whether or not the request is coming from a mobile
+     device.  Mobile gets unified and desktop gets side-by-side.
+  *  The various pages which show diffs now have toggles to show/hide
+     individual diffs.
+  *  Add the "[/help/preferred-diff-type|preferred-diff-type]"
+     setting to allow an admin to force a default diff type.
+  *  The "pikchr-background" setting is now available in
+     "detail.txt" skin files, for better control of Pikchr
+     colors in inverted color schemes.
+  *  Add the <tt>--list</tt> option to the
+     [/help/tarball|tarball],
+     [/help/zip|zip], and [/help/sqlar|sqlar]
+     commands.
+  *  The javascript used to implement the hamburger menu on the
+     default built-in skin has been made generic so that it is usable
+     by a variety of skins, and promoted to an ordinary built-in
+     javascript file.
+  *  New TH1 commands:
+     "[/doc/trunk/www/th1.md#bireqjs|builtin_request_js]",
+     "[/doc/trunk/www/th1.md#capexpr|capexpr]",
+     "foreach", "lappend", and "string match"
+  *  The [/help/leaves|leaves command] now shows the branch point
+     of each leaf.
+  *  The [/help/add|fossil add] command refuses to add files whose
+     names are reserved by Windows (ex: "aux") unless the --allow-reserved
+     option is included.  This helps prevent Unix users from accidentally
+     creating check-ins that are unreadable by Windows users.
+  *  Add the "re=" query parameter to the [/help/www/dir|/dir] webpage,
+     for symmetry with the [/help/www/tree|/tree] page.
+  *  Update the built-in SQLite to version 3.35.0.
+  *  The ./configure script now has the --print-minimum-sqlite-version option
+     that prints the minimum SQLite version required by the current version
+     of Fossil.  This might be used by integrators who insist on building
+     Fossil to link against the system SQLite library rather than the
+     built-in copy of SQLite, to verify that their system SQLite library
+     is recent enough.
+  *  Webpage that shows [/help/www/whistory|history of a wiki page]
+     gained client-side UI to help with comparison between two arbitrary
+     versions of a wiki (by the means of anchoring a "baseline" version)
+     and the ability to squeeze several sequential edits made by the same
+     user into a single "recycled" row (the latest edit in that sequence).
+
+<h2 id='v2_14'>Changes for Version 2.14 (2021-01-20) and Patch 2.14.1 on (2021-04-07)
+    and 2.14.2 on (2021-06-15)</h2>
+  *  <b>Patch 2.14.2:</b> Fix the client-side TLS so that it verifies that the
+     server hostname matches its certificate. <b>Upgrading to
+     the patch is recommended.</b>
+  *  <b>Patch 2.14.1:</b> Fix a data exfiltration bug in the server.
+     <b>Upgrading to the patch is recommended.</b>
+  *  <b>Schema Update Notice #1:</b>
+     This release drops a trigger from the database schema (replacing
+     it with a TEMP trigger that is created as needed).  This
+     change happens automatically the first time you
+     add content to a repository using Fossil 2.14 or later.  No
+     action is needed on your part. However, if you upgrade to
+     version 2.14 and then later downgrade or otherwise use an earlier
+     version of Fossil, the email notification mechanism may fail
+     to send out notifications for some events, due to the missing
+     trigger.  If you want to
+     permanently downgrade an installation, then you should run
+     "[/help/rebuild|fossil rebuild]" after the downgrade
+     to get email notifications working again.  If you are not using
+     email notification, then the schema change will not affect you in
+     any way.
+  *  <b>Schema Update Notice #2:</b>
+     This release changes how the descriptions of wiki edits are stored
+     in the EVENT table, for improved display on timelines.  You must
+     run "[/help/rebuild|fossil rebuild]" to take advantage of
+     this enhancement.  Everything will still work without
+     "fossil rebuild", except you will get goofy descriptions of
+     wiki updates in the timeline.
+  *  Add support for [./chat.md|Fossil chat].
+  *  The "[/help/clone|fossil clone]" command is enhanced so that
+     if the repository filename is omitted, an appropriate name is derived
+     from the remote URL and the newly cloned repo is opened.  This makes
+     the clone command work more like Git, thus making it easier for
+     people transitioning from Git.
+  *  Added the --mainbranch option to the [/help/git|fossil git export]
+     command.
+  *  Added the --format option to the
+     "[/help/timeline|fossil timeline]" command.
+  *  Enhance the --numstat option on the
+     "[/help/diff|fossil diff]" command so that it shows a total
+     number of lines added and deleted and total number of files
+     modified.
+  *  Add the "contact" sub-command to [/help/user|fossil user].
+  *  Added commands "[/help/all|fossil all git export]" and
+     "[/help/all|fossil all git status]".
+  *  Added the "df=CHECKIN" query parameter to the
+     [/help/www/timeline|/timeline page].
+  *  Improvements to the "[/sitemap]" page.  Add subpages
+     [/sitemap-timeline] and [/sitemap-test].
+  *  Better text position in cylinder objects of Pikchr diagrams.
+  *  New "details.txt" settings available to custom skins to better control
+     the rendering of Pikchr diagrams:
+     <ul>
+     <li> pikchr-foreground
+     <li> pikchr-scale
+     <li> pikchr-fontscale
+     </ul>
+  *  Allow the use of SQL functions inside the ticket table definition
+     for custom ticket configurations.
+  *  The built-in SQLite is updated to version 3.35.0 alpha containing
+     performance optimizations, especially performance associated with
+     startup, and minor improvements to the CLI.
+  *  Performance optimizations to Fossil itself.
+  *  Countless improvements and enhancements to the documentation
+
+<h2 id='v2_13'>Changes for Version 2.13 (2020-11-01)</h2>
+
+  *  Added support for [./interwiki.md|interwiki links].
+  *  Enable &lt;del&gt; and &lt;ins&gt; markup in  wiki.
+  *  Improvements to the Forum threading display.
+  *  Added support for embedding [./pikchr.md|pikchr]
+     markup in markdown and fossil-wiki content.
+  *  The new "[/help/pikchr|pikchr]" command can render
+     pikchr scripts, optionally pre-processed with
+     [/doc/trunk/www/th1.md|TH1] blocks and variables exactly like
+     site skins are.
+  *  The new [/help/www/pikchrshow|pikchrshow] page provides an
+     editor and previewer for pikchr markup.
+  *  In [/help/www/wikiedit|/wikiedit] and
+     [/help/www/fileedit|/fileedit], Ctrl-Enter can now be used
+     initiate a preview and to toggle between the editor and preview
+     tabs.
+  *  The <tt>/artifact</tt> and <tt>/file</tt> views, when in
+     line-number mode, now support interactive selection of a range
+     of lines to hyperlink to.
+  *  Enhance the [/help/www/finfo|/finfo] webpage so that when query
+     parameters identify both a filename and a checkin, the resulting
+     graph tracks the identified file across renames.
+  *  The built-in SQLite is updated to an alpha of version 3.34.0, and
+     the minimum SQLite version is increased to 3.34.0 because the
+     /finfo change in the previous bullet depends on enhancements to
+     recursive common table expressions that are only available in
+     SQLite 3.34.0 and later.
+  *  Countless other minor refinements and documentation improvements.
+
+<h2 id='v2_12'>Changes for Version 2.12.1 (2020-08-20)</h2>
+
+  *  (2.12.1): Fix client-side vulnerabilities discovered by Max Justicz.
+  *  Security fix in the "[/help/git|fossil git export]" command.
+     The same fix is also backported to version 2.10.1 and 2.11.1.
+     New "safety-net" features were added to prevent similar problems
+     in the future.
+  *  Enhancements to the graph display for cases when there are
+     many cherry-pick merges into a single check-in.
+     [/timeline?f=2d75e87b760c0a9|Example]
+  *  Enhance the [/help/open|fossil open] command with the new
+     --workdir option and the ability to accept a URL as the repository
+     name, causing the remote repository to be cloned automatically.
+     Do not allow "fossil open" to open in a non-empty working directory
+     unless the --keep option or the new --force option is used.
+  *  Enhance the markdown formatter to more closely follow the
+     [https://spec.commonmark.org/0.29/#emphasis-and-strong-emphasis|CommonMark specification]
+     with regard to text highlighting.
+     Underscores in the middle of identifiers (ex: fossil_printf())
+     no longer need to be escaped.
+  *  The markdown-to-html translator can prevent unsafe HTML
+     (for example: &lt;script&gt;) on user-contributed pages like forum and
+     tickets and wiki.  The admin can adjust this behavior using
+     the [/help/safe-html|safe-html setting] on the Admin/Wiki page.
+     The default is to disallow unsafe HTML everywhere.
+     [https://fossil-scm.org/forum/forumpost/3714e6568f|Example].
+  *  Added the "collapse" and "expand" capability for long forum posts.
+     [https://fossil-scm.org/forum/forumpost/9297029862|Example]
+  *  The "[/help/remote-url|fossil remote]" command now has options for
+     specifying multiple persistent remotes with symbolic names.  Currently
+     only one remote can be used at a time, but that might change in the
+     future.
+  *  Add the "Remember me?" checkbox on the login page.  Use a session
+     cookie for the login if it is not checked.
+  *  Added the experimental "[/help/hook|fossil hook]" command for
+     managing "hook scripts" that run before checkin or after a push.
+  *  Enhance the [/help/revert|fossil revert] command so that it
+     is able to revert all files beneath a directory.
+  *  Add the [/help/bisect|fossil bisect skip] command.
+  *  Add the [/help/backup|fossil backup] command.
+  *  Enhance [/help/bisect|fossil bisect ui] so that it shows all unchecked
+     check-ins in between the innermost "good" and "bad" check-ins.
+  *  Added the <tt>--reset</tt> flag to the "[/help/add|fossil add]",
+     "[/help/rm|fossil rm]", and
+     "[/help/addremove|fossil addremove]" commands.
+  *  Added the "<tt>--min</tt> <i>N</i>" and "<tt>--logfile</tt> <i>FILENAME</i>"
+     flags to the [/help/backoffice|backoffice] command, as well as other
+     enhancements to make the backoffice command a viable replacement for
+     automatic backoffice.  Other incremental backoffice improvements.
+  *  Added the [/help/www/fileedit|/fileedit page], which allows
+     editing of text files online. Requires explicit activation by
+     a setup user.
+  *  Translate built-in help text into HTML for display on web pages.
+     [/help/help|Example].
+  *  On the [/help/www/timeline|/timeline] webpage, the combination
+     of query parameters "p=CHECKIN" and "bt=ANCESTOR" draws all
+     ancestors of CHECKIN going back to ANCESTOR.  For example,
+     [/timeline?p=202006271506&bt=version-2.11] shows all ancestors
+     of the checkin that occurred on 2020-06-27 15:06 going back to
+     the 2.11 release.
+  *  Update the built-in SQLite so that the
+     "[/help/sql|fossil sql]" command supports new output
+     modes ".mode box" and ".mode json".
+  *  Add the "<tt>obscure()</tt>" SQL function to the
+     "[/help/sql|fossil sql]" command.
+  *  Added virtual tables "<tt>helptext</tt>" and "<tt>builtin</tt>" to
+     the "[/help/sql|fossil sql]" command, providing access to the
+     dispatch table including all help text, and the builtin data files,
+     respectively.
+  *  [./delta_format.wiki|Delta compression] is now applied to forum edits.
+  *  The [/help/www/wikiedit|wiki editor] has been modernized and is
+     now Ajax-based. The WYSIWYG editing option for Fossil-format wiki
+     pages was removed. (Please let us know, via the site's Forum menu,
+     if that removal unduly impacts you.) This also changes the semantics
+     of the wiki "Sandbox": that pseudo-page may be freely edited but
+     no longer saved via the UI (the [/help/wiki|wiki CLI command]
+     can, though).
+  *  The [/help/allow-symlinks|allow-symlinks setting] no longer
+     syncs. It must be activated individually on any clones which require
+     symlinks.
+  *  Countless documentation enhancements.
+
+<h2 id='v2_11'>Changes for Version 2.11 (2020-05-25)</h2>
+
+  *  (2.11.2): Backport security fixes from 2.12.1
+  *  (2.11.1): Backport security fix for the "fossil git export" command.
+  *  Support [/md_rules|Markdown] in the default ticket configuration.
+  *  Timestamp strings in [./checkin_names.wiki|object names]
+     can now omit punctation.  So, for example, "202004181942" and
+     "2020-04-18 19:42" mean the same thing.
+  *  Enhance backlink processing so that it works with Markdown-formatted
+     tickets and so that it works for wiki pages.
+     Ticket [a3572c6a5b47cd5a].
+     <ul><li> "[/help/rebuild|fossil rebuild]" is needed to
+     take full advantage of this fix.  Fossil will continue
+     to work without the rebuild, but the new backlinks will be missing.</ul>
+  *  The algorithm for finding the
+     [./tech_overview.wiki#configloc|location of the configuration database]
+     is enhanced to be XDG-compliant.
+  *  Add a hide/show feature to
+     [./wikitheory.wiki#assocwiki|associated wiki] display on
+     check-in and branch information pages.
+  *  Enhance the "[/help/info|fossil info]" command so that it
+     works with no arguments even if not within an open check-out.
+  *  Many improvements to the forum and especially email notification
+     of forum posts, in response to community feedback after switching
+     SQLite support from a mailing list over to the forum.
+  *  Minimum length of a self-registered user ID increased from 3 to 6
+     characters.
+  *  When the "vfx" query parameter is used on the
+     "[/help/www/timeline|/timeline]" page, it causes the complete
+     text of forum posts to be displayed.
+  *  Rework the "[/help/grep|fossil grep]" command to be more useful.
+  *  Expose the [/help/redirect-to-https|redirect-to-https]
+     setting to the [/help/settings|settings] command.
+  *  Improve support for CGI on IIS web servers.
+  *  The [./serverext.wiki|/ext page] can now render index files,
+     in the same way as the embedded docs.
+  *  Most commands now support the Unix-conventional "<tt>--</tt>"
+     flag to treat all following arguments as filenames
+     instead of flags.
+  *  Added the [/help/mimetypes|mimetypes config setting]
+     (versionable) to enable mimetype overrides and custom definitions.
+  *  Add an option on the /Admin/Timeline setup page to set a default
+     timeline style other than "Modern".
+  *  In [./embeddeddoc.wiki|embedded documentation], hyperlink URLs
+     of the form "/doc/$CURRENT/..." the "$CURRENT" text is translated
+     into the check-in hash for the document currently being viewed.
+  *  Added the [/help/www/phantoms|/phantoms] webpage that shows all
+     phantom artifacts.
+  *  Enhancements to phantom processing to try to reduce
+     bandwidth-using chatter about phantoms on the sync protocol.
+  *  Security: Fossil now assumes that the schema of every
+     database it opens has been tampered with by an adversary and takes
+     extra precautions to ensure that such tampering is harmless.
+  *  Security: Fossil now puts the Content-Security-Policy in the
+     HTTP reply header, in addition to also leaving it in the
+     HTML &lt;head&gt; section, so that it is always available, even
+     if a custom skin overrides the HTML &lt;head&gt; and omits
+     the CSP in the process.
+  *  Output of the [/help/diff|fossil diff -y] command automatically
+     adjusts according to the terminal width.
+  *  The Content-Security-Policy is now set using the
+     [/help/default-csp|default-csp setting].
+  *  Merge conflicts caused via the [/help/merge|merge] and
+     [/help/update|update] commands no longer leave temporary
+     files behind unless the new <tt>--keep-merge-files</tt> flag
+     is used.
+  *  The [/help/www/artifact_stats|/artifact_stats page] is now accessible
+     to all users if the new "artifact_stats_enable" setting is turned
+     on.  There is a new checkbox under the /Admin/Access menu to turn
+     that capability on and off.
+  *  Add the [/help/tls-config|fossil tls-config] command for viewing
+     the TLS configuration and the list of SSL Cert exceptions.
+  *  Captchas all include a button to read the captcha using an audio
+     file, so that they can be completed by the visually impaired.
+  *  Stop using the IP address as part of the login cookie.
+  *  Bug fix: fix the SSL cert validation logic so that if an exception
+     is allowed for particular site, the exception expires as soon as the
+     cert changes values.
+  *  Bug fix: the FTS search into for forum posts is now kept up-to-date
+     correctly.
+  *  Bug fix: the "fossil git export" command is now working on Windows
+  *  Bug fix: display Technote items on the timeline correctly
+  *  Bug fix: fix the capability summary matrix of the Security Audit
+     page so that it does not add "anonymous" capabilities to the
+     "nobody" user.
+  *  Update internal Unicode character tables, used in regular expression
+     handling, from version 12.1 to 13.
+  *  Many documentation enhancements.
+  *  Many minor enhancements to existing features.
+
+<h2 id='v2_10'>Changes for Version 2.10 (2019-10-04)</h2>
+
+  *  (2.10.2): backport security fixes from 2.12.1
+  *  (2.10.1): backport security fix for the "fossil git export" command.
+  *  Added support for [./serverext.wiki|CGI-based Server Extensions].
+  *  Added the [/help/repolist-skin|repolist-skin] setting used to
+     add style to repository list pages.
+  *  Enhance the hierarchical display of Forum threads to do less
+     indentation and to provide links back to the previous message
+     in the thread.  Provide sequential numbers for all messages in
+     a forum thread.
+  *  Add support for fenced code blocks and improved hyperlink
+     processing to the [/md_rules|markdown formatter].
+  *  Add support for hyperlinks to wiki pages in the
+     [/md_rules|markdown formatter].
+  *  Enhance the [/help/www/stat|/stat] page so that it gives the
+     option to show a breakdown of forum posts.
+  *  The special check-in name "merge-in:BRANCH" means the source of
+     the most recent merge-in from the parent branch of BRANCH.
+  *  Add hyperlinks to branch-diffs on the /info page and from
+     timelines of a branch.
+  *  Add graphical context on the [/help/www/vdiff|/vdiff] page.
+  *  Uppercase query parameters, POST parameters, and cookie names are
+     converted to all lowercase and entered into the parameter set,
+     instead of being discarded.
+  *  Change the default [./hashpolicy.wiki|hash policy] to SHA3.
+  *  Timeout [./server/any/cgi.md|CGI requests] after 300 seconds, or
+     some other value set by the
+     [./cgi.wiki#timeout|"timeout:" property] in the CGI script.
+  *  The check-in lock interval is reduced from 24 hours to 60 seconds,
+     though the interval is now configurable using a setting.
+     An additional check for conflicts is added after interactive
+     check-in comment entry, to compensate for the reduced lock interval.
+  *  Performance optimizations.
+  *  Many documentation improvements.
+
+<h2 id='v2_9'>Changes for Version 2.9 (2019-07-13)</h2>
+
+  *  Added the [/help/git|fossil git export] command and instructions
+     for [./mirrortogithub.md|creating a GitHub mirror of a Fossil project].
+  *  Improved handling of relative hyperlinks on the
+     [/help/www/artifact|/artifact] pages for wiki. For example,
+     hyperlinks and the lizard &lt;img&gt; now work correctly
+     for both [/artifact/2ff24ab0887cf522] and
+     [/doc/0d7ac90d575004c2415/www/index.wiki].
+  *  Enhancements to the timeline graph layout, to show more information
+     with less clutter.
+  *  Added tool-tips to the /timeline graph.  On by default but can be
+     disabled by setting the "Tooltip dwell time" to 0 in the timeline
+     configuration.
+  *  Copy buttons added to various check-in hash and branch name links.
+  *  Double-clicking on a /timeline graph node now jumps to the /info page
+     for the check-in.  So, repurpose the timestamp hyperlink to show all
+     activity around that check-in in time.
+  *  Added the [/help/touch|fossil touch] command, and the --setmtime
+     option on the [/help/open|fossil open] and
+     [/help/update|fossil update] commands.
+  *  Many documentation enhancements.
+  *  For the "[/help/update|fossil update]" and
+     "[/help/checkout|fossil checkout]" commands, if a
+     managed file is removed because it is no longer part of the target
+     check-in and the directory containing the file is empty after the
+     file is removed and the directory is not the current working
+     directory and is not on the [/help/empty-dirs|empty-dirs]
+     list, then also remove the directory.
+  *  Update internal Unicode character tables, used in regular expression
+     handling, from version 11.0 to 12.1.
+  *  In "[/help/regexp|fossil regexp]", "[/help/grep|fossil grep]"
+     and the TH1 "regexp" command, the -nocase option now removes multiple
+     diacritics from the same character (derived from SQLite's
+     remove_diacritics=2)
+  *  Added the [/help/www/secureraw|/secureraw] page that requires the
+     complete SHA1 or SHA3 hash, not just a prefix, before it will deliver
+     content.
+  *  Accept purely numeric ISO8601 date/time strings as long as they
+     do not conflict with a hash.  Example: "20190510134217" instead of
+     "2019-05-10 13:42:17".  This helps keep URLs shorter and less
+     complicated
+  *  Support both "1)" and "1." for numbered lists in markdown, as
+     commonmark does.
+  *  The sync and clone HTTP requests omit the extra /xfer path element
+     from the end of the request URI. All servers since 2010 know that
+     the HTTP request is for a sync or clone from the mimetype so the
+     extra path element is not needed.
+  *  If an automatic sync gets a permanent redirect request, then update
+     the saved remote URL to the new address.
+  *  Temporary filenames (for example used for external "diff" commands)
+     try to preserve the suffix of the original file.
+  *  Added the [/help/www/thisdayinhistory|/thisdayinhistory] web page.
+  *  Enhanced parsing of [/help/www/timeline|/timeline] query parameters
+     "ymd=", "ym=", and "yw=".  All arguments are option (in which case they
+     default to the current time) and all accept ISO8601 date/times without
+     punctuation.
+  *  Automatically disapprove pending moderation requests for a user when
+     that user is deleted.  This helps in dealing with spam-bots.
+  *  Improvements to the "Capability Summary" section in the
+     [/help/www/secaudit0|Security Audit] web-page.
+  *  Use new "ci-lock" and "ci-lock-failed" pragmas in the
+     [./sync.wiki|sync protocol] to try to prevent accident forks
+     caused by concurrent commits when operating in auto-sync mode.
+  *  Fix a bug ([https://fossil-scm.org/forum/forumpost/c51b9a1169|details])
+     that can cause repository databases to be overwritten with debugging
+     output, thus corrupting the repository. This is only a factor when
+     CGI debugging is enabled, and even then is a rare occurrence, but it is
+     obviously an important fix.
+
+<h2 id='v2_8'>Changes for Version 2.8 (2019-02-20)</h2>
+
+  *  Show cherry-pick merges as dotted lines on the timeline graph.
+     &rarr; The "fossil rebuild" command must be run to create and
+     populate the new "cherrypick" table in the repository in order
+     for this feature to operate.
+  *  Add the ability to associate branches, check-ins, and tags with
+     specially-named Wiki pages. This gives the ability to better
+     document branches and tags, and provide more documentation on
+     check-ins beyond the check-in comment.  The associated Wiki is
+     automatically displayed on /info pages for check-ins, and on
+     /timeline?r=BRANCH and /timeline?t=TAG pages for branches and
+     tags. This feature is on by default, but can be disabled in on
+     the Admin/Wiki page.
+  *  Enhance the repository list page (shown for example by
+     "fossil all ui") so that it shows the name and last check-in
+     time for each project.  The implementation of the repository
+     list page is now broken out into a separate source file (repolist.c).
+  *  Allow users with Forum Supervisor permission ('6') to add Forum
+     Write Trusted permission ('4') to users as they are approving a
+     forum post by that user.
+  *  When running a bisect, report the number of check-ins still in
+     the search range and the estimated number of bisect steps remaining.
+     Do this at each step of the bisect.
+  *  Provide a permanent link to a bisect timeline using the bid= query
+     parameter.
+  *  Make the chronological forum display feature available to all users,
+     and make it the default format on mobile devices.
+  *  Break out Wiki setup into a separate /setup_wiki page, accessible
+     on the standard menus through Admin/Wiki.
+  *  Add "Next" and "Previous" buttons on the /wdiff page, allowing
+     the user to step through the versions of a wiki page.
+  *  Improve the display of the /whistory page.
+  *  Omit the "HH:MM" timestamps on timeline graphs on narrow-screen
+     devices, to improve horizontal space uses.  This helps make Fossil
+     more mobile-friendly.
+  *  Enhance /wcontent to show a sortable list of Wiki pages together
+     with the number of revisions and the most recent change time for
+     each page.
+  *  Hyperlinks to Wiki pages on the /timeline go to the specific
+     version of the Wiki page named in the timeline, not to the latest
+     version.
+  *  Enhancements to the "amend", "tag", and "reparent" commands, including
+     adding options --override-date, --override-user, and --dry-run.
+  *  Add the global --comment-format command-line option and the
+     comment-format setting to control the display of the command-line
+     timeline.
+  *  Change the "fossil reparent" command so that it only works from
+     within an active checkout.
+  *  On the /setup_ucap_list, show administrators how many users have
+     each capability.  The counts are a hyperlink to the /setup_ulist
+     page showing the subset of users that have that capability.
+  *  Provide the ability to redirect all HTTP pages to HTTPS.  Formerly
+     one could cause this to occur for the /login page only.  That option
+     still exists, but the redirect can now also be done for all pages.
+  *  "Compress" the built-in javascript by omitting comments and
+     leading and trailing whitespace.
+  *  Detect when the repository used by a checkout is swapped out for
+     a clone that uses different RID values, and make appropriate adjustments
+     to the checkout database to avoid any problems.
+  *  Add the backoffice-disable setting to completely disable the
+     backoffice feature.
+  *  Update the built-in SQLite to version 3.27.1.
+  *  Various other small enhancements to webpages and documentation.
+
+
+<h2 id='v2_7'>Changes for Version 2.7 (2018-09-22)</h2>
+
+  *  Add the [./alerts.md|email alerts] feature for commits, ticket
+     changes, wiki changes, forum posts, and announcements.  This is
+     still a work in progress.  It is functional, but it is not as easy to
+     setup and use as it ought to be.
+  *  Add the [./forum.wiki|discussion forum] feature.
+  *  Add new user capabilities letters needed to support alerts and forum.
+     Formerly, user capabilities were letters from &#91;a-z&#93;, but with the
+     enhancements, the supply of lower case letters was exhausted.
+     User capabilities are now letters in &#91;a-zA-Z0-9&#93;.
+  *  The built-in skins are now responsive, providing better layout on
+     small screens, including mobile devices.
+  *  The default skin now includes a hamburger menu that is generated
+     by the [/sitemap] page.
+  *  All of the built-in skins now use a
+     [https://en.wikipedia.org/wiki/Content_Security_Policy|Content Security Policy (CSP)]
+     to help prevent cross-site injection and forgery attacks.  There are no known
+     vulnerabilities in Fossil.  The added CSP does not fix anything; it merely adds
+     another layer of defense.
+  *  The [/sitemap] and other list pages show as multiple columns if
+     the viewing window is wide enough.
+  *  There is an optional "js" file for each skin that can be used to
+     hold javascript.  This file can be loaded by reference or can be
+     included in the header or footer.
+  *  Add the [./backoffice.md|backoffice].
+  *  Update internal Unicode character tables, used in regular expression
+     handling, from version 10.0 to 11.0.
+  *  Improvements to the "Security Audit" administration page
+  *  Add the [/help/branch|fossil branch current] command.
+  *  Add the [./grep.md|grep] command.
+  *  Update the built-in SQLite to version 3.25.1.
+  *  Some code and interfaces are in place to support sending and
+     receiving email directly via SMTP, but this feature is not yet
+     complete or ready for production use.
+  *  The `mv-rm-files` setting is now compiled into Fossil in the
+     default Fossil configuration; no longer must you say
+     <tt>./configure --with-legacy-mv-rm</tt> to make it available.  The
+     setting remains disabled by default, however, so you must still say
+     <tt>fossil set mv-rm-files 1</tt> to enable it on each repository
+     where you want hard <tt>mv/rm</tt> behavior.
+
+<h2 id='v2_6'>Changes for Version 2.6 (2018-05-04)</h2>
+
+  *  Fix a bug that was causing crashes while trying to clone the TCL
+     repository.  This fix is the main reason for the current release.
+  *  Added the new "Classic" timeline viewing mode.  "Classic" is the
+     same as "Verbose" in the previous release.  The "Verbose" mode is
+     now like "Compact" except the extra check-in details are shown by
+     default.
+  *  Add support for ETags:, Last-Modified:, and If-Modified-Since:
+     cache control mechanisms.
+  *  Enhance the [/help/www/tarball|/tarball],
+     [/help/www/zip|/zip], and
+     [/help/www/sqlar|/sqlar] pages so that the checkin
+     name to be downloaded can be expressed as part of the URI,
+     and without the need for query parameters.
+  *  On the [/help/www/timeline|/timeline] webpage, add the days=N
+     query parameter and enhance the ymd=DATE and yw=DATE query parameters
+     to accept 'now' as an argument to show the latest day or week.
+  *  In the web page that comes up in response to the
+     [/help/all|fossil all ui] command, show the last modification
+     time for each repository, and allow click-to-sort on the modification
+     time column.
+  *  In the tarball cache replacement algorithm, give extra weight to
+     tarballs that have been accessed more than once.
+  *  Additional defenses against web-based attacks.  There have not been
+     any known vulnerabilities.  We are just being paranoid.
+  *  Update the built-in SQLite to an alpha version of 3.24.0.
+
+<h2 id='v2_5'>Changes for Version 2.5 (2018-02-07)</h2>
+
+  *  Numerous enhancements to the look and feel of the web interface.
+     Especially:  Added separate "Modern", "Compact", "Verbose", and
+     "Columnar" view options on timelines.
+  *  Common display settings (such as the "view" option and the number
+     of rows in a timeline) are held in a cookie and thus persist
+     across multiple pages.
+  *  Rework the skin editing process so that changes are implemented
+     on one of nine /draft pages, evaluated, then merged back to the
+     default.
+  *  Added the [/timeline?skin=ardoise&once|Ardoise] skin.
+  *  Fix the "fossil server" command on Unix to be much more responsive
+     to multiple simultaneous web requests.
+  *  Use the IPv6 stack for the "fossil ui" and "fossil server"
+     commands on Windows.
+  *  Support for [https://sqlite.org/sqlar|SQL Archives] as a download
+     option.
+  *  Fossil now automatically generates the
+     &lt;html&gt;&lt;head&gt;...&lt;/head&gt;&lt;body&gt;
+     at the beginning of each web page if the configurable header
+     lacks a &lt;body&gt; tag.
+  *  Added the /artifact_stats page, currently accessible only by
+     the administrator.
+  *  Upgrade to the latest versions of SQLite and OpenSSL.
+  *  Improved key bindings on the Tk diff screen generated by
+     "fossil diff --tk".
+  *  Begin factoring out in-line javascript into separately loaded
+     script files.  This is a step along the
+     road toward supporting a strict Content Security Policy.  More work
+     is to be done.
+  *  Initial infrastructure is in place to make use of the pledge()
+     system call in OpenBSD.  More work is to be done.
+
+<h2 id='v2_4'>Changes for Version 2.4 (2017-11-03)</h2>
+
+  *  New feature: URL Aliases.  URL Aliases allow an administrator
+     to define their own URLs on the web interface that are rewritten to
+     built-in URLs with specific parameters.  Create and configure URL Aliases
+     using the /Setup/URL_Aliases menu option in the web interface.
+  *  Add tech-note search capability.
+  *  Add the -r|--revision and -o|--origin options to the
+     [/help/annotate|annotate] command.
+  *  Add the origin= query parameter to the [/help/www/annotate|/annotate]
+     webpage.
+  *  The [/help/annotate|fossil annotate] command and the
+     [/help/www/annotate|/annotate] web page go backwards in time as far
+     as can be computed in 30 milliseconds by default, rather than stopping
+     after 20 steps.  The new limit= query parameter or the --limit command-line
+     option can be used to alter this timeout.
+  *  Provide separate [/help#settings|on-line help screens for each setting].
+  *  Back out support for the --no-dir-symlinks option
+  *  Remove support from the legacy configuration sync protocol.  The only
+     way now to do a configuration push or pull is to use the new protocol that
+     was added in 2011.
+  *  Add the from= and to= query parameters to [/help/www/fdiff|/fdiff]
+     in order to get a diff of two files in the same check-in.
+  *  Fix the "ssh://" protocol to prevent an attack whereby the attacker convinces
+     a victim to run a "clone" with a dodgy URL and thereby gains access to their
+     system.
+  *  Provide a checkbox that will temporarily disable all ad-units.
+  *  Improvements to the [/help/www/stat|/stat] page
+  *  Various new hyperlinks to the [/help/www/bloblist|/bloblist]
+     and [/help/www/bigbloblist|/bigbloblist] pages.
+  *  Correct the [/help/www/doc|/doc] page to support read-only repositories.
+  *  Correct [/help/www/zip|/zip], [/help/www/tarball|/tarball],
+     [/help/zip|zip], and [/help/tarball|tarball] pages and commands to
+     honor the versioned manifest setting when outside of an open checkout
+     directory.
+  *  The admin-log and access-log settings are now on by default for
+     new repositories.
+  *  Update the built-in SQLite to version 3.21.0.
+
+<h2 id='v2_3'>Changes for Version 2.3 (2017-07-21)</h2>
+
+  *  Update the built-in SQLite to version 3.20.0 (beta).
+  *  Update internal Unicode character tables, used in regular expression
+     handling, from version 9.0 to 10.0.
+  *  Show the last-sync-URL on the [/help/www/urllist|/urllist] page.
+  *  Added the "Event Summary" activity report.
+     [/reports?type=ci&view=lastchng|example]
+  *  Added the "Security Audit" page, available to administrators only
+  *  Added the Last Login time to the user list page, for administrators only
+  *  Added the --numstat option to the [/help/diff|fossil diff] command
+  *  Limit the size of the heap and stack on unix systems, as a proactive
+     defense against the
+     [https://www.qualys.com/2017/06/19/stack-clash/stack-clash.txt|Stack Clash]
+     attack.
+  *  Fix "database locked" warnings caused by "PRAGMA optimize".
+  *  Fix a potential XSS vulnerability on the
+     [/help/www/help|/help] webpage.
+  *  Documentation updates
+
+<h2 id='v2_2'>Changes for Version 2.2 (2017-04-11)</h2>
+
+  *  GIT comment tags are now handled by Fossil during import/export.
+  *  Show the content of README files on directory listings.
+     ([/file/skins|example])
+  *  Support for Basic Authentication if enabled (default off).
+  *  Show the hash algorithms used on the
+     [/help/www/rcvfromlist|/rcvfromlist] page.
+  *  The [/help/www/tarball|/tarball] and [/help/www/zip|/zip] pages
+     now use the the r= query parameter
+     to select which check-in to deliver.  The uuid= query parameter
+     is still accepted for backwards compatibility.
+  *  Update the built-in SQLite to version 3.18.0.
+  *  Run "[https://www.sqlite.org/pragma.html#pragma_optimize|PRAGMA optimize]"
+     on the database connection as it is closing.
+
+<h2 id='v2_1'>Changes for Version 2.1 (2017-03-10)</h2>
+
+  *  Add support for [./hashpolicy.wiki|hash policies] that control which
+     of the Hardened-SHA1 or SHA3-256 algorithms is used to name new
+     artifacts.
+  *  Add the "gshow" and "gcat" subcommands to [/help/stash|fossil stash].
+  *  Add the [/help/www/juvlist|/juvlist] web page and use it to construct
+     the [/uv/download.html|Download Page] of the Fossil self-hosting website
+     using Ajax.
+
+<h2 id='v2_0'>Changes for Version 2.0 (2017-03-03)</h2>
+
+  *  Use the
+     [https://github.com/cr-marcstevens/sha1collisiondetection|hardened SHA1]
+     implementation by Marc Stevens and Dan Shumow.
+  *  Add the ability to read and understand
+     [./fileformat.wiki#names|artifact names] that are based on SHA3-256
+     rather than SHA1, but do not actually generate any such names.
+  *  Added the [/help/sha3sum|sha3sum] command.
+  *  Update the built-in SQLite to version 3.17.0.
+
+<h2 id='v1_37'>Changes for Version 1.37 (2017-01-16)</h2>
+
+  *  Add checkbox widgets to various web pages.  See [/technote/8d18bf27e9|
+     this technote] for more information.  To get the checkboxes to look as
+     intended, you must update the CSS in your repository and all clones.
+  *  Add the [/help/all|fossil all ui] command
+  *  Add the [/help/www/file|/file] webpage
+  *  Enhance the [/help/www/brlist|/brlist] webpage to make use of branch colors.
+  *  Add support for the ms=EXACT|LIKE|GLOB|REGEXP query parameter on the
+     [/help/www/timeline|/timeline] webpage, with associated form widgets.
+  *  Enhance the [/help/changes|changes] and [/help/status|status] commands
+     with many new filter options so that specific kinds of changes can be
+     found without having to pipe through grep or sed.
+  *  Enhanced the [/help/sqlite3|fossil sql] command so that it opens the
+     [./tech_overview.wiki#localdb|checkout database] and the
+     [./tech_overview.wiki#configdb|configuration database] in addition to the
+     repository database.
+  *  TH1 enhancements:
+     <ul><li>Add <nowiki>[unversioned content]</nowiki> command.</li>
+     <li>Add <nowiki>[unversioned list]</nowiki> command.</li>
+     <li>Add project_description variable.</li>
+     </ul>
+  *  Rename crnl-glob [/help/settings|setting] to crlf-glob, but keep
+     crnl-glob as a compatibility alias.
+  *  Added the --command option to the [/help/diff|diff] command.
+  *  Fix a C99-ism that prevents the 1.36 release from building with MSVC.
+  *  Fix [/help/ticket|ticket set] when using the "+" prefix with fields
+     from the "ticketchng" table.
+  *  Remove the "fusefs" command from builds that do not have the underlying
+     support enabled.
+  *  Fixes for incremental git import/export.
+  *  Minor security enhancements to
+     [./encryptedrepos.wiki|encrypted repositories].
+  *  Update the built-in SQLite to version 3.16.2.
+  *  Update the built-in Zlib to version 1.2.11.
+
+
+<h2 id='v1_36'>Changes for Version 1.36 (2016-10-24)</h2>
+
+  *  Add support for [./unvers.wiki|unversioned content],
+     the [/help/unversioned|fossil unversioned] command and the
+     [/help/www/uv|/uv] and [/uvlist] web pages.
+  *  The [/uv/download.html|download page] is moved into
+     [./unvers.wiki|unversioned content] so that the self-hosting Fossil
+     websites no longer uses any external content.
+  *  Added the "Search" button to the graphical diff generated by
+     the --tk option on the [/help/diff|diff] command.
+  *  Added the "--checkin VERSION" option to the
+     [/help/diff|diff] command.
+  *  Various performance enhancements to the [/help/diff|diff] command.
+  *  Update internal Unicode character tables, used in regular expression
+     handling, from version 8.0 to 9.0.
+  *  Update the built-in SQLite to version 3.15. Fossil now requires
+     the SQLITE_DBCONFIG_MAINDBNAME interface of SQLite which is only available
+     in SQLite version 3.15 and later and so Fossil will not work with
+     earlier SQLite versions.
+  *  Fix [https://www.mail-archive.com/fossil-users@lists.fossil-scm.org/msg23618.html|multi-line timeline bug]
+  *  Enhance the [/help/purge|fossil purge] command.
+  *  New command [/help/shell|fossil shell].
+  *  SQL parameters whose names are all lower-case in Ticket Report SQL
+     queries are filled in using HTTP query parameter values.
+  *  Added support for [./childprojects.wiki|child projects] that are
+     able to pull from their parent but not push.
+  *  Added the -nocomplain option to the TH1 "query" command.
+  *  Added support for the chng=GLOBLIST query parameter on the
+     [/help/www/timeline|/timeline] webpage.
+
+<h2 id='v1_35'>Changes for Version 1.35 (2016-06-14)</h2>
+
+  *  Enable symlinks by default on all non-Windows platforms.
+  *  Enhance the [/md_rules|Markdown formatting] so that hyperlinks that begin
+     with "/" are relative to the root of the Fossil repository.
+  *  Rework the [/help/www/setup_ulist|/setup_list page] (the User List page)
+     to display all users in a click-to-sort table.
+  *  Fix backslash-octal escape on filenames while importing from git
+  *  When markdown documents begin with &lt;h1&gt; HTML elements, use that
+     header at the document title.
+  *  Added the [/help/www/bigbloblist|/bigbloblist page].
+  *  Enhance the [/help/www/finfo|/finfo page] so that when it is showing
+     the ancestors of a particular file version, it only shows direct
+     ancestors and omits changes on branches, thus making it show the same set
+     of ancestors that are used for [/help/www/blame|/blame].
+  *  Added the --page option to the [/help/ui|fossil ui] command
+  *  Added the [/help/bisect|fossil bisect ui] command
+  *  Enhanced the [/help/diff|fossil diff] command so that it accepts
+     directory names as arguments and computes diffs on all files contained
+     within those directories.
+  *  Fix the [/help/add|fossil add] command so that it shows "SKIP" for
+     files added that were already under management.
+  *  TH1 enhancements:
+     <ul><li>Add <nowiki>[array exists]</nowiki> command.</li>
+     <li>Add minimal <nowiki>[array names]</nowiki> command.</li>
+     <li>Add tcl_platform(engine) and tcl_platform(platform) array
+     elements.</li>
+     </ul>
+  *  Get autosetup working with MinGW.
+  *  Fix autosetup detection of zlib in the source tree.
+  *  Added autosetup detection of OpenSSL when it may be present under the
+     "compat" subdirectory of the source tree.
+  *  Added the [/help/reparent|fossil reparent] command
+  *  Added --include and --exclude options to [/help/tarball|fossil tarball]
+     and [/help/zip|fossil zip] and the in= and ex= query parameters to the
+     [/help/www/tarball|/tarball] and [/help/www/zip|/zip] web pages.
+  *  Add support for [./encryptedrepos.wiki|encrypted Fossil repositories].
+  *  If the FOSSIL_PWREADER environment variable is set, then use the program it
+     names in place of getpass() to read passwords and passphrases
+  *  Option --baseurl now works on Windows.
+  *  Numerous documentation improvements.
+  *  Update the built-in SQLite to version 3.13.0.
+
+<h2 id='v1_34'>Changes for Version 1.34 (2015-11-02)</h2>
+
+  *  Make the [/help/clean|fossil clean] command undoable for files less
+     than 10MiB.
+  *  Update internal Unicode character tables, used in regular expression
+     handling, from version 7.0 to 8.0.
+  *  Add the new [/help/amend|amend] command which is used to modify
+     tags of a "check-in".
+  *  Fix bug in [/help/import|import] command, handling version 3 of
+     the svndump format for subversion.
+  *  Add the [/help/all|all cache] command.
+  *  TH1 enhancements:
+     <ul><li>Add minimal <nowiki>[lsearch]</nowiki> command. Only exact
+     case-sensitive matching is supported.</li>
+     <li>Add the <nowiki>[glob_match]</nowiki>, <nowiki>[markdown]</nowiki>,
+     <nowiki>[dir]</nowiki>, and <nowiki>[encode64]</nowiki> commands.</li>
+     <li>Add the <nowiki>[tclIsSafe] and [tclMakeSafe]</nowiki> commands to
+     the Tcl integration subsystem.</li>
+     <li>Add 'double', 'integer', and 'list' classes to the
+     <nowiki>[string is]</nowiki> command.</li>
+     </ul>
+  *  Add the --undo option to the [/help/diff|diff] command.
+  *  Build-in Antirez's "linenoise" command-line editing library for use with
+     the [/help/sqlite3|fossil sql] command on Unix platforms.
+  *  Add [/help/stash|stash cat] as an alias for the
+     [/help/stash|stash show] command.
+  *  Automatically pull before [/help/merge|fossil merge] when auto-sync
+     is enabled.
+  *  Fix --hard option to [/help/mv|fossil mv] and [/help/rm|fossil rm]
+     to enable them to work properly with certain relative paths.
+  *  Change the mimetype for ".n" and ".man" files to text/plain.
+  *  Display improvements in the [/help/bisect|fossil bisect chart] command.
+  *  Updated the built-in SQLite to version 3.9.1 and activated JSON1 and FTS5
+     support (both currently unused within Fossil).
+
+<h2 id='v1_33'>Changes for Version 1.33 (2015-05-23)</h2>
+  *  Improved fork detection on [/help/update|fossil update],
+     [/help/status|fossil status] and related commands.
+  *  Change the default skin to what used to be called "San Francisco Modern".
+  *  Add the [/repo-tabsize] web page
+  *  Add [/help/import|fossil import --svn], for importing a subversion
+     repository into fossil which was exported using "svnadmin dump".
+  *  Add the "--compress-only" option to [/help/rebuild|fossil rebuild].
+  *  Use a pie chart on the [/reports?view=byuser] page.
+  *  Enhanced [/help/clean|fossil clean --verily] so that it ignores
+     keep-glob and ignore-glob settings.  Added the -x alias for --verily.
+  *  Add the --soft and --hard options to [/help/rm|fossil rm] and
+     [/help/mv|fossil mv].  The default is still --soft, but that is
+     now configurable at compile-time or by the mv-rm-files setting.
+  *  Improved ability to [./customgraph.md|customize the timeline graph].
+  *  Improvements to the [/sitemap] page.
+  *  Automatically adjust the [/help/timeline|CLI timeline] to the terminal
+     width on Linux.
+  *  Added <nowiki>[info commands] and [info vars]</nowiki> commands to TH1.
+     These commands perform the same function as their Tcl counterparts,
+     except they do not accept a pattern argument.
+  *  Fix some obscure issues with TH1 expression processing.
+  *  Fix titles in search results for documents that are not wiki, markdown,
+     or HTML.
+  *  Formally translate TH1 to Tcl return codes and vice-versa, where
+     necessary, in the Tcl integration subsystem.
+  *  Add [/help/leaves|fossil leaves -multiple], for finding multiple
+     leaves on the same branch.
+  *  Added the "Blitz" skin option.
+  *  Removed the ".fossil-settings/keep-glob" file.  It should not have been
+     checked into the repository.
+  *  Update the built-in SQLite to version 3.8.10.2.
+  *  Make [/help/open|fossil open] honor ".fossil-settings/allow-symlinks".
+  *  Allow [/help/add|fossil add] to be used on symlinks to nonexistent or
+     unreadable files in the same way as [/help/addremove|fossil addremove].
+  *  Added fork warning to be issued if sync produced a fork
+  *  Update the [/help/www/info|info] page to report when a file becomes a
+     symlink.  Additionally show the UUID for files whose types have changed
+     without changing contents or symlink target.
+  *  Have [/help/changes|fossil changes] and
+     [/help/status|fossil status] report when executable or symlink status
+     changes on otherwise unmodified files.
+  *  Permit filtering weekday and file [/help/www/reports|reports] by user.
+     Also ensure the user parameter is preserved when changing types.  Add a
+     field for direct entry of the user name to each applicable report.
+  *  Create parent directories of [/help/settings|empty-dirs] if they don't
+     already exist.
+  *  Inhibit timeline links to wiki pages that have been deleted.
+
+<h2 id='v1_33'>Changes for Version 1.32 (2015-03-14)</h2>
+  *  When creating a new repository using [/help/init|fossil init], ensure
+     that the new repository is fully compatible with historical versions of
+     Fossil by having a valid manifest as RID 1.
+  *  Anti-aliased rendering of arrowheads on timeline graphs.
+  *  Added vi/less-style key bindings to the --tk diff GUI.
+  *  Documentation updates to fix spellings and changes all "checkins" to
+     "check-ins".
+  *  Add the --repolist option to server commands such as
+     [/help/server|fossil server] or [/help/http|fossil http].
+  *  Added the "Xekri" skin.
+  *  Enhance the "ln=" query parameter on artifact displays to accept multiple
+     ranges, separate by spaces (or "+" when URL-encoded).
+  *  Added [/help/forget|fossil forget] as an alias for
+     [/help/rm|fossil rm].
+
+<h2 id='v1_31'>Changes For Version 1.31 (2015-02-23)</h2>
+  *  Change the auxiliary schema by adding columns MLINK.ISAUX and MLINK.PMID
+     columns to the schema, to support better drawing of file change graphs.
+     A [/help/rebuild|fossil rebuild] is recommended but is not required.
+     so that the new graph drawing logic can work effectively.
+  *  Added [/search|search] over Check-in comments, Documents, Tickets and
+     Wiki.  Disabled by default.  The search can be either a full-scan or it
+     can use an index that is kept up-to-date automatically.  The new
+     /srchsetup web-page and the [/help/fts-config|fts-config] command
+     were added to help configure the search capability.  Expect further
+     enhancements to the search capabilities in subsequent releases.
+  *  Added form elements to some submenus (in particular the /timeline)
+     for easier operation.
+  *  Added the --ifneeded option to [/help/rebuild|fossil rebuild].
+  *  Added "override skins" using the "skin:" line of the CGI script or
+     using the --skin LABEL option on the [/help/server|server],
+     [/help/ui|ui], or [/help/http|http] commands.
+  *  Embedded html documents that begin with
+     &lt;doc class="fossil-doc"&gt; are displayed with standard
+     headers and footers added.
+  *  Allow &lt;div style='...'&gt; markup in [/wiki_rules|wiki].
+  *  Renamed "Events" to "Technical Notes", while updating the technote
+     display and control pages.  Add support for technotes as plain text
+     or as Markdown.
+  *  Added the [/md_rules] pages containing summary instructions on the
+     Markdown format.
+  *  Added the --repolist and --nojail options to the various server commands
+     (ex: [/help/server|fossil server]).
+  *  Added the [/help/all|fossil all add] subcommand to "fossil all".
+  *  Improvements to the /login page.  Some hyperlinks to pages that require
+     "anonymous" privileges are displayed even if the current user is "nobody"
+     but automatically redirect to /login.
+  *  The [/help/www/doc|/doc] web-page will now try to deliver the file
+     "404.md" from the top-level directory (if such a file exists) in
+     place of its built-in 404 text.
+  *  Download of Tarballs and ZIP Archives by user "nobody" is now enabled
+     by default in new repositories.
+  *  Enhancements to the table sorting controls.  More display tables
+     are now sortable.
+  *  Add IPv6 support to [/help/sync|fossil sync] and
+     [/help/clone|fossil clone]
+  *  Add more skins such as "San Francisco Modern" and "Eagle".
+  *  During shutdown, check to see if the check-out database (".fslckout")
+     contains a lot of free space, and if it does, VACUUM it.
+  *  Added the [/mimetype_list] page.
+  *  Added the [/hash-collisions] page.
+  *  Allow the user of Common Table Expressions in the SQL that defaults
+     ticket reports.
+  *  Break out the components (css, footer, and header) for the
+     various built-in skins into separate files in the source tree.
+
+<h2 id='v1_30'>Changes For Version 1.30 (2015-01-19)</h2>
+  *  Added the [/help/bundle|fossil bundle] command.
+  *  Added the [/help/purge|fossil purge] command.
+  *  Added the [/help/publish|fossil publish] command.
+  *  Added the [/help/unpublished|fossil unpublished] command.
+  *  Enhance the [/tree] webpage to show the age of each file with the option
+     to sort by age.
+  *  Enhance the [/brlist] webpage to show additional information about each branch
+     and to be sortable by clicking on column headers.
+  *  Add support for Docker. Just install docker and type
+     "sudo docker run -d -p 8080:8080 nijtmans/fossil" to get it running.
+  *  Add the [/help/fusefs|fossil fusefs DIRECTORY] command that mounts a
+     Fuse Filesystem at the given DIRECTORY and populates it with read-only
+     copies of all historical check-ins. This only works on systems that
+     support FuseFS.
+  *  Add the administrative log that records all configuration.
+  *  Added the [/sitemap] webpage.
+  *  Added the [/bloblist] web page.
+  *  Let [/help/new|fossil new] no longer create an initial empty commit
+     by default. The first commit after checking out an empty repository will
+     become the initial commit.
+  *  Added the [/help/all|fossil all dbstat] and
+     [/help/all|fossil all info] commands.
+  *  Update SQLite to version 3.8.8.
+  *  Added the --verily option to the [/help/clean|fossil clean] command.
+  *  Add the "autosync-tries" setting to control the number of autosync attempts
+     before returning an error.
+  *  Added a compile-time option (--with-miniz) to build using miniz instead
+     of zlib.  Disabled by default.
+  *  Support customization of commands and webpages, including the ability to
+     add new ones, via the "TH1 hooks" feature.  Disabled by default. Enabled
+     via a compile-time option.
+  *  Add the <nowiki>[checkout], [render], [styleHeader], [styleFooter],
+     [trace], [getParameter], [setParameter], [artifact], and
+     [globalState]</nowiki> commands to TH1, primarily for use by TH1 hooks.
+  *  Automatically adjust the width of command-line timeline output according to the
+     detected width of the terminal.
+  *  Prompt the user to optionally fix invalid UTF-8 at check-in.
+  *  Added a line-number toggle option to the [/help/www/info|/info]
+     and [/help/www/artifact|/artifact] pages.
+  *  Most commands now issue errors rather than silently ignoring unrecognized
+     command-line options.
+  *  Use full 40-character SHA1 hashes (instead of abbreviations) in most
+     internal URLs.
+  *  The "ssh:" sync method on Windows now uses "plink.exe" instead of "ssh" as
+     the secure-shell client program.
+  *  Prevent a partial clone when the connection is lost.
+  *  Make the distinction between 301 and 302 redirects.
+  *  Allow commits against a closed check-in as long as the commit goes onto
+     a different branch.
+  *  Improved cache control in the web interface reduces unnecessary requests
+     for common resources like the page logo and CSS.
+  *  Fix a rare and long-standing sync protocol bug
+     that would silently prevent the sync from running to completion.  Before
+     this bug-fix it was sometimes necessary to do "fossil sync --verily" to
+     get two repositories in sync.
+  *  Add the [/finfo?name=src/foci.c|files_of_checkin] virtual table - useful
+     for ad hoc queries in the [/help/sqlite3|fossil sql] interface,
+     and also used internally.
+  *  Added the "$secureurl" TH1 variable for use in headers and footers.
+  *  (Internal:) Add the ability to include resources as separate files in the
+     source tree that are converted into constant byte arrays in the compiled
+     binary.  Use this feature to store the Tk script that implements the --tk
+     diff option in a separate file for easier editing.
+  *  (Internal:) Implement a system of compile-time checks to help ensure
+     the correctness of printf-style formatting strings.
+  *  Fix CVE-2014-3566, also known as the POODLE SSL 3.0 vulnerability.
+  *  Numerous documentation fixes and improvements.
+  *  Other obscure and minor bug fixes - see the timeline for details.
+
+<h2 id='v1_29'>Changes For Version 1.29 (2014-06-12)</h2>
+  *  Add the ability to display content, diffs and annotations for UTF16
+     text files in the web interface.
+  *  Add the "SaveAs..." and "Invert" buttons
+     to the graphical diff display that results
+     from using the --tk option with the [/help/diff | fossil diff] command.
+  *  The [/reports] page now requires Read ("o") permissions. The "byweek"
+     report now properly propagates the selected year through the event type
+     filter links.
+  *  The [/help/info | info command] now shows leaf status of the checkout.
+  *  Add support for tunneling https through a http proxy (Ticket [e854101c4f]).
+  *  Add option --empty to the "[/help/open | fossil open]" command.
+  *  Enhanced [/help/www/fileage|the fileage page] to support a glob parameter.
+  *  Add -w|--ignore-all-space and -Z|--ignore-trailing-space options to
+     [/help/annotate|fossil annotate], [/help/blame|fossil blame],
+     [/help/diff|fossil (g)diff], [/help/stash|fossil stash diff].
+  *  Add --strip-trailing-cr option to [/help/diff|fossil (g)diff] and
+     [/help/stash|fossil stash diff].
+  *  Add button "Ignore Whitespace" to /annotate, /blame, /ci, /fdiff
+     and /vdiff UI pages.
+  *  Enhance [/reports?view=byweekday|/reports] with a "byweekday" view.
+  *  Enhance the [/help/cat|fossil cat] command so that it works outside
+     of a checkout when using the -R command-line option.
+  *  Use full-length SHA1 hashes, not abbreviations, in most hyperlinks.
+  *  Correctly render the &lt;title&gt; markup on wiki pages in the
+     [/help/www/artifact|/artifact] webpage.
+  *  Enhance the [/help/whatis|fossil whatis] command to report on attachments
+     and cluster artifacts.  Added the [/help/test-whatis-all] command for
+     testing purposes.
+  *  Add support for HTTP Basic Authentication on [/help/clone|clone] and
+     [/help/sync|sync].
+  *  Fix the [/help/stash|stash] so that it remembers added files and re-adds
+     them when the stash is applied.
+  *  Fix the server so that it avoids writing to the database (and thus avoids
+     database locking issues) on a
+     [/help/pull|pull] or [/help/clone|clone].
+  *  Add support for [./server.wiki#loadmgmt|server load management] using both
+     a cache of expensive pages (the [/help/cache|fossil cache] command)
+     and by rejecting expensive page requests when the server load average is too
+     high.
+  *  Add the [/help/praise|fossil praise] command as an alias for
+     [/help/blame|fossil blame] for subversion compatibility.
+  *  Enhance the [/help/test-diff|fossil test-diff] command with -y or --tk
+     options so that it shows both filenames above their respective columns in
+     the side-by-side diff output.
+  *  Issue a warning if a [/help/add|fossil add] command tries to add a file
+     that matches the ignore-glob.
+  *  Add option -W|--width to "[/help/stash|fossil stash ls]"
+     and "[/help/leaves|fossil leaves]" commands.
+  *  Enhance support for running as the root user. Now works on Haiku.
+  *  Added the <tt>-empty</tt> option to [/help/new|fossil new], which
+     causes it to not create an initial empty commit. The first commit after
+     checking out a repo created this way will become the initial commit.
+  *  Enhance sync operations by committing each round-trip to minimize number
+     of retransmits when autosync fails. Include option for
+     [/help/update| fossil update] and [/help/merge| fossil merge] to
+     continue even if missing content.
+  *  Minor portability fixes for platforms where the char type is unsigned
+     by default.
+
+<h2>Changes For Version 1.28 (2014-01-27)</h2>
+  *  Enhance [/help/www/reports | /reports] to support event type filtering.
+  *  When cloning a repository, the user name passed via the URL (if any)
+     is now used as the default local admin user's name.
+  *  Enhance the SSH transport mechanism so that it runs a single instance of
+     the "fossil" executable on the remote side, obviating the need for a shell
+     on the remote side.  Some users may need to add the "?fossil=/path/to/fossil"
+     query parameter to "ssh:" URIs if their fossil binary is not in a standard
+     place.
+  *  Add the "[/help/blame | fossil blame]" command that works just like
+     "fossil annotate" but uses a different output format that includes the
+     user who made each change and omits line numbers.
+  *  Add the "Tarball and ZIP-archive Prefix" configuration parameter under
+     Admin/Configuration.
+  *  Fix CGI processing so that it works on web servers that do not
+     supply REQUEST_URI.
+  *  Add options --dirsonly, --emptydirs, and --allckouts to the
+     "[/help/clean | fossil clean]" command.
+  *  Ten-fold performance improvement in large "fossil blame" or
+     "fossil annotate" commands.
+  *  Add option -W|--width and --offset to "[/help/timeline | fossil timeline]"
+     and  "[/help/finfo | fossil finfo]" commands.
+  *  Option -n|--limit of "[/help/timeline | fossil timeline]" now
+     specifies the number of entries, just like all other commands which
+     have the -n|--limit option. The various timeline-related functions
+     now output "--- ?? limit (??) reached ---" at the end whenever
+     appropriate. Use "-n 0" if no limit is desired.
+  *  Fix handling of password embedded in Fossil URL.
+  *  New <tt>--once</tt> option to [/help/clone | fossil clone] command
+     which does not store the URL or password when cloning.
+  *  Modify [/help/ui | fossil ui] to respect "default user" in an open
+     repository.
+  *  Fossil now hides check-ins that have the "hidden" tag in timeline webpages.
+  *  Enhance <tt>/ci_edit</tt> page to add the "hidden" tag to check-ins.
+  *  Advanced possibilities for commit and ticket change notifications over
+     http using TH1 scripting.
+  *  Add --sha1sum and --integrate options
+     to the "[/help/commit | fossil commit]" command.
+  *  Add the "clean" and "extra" subcommands to the
+     "[/help/all | fossil all]" command
+  *  Add the --whatif option to "[/help/clean|fossil clean]" that works the
+     same as "--dry-run",
+     so that the name does not collide with the --dry-run option of "fossil all".
+  *  Provide a configuration option to show dates on the web timeline
+     as "YYMMMDD HH:MM"
+  *  Add an option to the "stats" webpage that allows an administrator to see
+     the current repository schema.
+  *  Enhancements to the "[/help/www/vdiff|/vdiff]" webpage for more difference
+     display options.
+  *  Added the "[/tree?ci=trunk&expand | /tree]" webpage as an alternative
+     to "/dir" and make it the default way of showing file lists.
+  *  Send gzipped HTTP responses to clients that support it.
+
+<h2>Changes For Version 1.27 (2013-09-11)</h2>
+  *  Enhance the [/help/changes | fossil changes],
+     [/help/clean | fossil clean], [/help/extras | fossil extras],
+     [/help/ls | fossil ls] and [/help/status | fossil status] commands
+     to restrict operation to files and directories named on the command-line.
+  *  New --integrate option to [/help/merge | fossil merge], which
+     automatically closes the merged branch when committing.
+  *  Renamed <tt>/stats_report</tt> page to [/reports]. Graph width is now
+     relative, not absolute.
+  *  Added <tt>yw=YYYY-WW</tt> (year-week) filter to timeline to limit the results
+     to a specific year and calendar week number, e.g. [/timeline?yw=2013-01].
+  *  Updates to SQLite to prevent opening a repository file using file descriptors
+     1 or 2 on Unix.  This fixes a bug under which an assertion failure could
+     overwrite part of a repository database file, corrupting it.
+  *  Added support for unlimited line lengths in side-by-side diffs.
+  *  New --close option to [/help/commit | fossil commit], which
+     immediately closes the branch being committed.
+  *  Added <tt>chart</tt> option to [/help/bisect | fossil bisect].
+  *  Improvements to the "human or bot?" determination.
+  *  Reports errors about missing CGI-standard environment variables for HTTP
+     servers which do not support them.
+  *  Minor improvements to sync support on Windows.
+  *  Added <tt>--scgi</tt> option to [/help/server | fossil server].
+  *  Internal improvements to the sync process.
+  *  The internals of the JSON API are now MIT-licensed, so downstream
+     users/packagers are no longer affected by the "do no evil" license
+     clause.
+
+<h2>Changes For Version 1.26 (2013-06-18)</h2>
+  *  The argument to the --port option for the [/help/ui | fossil ui] and
+     [/help/server | fossil server] commands can take an IP address in addition
+     to the port number, causing Fossil to bind to just that one IP address.
+  *  After prompting for a password, also ask if that password should be
+     remembered.
+  *  Performance improvements to the diff engine.
+  *  Fix the side-by-side diff engine to work better with multi-byte Unicode text.
+  *  Color-coding in the web-based annotation (blame) display.  Fix the annotation
+     engine so that it is no longer confused by time-warps.
+  *  The markdown formatter is now available by default and can be used for
+     tickets, wiki, and embedded documentation.
+  *  Add subcommands "fossil bisect log" and "fossil bisect status" to the
+     [/help/bisect | fossil bisect] command, as well as other bisect enhancements.
+  *  Enhanced defenses that prevent spiders from using excessive CPU and bandwidth.
+  *  Consistent use of the -n or --dry-run command line options.
+  *  Win32: Fossil now understands Cygwin paths containing one or more of
+     the characters <nowiki>"*:<>?|</nowiki>. Those are normally forbidden in
+     win32. This means that the win32 fossil.exe is better usable in a Cygwin
+     environment. See
+     [http://cygwin.com/cygwin-ug-net/using-specialnames.html#pathnames-specialchars].
+  *  Cygwin: Fossil now understands win32 absolute paths starting with a drive
+     letter everywhere. The default value of the "case-sensitive" setting is
+     now FALSE, except when case-sensitivity is enabled in the Windows kernel.
+     See
+     [http://cygwin.com/cygwin-ug-net/using-specialnames.html#pathnames-casesensitive]
+  *  Enhancements to /timeline.rss, adding more flags for filtering
+     results, including the ability to subscribe to changes made
+     to individual tickets. For example: [/timeline.rss?y=t&tkt=12fceeec82].
+  *  Improved handling of the differences between case-sensitive and
+     case-insensitive filesystems.
+  *  JSON API: added the 'status' command to report local checkout status.
+  *  Fixes to the <tt>--args</tt> support and documented this feature in the help.
+  *  Added [/stats_report] page.
+  *  Added <tt>ym=YYYY-MM</tt> filter to the [/timeline?ym=2013-06].
+  *  Fixed: <tt>config reset</tt> now re-installs default ticket report format.
+  *  <tt>ssh://</tt> and <tt>file://</tt> protocols now ignore proxy settings.
+  *  Added [/hash-color-test] web page.
+  *  Cherry-pick merges are recorded internally (though no yet displayed on the
+     timeline graph.)
+  *  Bring in the latest versions of SQLite, zlib, and autosetup from upstream.
+
+<h2>Changes For Version 1.25 (2013-02-16)</h2>
+  *  Enhancements to ticket processing. There are now two tables: TICKET and
+     TICKETCHNG. There is one row in TICKETCHNG for each ticket artifact.
+     Fields from ticket artifacts go into either or both of TICKET and
+     TICKETCHNG, whichever contain matching column names. Default ticket
+     edit and viewing scripts are updated to use TICKETCHNG. The TH1
+     scripting language is enhanced to support this, including the new
+     "query" command for doing SQL queries against the repository database.
+     All changes should be backwards compatible.
+  *  Add the ability to moderate ticket and wiki changes.  Unmoderated changes
+     do not sync and may be deleted by the moderator if found to contain spam
+     or other objectionable content.
+  *  Add javascript so that clicking on a node of the timeline graph selects
+     that node.  Then clicking on a second node shows a diff between the
+     two nodes.  Clicking on the selected node unselects it.
+  *  Warn of unresolved merge conflicts in "fossil status" and disallow
+     commits of unresolved conflicts unless the --allow-conflict option
+     is used.
+  *  Add javascript so that clicking on column headers in a ticket report
+     sorts by the indicated column.
+  *  Add the "fossil cat" command which is basically an alias for
+     "fossil finfo -p".
+  *  Hyperlinks with the class "button" are rendered as submenu buttons
+     on embedded documentation.
+  *  The check-in comment editor on Windows now defaults to NotePad.exe.
+  *  Correctly deal with BOMs in check-in comments.  Also attempt to convert
+     check-in comments to UTF8 from other encodings.
+  *  Allow the deletion of multiple stash entries using multiple arguments
+     to the "fossil stash rm" command.
+  *  Enhance the "fossil server DIRECTORY" command to serve static content
+     files contained in DIRECTORY.  For security, only files with a
+     recognized suffix (such as *.html, *.jpg, *.txt, etc) will be delivered
+     as static content, and *.fossil files are not on the list of recognized
+     suffixes.  There are additional restrictions on the names of the files.
+  *  Allow the "fossil ui" command to specify a directory as long as the
+     the --notfound option is used.
+  *  Add a configuration option that causes timeline messages to be rendered
+     as text/x-fossil-plain (which is the same as text/plain except that
+     hyperlinks inside of <nowiki>[...]</nowiki> are decorated.)
+  *  Only decorate <nowiki>[...]</nowiki> in check-in comments and tickets
+     if the contented text really is a valid hyperlink target.
+  *  Improvements to the side-by-side diff algorithm, for a more
+     human-friendly display in some complex cases.
+  *  Added <nowiki>[utime] and [stime]</nowiki> commands to TH1.  These
+     commands can be used for things such as displaying the page rendering
+     time in the footer.
+  *  Add the ability to pass command-line options of "fossil rebuild" to
+     "fossil all rebuild".
+  *  Add the --deanalyze option to "fossil rebuild" (and "fossil all rebuild")
+  *  Do not run the graphical merging tool nor leave merge-droppings after a
+     dry-run merge.  Display an improved merge-summary message at the end of
+     the merge.
+  *  Add options to "fossil commit" to override the various sanity checks.
+     Options added: --allow-empty, --allow-fork, --allow-older, and
+     --allow-conflict.
+  *  Optionally require a CAPTCHA (controlled by a setting on the
+     Admin/Access webpage) when a user who is not logged in tries to
+     edit wiki, or a ticket, or an attachment.
+  *  Improvements to the "ssh://" sync protocol, to help it move past
+     noisy motd comments.
+  *  Add the uf=FILE-SHA1-HASH query parameter to the timeline, causing the
+     timeline to show only check-ins that contain the specific file identified
+     by FILE-SHA1-HASH.  ("uf" stands for "uses file".)
+  *  Enhance the file change annotator so that it follows the file across
+     name changes.
+  *  Fix the server-side of the sync protocol so that it will not generate
+     a delta loop when a file changes from its original state, through two
+     or more intermediate states, and back to the original state, all within
+     a single sync.
+  *  Show much less output during a sync operation, unless the --verbose
+     option is used.
+  *  Set the action= attribute of &lt;form&gt; elements using javascript,
+     as an addition defense against spam-bots.
+  *  Disallow invalid UTF8 characters (such as characters in the surrogate
+     pair range) in filenames.
+  *  Judge the UserAgent strings issued by the NetSurf webbrowser to be
+     coming from a human, not from a bot.
+  *  Add the zlib sources to the Fossil source tree (under compat/zlib) and
+     use those sources when compiling on (Windows) systems that do not have
+     a zlib library installed by default.
+  *  Prompt the user with the option to convert non-UTF8 files into UTF8
+     when committing.
+  *  Allow the characters <nowiki>*[]?</nowiki> in filenames.
+  *  Allow the --context option on diff commands to have a value of 0.
+  *  Added the "dbstat" command.
+  *  Enhanced "fossil merge" so that if the VERSION argument is omitted, Fossil
+     tries to merge any forks of the current branch.
+  *  Improved detection of forks in a commit race.
+  *  Added the --analyze option to "fossil rebuild".
+
+<h2>Changes For Version 1.24 (2012-10-22)</h2>
+  *  Added support for WYSIWYG editing of wiki pages. WYSIWYG is turned off
+     by default and can be turned on by setting a configuration option.
+  *  Allow style= attribute to occur in HTML markup on wiki pages.
+  *  Added the --tk option to the "fossil diff" and "fossil stash diff"
+     commands, causing color-coded diff output to be displayed in a Tcl/Tk
+     GUI window.  This option only works if Tcl/Tk is installed on the
+     host.
+  *  On Windows, make the "gdiff" command default to use WinDiff.exe.
+  *  Update the "fossil stash" command so that it always prompts for a
+     comment if the -m option is omitted.
+  *  Enhance the timeline webpages so that a=, b=, c=, d=, p=, and dp=
+     query parameters (and others) can all accept any valid check-in name
+     (such as branch names or labels) instead of just SHA1 hashes.
+  *  Added the "fossil stash show" command.
+  *  Added the "fileage" webpage with links to this page from the check-in
+     information page and from the file browser.
+  *  Added --age and -t options to the "fossil ls" command.
+  *  Added the --setmtime option to "fossil update".  When used, the mtime
+     of all managed files is set to the time when the most recent version of
+     the file was checked in.
+  *  Changed the "vdiff" webpage to show the complete text of files that
+     were added or removed (the equivalent of using the -N or --newfile
+     options with the "fossil diff" command-line.)
+  *  Added the --temp option to "fossil clean" and "fossil extra", causing
+     those commands to only look at temporary files generated by Fossil,
+     such as merge-conflict reports or aborted check-in messages.
+  *  Enhance the raw page download so that it can guess the mimetype of
+     attachments based on the filename.
+  *  Change the behavior of the from= and to= query parameters on the
+     timeline page so that by default the path between the two specified
+     check-ins avoids merges.
+  *  Add the --baseurl option to "fossil server" and "fossil http" commands,
+     so that those commands can be used with reverse proxies.
+  *  If unable to determine the command-line user, do not guess.  Instead
+     issue an error message.  This helps prevent check-ins from accidentally
+     occurring under the wrong username.
+  *  Include branch information in the output of file change listings
+     (the "finfo" webpage).
+  *  Make the simplified view of file history, rather than the full view,
+     the default.
+  *  In the "fossil configuration" command, allow the "css" option for
+     synchronizing, importing, or exporting just the CSS file.  This makes
+     it easier to share CSS files across repositories by exporting from
+     one and importing to another.
+  *  Add the (unsupported) "fossil test-orphans" command.
+  *  Add the --template option to the "fossil init" command, to facilitate
+     creating new repositories based on a template repository.
+  *  Add the diff-binary setting, which if enabled causes binary files to
+     be passed to the "gdiff" command for it to deal with, rather than simply
+     printing a "cannot diff binary files" error.
+  *  Add the --unified option to the "fossil diff" command to force a unified
+     diff even if the --tk option (which normally implies a side-by-side diff)
+     is used.
+  *  Present a choice of nearby branches and versions to diff against on the
+     check-in information page.
+  *  Add the --force option to the "fossil merge" command that will force the
+     merge to occur even if it would be a no-op.  This is sometimes useful for
+     documentation purposes.
+  *  Add another built-in skin:  "Enhanced Default".  Other minor tweaks to
+     the existing skins.
+  *  Add the "urllist" webpage, showing a list of URLs by which a server
+     instance of Fossil has been accessed.  Requires "Administrator" privileges.
+     A link is on the "Setup" main page.
+  *  Enable dynamic loading of the Tcl runtime for installations that want
+     to use Tcl as part of their configuration.  This reduces the size of
+     the Fossil binary and allows any version of Tcl 8.4 or later to be used.
+  *  Merge the latest SQLite changes from upstream.
+  *  Lots of minor bug fixes.
+
+<h2>Changes For Version 1.23 (2012-08-08)</h2>
+  *  The default checkout database name is now ".fslckout" instead of
+     "_FOSSIL_" on Unix.  Both names continue to work.
+  *  Added the "fossil all changes" command
+  *  Added the --ckout option to the "fossil all list" command
+  *  Added the "public-pages" glob pattern that can be configured to allow
+     anonymous users to see embedded documentation on sites where source
+     code should not be accessible to anonymous users.
+  *  Allow multiple --tag options on the same "fossil commit" command.
+  *  Change the meaning of the --bgcolor option for "fossil commit" to only
+     change the color for that one commit.  The new --branchcolor option
+     is available to set a persistent background color.
+  *  Add the branch= query parameter to the vdiff page and the --branch option
+     to the "fossil diff" command.
+  *  Check-in names of the form "root:BRANCH" now refer to the origin of
+     the branch.  Hence to see all changes in a branch, use
+     "fossil diff --from root:BRANCH --to BRANCH".  The --branch option on
+     the diff command is an alias for the same.
+  *  Add the ability to configure ad-units to be displayed between the menu
+     bar and the content.
+  *  Add the ability to set a background image as part of server configuration.
+  *  Allow partial commits of cherrypick merges.
+  *  Updates against an uncommitted merge are now a warning, not a fatal error.
+  *  Prompt the user to continue if a check-in comment is unedited.
+  *  Fixes to case sensitivity settings with the /dir webpage.
+  *  Repositories now try to remember the locations of all checkouts and
+     web-access URLs and display this information with the
+     "fossil info $REPO" command.
+  *  Improved defense against spiders:  The src= attribute of
+     &lt;a&gt; elements is set using javascript after the page loads.
+  *  Enhanced formatting of the user list page.
+  *  If a file named in "fossil add" is missing, that is now a warning instead
+     of a fatal error.
+  *  Fix side-by-side diff so that it displays correctly with
+     multi-byte UTF8 characters.
+  *  Performance improvements in the diff logic.
+  *  Other performance tweaks and documentation updates.
+
+<h2>Changes For Version 1.22 (2012-03-17)</h2>
+  *  Greatly improved "diff" processing including the new --brief option,
+     partial line matching, colorized in-line diffs, and better performance.
+  *  Promote "allow-symlinks" to a versionable setting
+  *  Harden the CGI processing logic against DOS attacks
+  *  Add the ability to run TH1 scripts after sync requests
+  *  Store the repository name in _FOSSIL_ as it is type in the "open" command,
+     possibly as a relative pathname.
+  *  Make ".fslckout" the alternative name for the "_FOSSIL_" file.
+  *  Change the "ssh:" transfer method to allow all access regardless of
+     user permission.
+  *  Improvements to the timeline messages associated with tag changes.
+     (Requires a "[/help/rebuild | fossil rebuild]" to take effect.)
+  *  Various additions and fixes for the JSON API.
+  *  Improved merge-with-rename handling.
+  *  --cherrypick merges use their origin's commit message by default.
+  *  Added support for multiple concurrent logins per user.
+  *  Update to use SQLite version 3.7.11.
+  *  Various minor bug fixes.
+
+<h2>Changes For Version 1.21 (2011-12-13)</h2>
+  *  Added side-by-side diffs in the command-line interface
+  *  Automatically enable hyperlinks if the UserAgent string in the
+     HTTP header suggests that the requestor is a human and not a bot.
+  *  Show only commonly used commands with "fossil help".  Use
+     "fossil help --all" to see the complete list now.
+  *  Improvements to the "stash" command:  (1) Stash all files, not just
+     those below the working directory. (2) Add the --detail option to
+     "list". (3) Confirm before "drop --all". (4) Add the "help"
+     subcommand.
+  *  Add an Admin/Access setting to change the number of octets of the
+     IP address that are saved in login cookies - allowing this setting
+     to be changed to zero
+  *  Promote the "test-md5sum" command to "md5sum".
+  *  Added the "whatis" command.
+  *  Stop showing the server-code in status outputs - it is no longer used
+     for anything.
+  *  Added a compile-time option (--with-tcl) to build in full Tcl scripting
+     support via integration with TH1.
+  *  Merged the JSON branch into trunk.  Disabled by default.  Enabled
+     by a compile-time option.  Probably it will be enabled by default
+     in some future release.
+  *  Update to use SQLite version 3.7.9 plus the alignment fix for Sparc.
+     align
+
+<h2>Changes For Version 1.20 (2011-10-21)</h2>
+  *  Added side-by-side diffs in HTML interface. [0bde74ea1e]
+  *  Added support for symlinks. (Controlled by "allow-symlinks" setting,
+     off by default). [e4f1c1fe95]
+  *  Fixed CLI annotate to show the proper file version in case there
+     are multiple equal versions in history. [e161670939]
+  *  Timeline now shows tag changes (requires rebuild).[87540ed6e6]
+  *  Fixed annotate to show "more relevant" versions of lines in
+     some cases. [e161670939]
+  *  New command: ticket history. [98a855c508]
+  *  Disabled SSLv2 in HTTPS client.[ea1d369d23]
+  *  Fixed constant prompting regarding previously-saved SSL
+     certificates. [636804745b]
+  *  Other SSL improvements.
+  *  Added -R REPOFILE support to several more CLI commands. [e080560378]
+  *  Generated tarballs now have constant timestamps, so they are
+     always identical for any given check-in. [e080560378]
+  *  A number of minor HTML-related tweaks and fixes.
+  *  Added --args FILENAME global CLI argument to import arbitrary
+     CLI arguments from a file (e.g. long file lists). [e080560378]
+  *  Fixed significant memory leak in annotation of files with long
+     histories.[9929bab702]
+  *  Added warnings when a merge operation overwrites local copies
+     (UNDO is available, but previously this condition normally went
+     silently unnoticed). [39f979b08c]
+  *  Improved performance when adding many files. [a369dc7721]
+  *  Improve merges which contain many file renames. [0b93b0f958]
+  *  Added protection against timing attacks. [d4a341b49d]
+  *  Firefox now remembers filled fields when returning to forms. [3fac77d7b0]
+  *  Added the --stats option to the rebuild command. [f25e5e53c4]
+  *  RSS feed now passes validation. [ce354d0a9f]
+  *  Show overridden user when entering commit comment. [ce354d0a9f]
+  *  Made rebuilding from web interface silent. [ce354d0a9f]
+  *  Now works on MSVC with repos >2GB. [6092935ff2]
+  *  A number of code cleanups to resolve warnings from various compilers.
+  *  Update the built-in SQLite to version 3.7.9 beta.
+
+<h2>Changes For Version 1.19 (2011-09-02)</h2>
+  *  Added a ./configure script based on autosetup.
+  *  Added the "[/help/winsrv | fossil winsrv]" command
+     for creating a Fossil service on Windows systems.
+  *  Added "versionable settings" where settings that affect
+     the local tree can be stored in versioned files in the
+     .fossil-settings directory.
+  *  Background colors for branches are chosen automatically if no
+     color is specified by the user.
+  *  The status, changes and extras commands now show
+     pathnames relative to the current working directory,
+     unless overridden by command line options or the
+     "relative-paths" setting.<br><b>WARNING:</b> This
+     change will break scripts which rely on the current
+     output when the current working directory is not the
+     repository root.
+  *  Added "empty-dirs" versionable setting.
+  *  Added support for client-side SSL certificates with "ssl-identity"
+     setting and --ssl-identity option.
+  *  Added "ssl-ca-location" setting to specify trusted root
+     SSL certificates.
+  *  Added the --case-sensitive BOOLEAN command-line option to many commands.
+     Default to true for Unix and false for Windows.
+  *  Added the "Color-Test" submenu button on the branch list web page.
+  *  Compatibility improvements to the git-export feature.
+  *  Performance improvements on SHA1 checksums
+  *  Update to the latest SQLite version 3.7.8 alpha.
+  *  Fix the tarball generator to work with very log pathnames
+
+<h2>Changes For Version 1.18 (2011-07-14)</h2>
+  *  Added this Change Log
+  *  Added sequential version numbering
+  *  Added an optional configure script - the Makefile still works for most
+     systems.
+  *  Improvements to the "annotate" algorithm: only search primary
+     ancestors and ignore branches.
+  *  Update the "scrub" command to remove traces of login-groups and
+     subrepositories.
+  *  Added the --type option to the "fossil tag find" command.
+  *  In contexts where only a check-in makes sense, resolve branch and
+     tag names to checkins only, never events or other artifacts.
+  *  Improved display of file renames on a diff.  A rebuild is required
+     to take full advantage of this change.
+  *  Update the built-in SQLite to version 3.7.7.

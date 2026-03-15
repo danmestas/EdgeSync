@@ -1,0 +1,5 @@
+A fossil-logo-3.png 64cada818ca9a5c59b5e556b15a59dd885653987 55d4a86663045441eb948580bd3292c196f02bdf
+C Need\sa\sticket\sattachment\sfor\slibfossil\stesting\spurposes.
+D 2014-04-11T15:30:50.639
+U stephan
+Z c45b7fd93364637d9b1858557fb720ef

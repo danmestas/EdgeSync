@@ -1,0 +1,1513 @@
+.\"
+.\" Copyright (c) 2021, 2022, 2023 Mark Jamsek <mark@jamsek.com>
+.\"
+.\" Permission to use, copy, modify, and distribute this software for any
+.\" purpose with or without fee is hereby granted, provided that the above
+.\" copyright notice and this permission notice appear in all copies.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+.\" WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+.\" MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+.\" ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+.\" WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+.\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+.\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+.\"
+.Dd $Mdocdate$
+.Dt FNC 1
+.Os
+.Sh NAME
+.Nm fnc
+.Nd interactive text-based user interface for Fossil repositories
+.Sh SYNOPSIS
+.Nm
+.Op Fl R Ar repository
+.Ar command
+.Op Ar arg ...
+.Nm
+.Op Fl hv
+.Nm
+.Ar path
+.Pp
+.Nm
+.Cm blame
+.Op Fl Chr
+.Op Fl c Ar commit
+.Op Fl l Ar lineno
+.Op Fl n Ar n
+.Ar path
+.Nm
+.Cm branch
+.Op Fl Cchopr
+.Op Fl a Ar date
+.Op Fl b Ar date
+.Op Fl s Ar order
+.Op Ar glob
+.Nm
+.Cm config
+.Op Fl hl
+.Op Fl u Ar option
+.Op Ar option Op Ar value
+.Nm
+.Cm diff
+.Op Fl bCDhiloPqsWw
+.Op Fl x Ar n
+.Op Ar artifact1 Op Ar artifact2
+.Op Ar path ...
+.Nm
+.Cm stash
+.Oo Fl ChP Oc Oo Fl x Ar n Oc Op Po Cm get Ns | Ns Cm pop Pc Oo Ar id Oc
+.Nm
+.Cm timeline
+.Op Fl Chz
+.Op Fl b Ar branch
+.Op Fl c Ar commit
+.Op Fl f Ar glob
+.Op Fl n Ar n
+.Op Fl T Ar tag
+.Op Fl t Ar type
+.Op Fl u Ar user
+.Op Ar path
+.Nm
+.Cm tree
+.Op Fl Ch
+.Op Fl c Ar commit
+.Op Ar path
+.Sh DESCRIPTION
+.Nm
+is an interactive text-based user interface for exploring
+.Xr fossil 1
+repositories, and managing local changes in a Fossil work tree.
+.Pp
+To facilitate navigation and display repository data,
+.Nm
+supports multiple views:
+.Bl -tag -width Ds
+.It Sy Timeline
+Display commits from the repository's history in chronologically
+descending order.
+If no
+.Ar command
+or only a
+.Ar path
+is specified,
+.Nm
+will default to displaying this view.
+.It Sy Diff
+Display changes introduced in the specified commit, between two repository
+artifacts, or local changes in the work tree.
+.It Sy Tree
+Display navigable tree reflecting the repository state as at the specified
+commit.
+.It Sy Blame
+Display and annotate each line in the given file with the hyperlinked
+commit in which the line was last modified.
+.It Sy Branch
+Display navigable list of all repository branches.
+.El
+.Pp
+.Nm
+provides both global and command-specific options, and runtime key
+bindings.
+Global options are as follows:
+.Bl -tag -width 6v
+.It Fl h , -help
+Display program help and usage information then exit.
+.It Fl R , -repo Ar path
+Use the
+.Xr fossil 1
+repository at the specified
+.Ar path
+for the current
+.Nm
+invocation.
+.It Fl v , -version
+Display program version then exit.
+.El
+.Pp
+Global key bindings are as follows:
+.Bl -tag -width Ds
+.It Ic H, \&?, F1
+Display runtime help.
+.It Ic Tab
+Switch focus between open views.
+.It Ic f
+Toggle the active view between fullscreen and splitscreen mode.
+By default,
+.Nm
+will open child views in a vertical split if the terminal width is
+\(>= 120 columns, otherwise a horizontal split will be used.
+.It Ic G, End
+Scroll to the last line in the view.
+.It Ic gg, Home
+Scroll to the first line in the view.
+.It Ic Q
+Quit
+.Nm .
+.It Ic q
+Quit the active view.
+.El
+.Pp
+Commands available to
+.Nm
+are as follows:
+.Bl -tag -width 4v
+.Tg conf
+.Tg set
+.It Xo
+.Cm config
+.Op Fl hl
+.Op Fl u Ar option | Ar option Oo Ar value Oc
+.Xc
+.Dl Pq aliases: Cm conf , Cm set
+Retrieve the current or set a new
+.Ar value
+for
+.Ar option
+in the local repository.
+When specified,
+.Ar value
+will become the new value for
+.Ar option ,
+otherwise
+.Nm
+will display the current value of
+.Ar option .
+With no arguments,
+.Nm Cm config
+will list all user-defined options; see
+.Sx ENVIRONMENT
+for a detailed list of all available options and their default values.
+.Pp
+During initialisation,
+if no value is defined for a given option in the local repository,
+environment variables will be searched.
+If still not found,
+.Nm
+will fallback to default values.
+.Pp
+Unless the global
+.Fl R
+option is used to specify a
+.Xr fossil 1
+repository, this command must be invoked from within a work tree; that is,
+.Nm
+assumes a local checkout is open in or above the current working directory.
+.Pp
+Options for
+.Nm Cm config
+are as follows:
+.Bl -tag -width Ds
+.It Fl h , -help
+Display config command help and usage information then exit.
+.It Fl l , -ls
+List all available options.
+.It Fl u , -unset Ar option
+Clear the specified
+.Ar option .
+.El
+.Tg save
+.Tg sta
+.It Xo
+.Cm stash
+.Op Fl ChP
+.Op Fl x Ar n
+.Op Po Cm get Ns | Ns Cm pop Pc Oo Ar id Oc
+.Xc
+.Dl Pq aliases: Cm save , Cm sta
+When run with neither the
+.Cm get
+nor
+.Cm pop
+subcommands,
+.Nm Cm stash
+will interactively iterate over each hunk comprising the diff of local changes
+in the work tree, and prompt the user to either stash or keep the current hunk.
+.Pp
+Valid answers are as follows:
+.Bl -column -offset 2s YXZ description
+.Sy b Ta scroll back Ns \(ha
+.Sy m Ta show more of the current hunk Ns \(ha
+.Sy y Ta yes, stash the current hunk
+.Sy n Ta no, do not stash the current hunk
+.Sy a Ta yes, stash this hunk and all remaining hunks in the current file
+.Sy k Ta no, do not stash this hunk nor any remaining hunks in the current file
+.Sy A Ta yes, stash this hunk and all remaining hunks in the diff
+.Sy K Ta no, do not stash this hunk nor any remaining hunks in the diff
+.Sy Q Ta abort the stash operation and discard any previous selections
+.Sy \&? Ta display help dialog
+.El
+.Pp
+\(haConditionally available when the current hunk occupies multiple pages.
+.Pp
+When all hunks have been selected,
+.Nm
+will prompt the user to enter a stash message.
+If not provided, a default message of
+.Qo
+fnc stash HASH-PREFIX
+.Qc ,
+where
+.Qq HASH-PREFIX
+is an abbreviated SHA hash of the current checkout,
+will be used.
+At any time prior to the final hunk being selected
+.Pq i.e., before being prompted for the stash message ,
+the operation can be aborted by either answering
+.Qq Q
+at the prompt or opening the help dialog and entering the
+.Ic Q
+key binding.
+This will discard any previous selections and leave the work tree unchanged.
+.Pp
+Available subcommands for
+.Nm Cm stash
+are as follows:
+.Bl -tag -width 00
+.It Cm get Op Ar id
+.Dl Pq aliases: Cm apply
+Retrieve the stash changeset corresponding to the specified
+.Ar id
+and apply it to the current checkout.
+If
+.Ar id
+is omitted, the most recent stash entry will be applied.
+.It Cm pop Op Ar id
+Like
+.Cm get ,
+but also remove the changeset from the stash cache.
+.El
+.Pp
+Options only apply to
+.Nm
+.Cm stash
+.Po i.e., neither the
+.Cm get
+nor
+.Cm pop
+subcommands
+.Pc
+and are as follows:
+.Bl -tag -width Ds
+.It Fl C , -no-colour
+Disable coloured output, which is enabled by default on supported terminals.
+.It Fl h , -help
+Display
+.Cm stash
+command help and usage information then exit.
+.It Fl P , -no-prototype
+Do not display the enclosing function or scope in the hunk header.
+The heuristic used to determine the enclosing scope will produce reliable
+results for all C-like languages
+.Pq e.g., C/C++, Java, Python, JavaScript ;
+however, Lisps and non-source code
+.Po
+e.g.,
+.Xr make 1 ,
+Markdown, reStructuredText
+.Pc
+will return meaningless results.
+.It Fl x , -context Ar n
+Set
+.Ar n
+context lines to be shown in the interactive stash diff display such that
+0 \*(Le
+.Ar n
+\*(Le 64.
+Illegal values are a no-op
+.Pq default: 5 .
+.El
+.Pp
+.Tg log
+.Tg tl
+.It Xo
+.Cm timeline
+.Op Fl Chz
+.Op Fl b Ar branch
+.Op Fl c Ar commit
+.Op Fl f Ar glob
+.Op Fl n Ar n
+.Op Fl T Ar tag
+.Op Fl t Ar type
+.Op Fl u Ar user
+.Op Ar path
+.Xc
+.Dl Pq aliases: Cm log , Cm tl
+Display repository history with a chronological log of all commits.
+If
+.Ar path
+is specified, only show commits that modified the file(s) at this path.
+The
+.Ar path
+may be absolute, relative to the current working directory, or relative to the
+repository root.
+.Pp
+Unless the global
+.Fl R
+option is used to specify a
+.Xr fossil 1
+repository, this command must be invoked from within a work tree; that is,
+.Nm
+assumes a local checkout is open in or above the current working directory.
+.Pp
+If invoked in a work tree, the log entry of the commit on which the checkout
+is based will be prefixed with one of the following annotations:
+.Bl -column YXZ description
+.It @ Ta work tree of the checked-out commit contains no local changes
+.It \(a~ Ta work tree of the checked-out commit contains local changes
+.El
+.Pp
+This command will be executed by default if
+.Nm
+is invoked without an explicit command.
+.Pp
+Options for
+.Nm Cm timeline
+are as follows:
+.Bl -tag -width Ds
+.It Fl b , -branch Ar branch
+Display commits on the specified
+.Ar branch .
+The expected argument is a glob of the symbolic branch name, with the most
+recent branch to match being selected.
+Pattern matching is case-insensitive unless
+.Ar branch
+has at least one uppercase character, which will make the search
+case-sensitive.
+By default,
+.Nm
+will display all commits irrespective of the branch on which they
+reside.
+.It Fl C , -no-colour
+Disable coloured timeline, which is enabled by default on supported
+terminals.
+If this option is not used, colour can be toggled with the
+.Sy c
+timeline view key binding as documented below.
+User-defined colours are also supported
+.Po see
+.Sx ENVIRONMENT
+for details
+.Pc .
+.It Fl c , -commit Ar commit
+Start timeline traversal from the specified
+.Ar commit .
+The expected argument is either a symbolic reference
+.Pq e.g., branch name, tag ,
+or (a unique abbreviated prefix of) a valid commit SHA1 or SHA3 hash,
+or an ISO 8601 formatted date.
+When this option is not used,
+.Nm
+will begin traversing history from the latest commit.
+For a complete list of valid arguments this option accepts, see
+.Lk https://fossil-scm.org/home/doc/trunk/www/checkin_names.wiki \
+"Fossil's Check-in Names".
+.It Fl f , -filter Ar glob
+Filter timeline by commits containing
+.Ar glob
+in any of the commit comment, user, or branch fields.
+Pattern matching is case-insensitive unless
+.Ar glob
+has at least one uppercase character, which will make the search
+case-sensitive.
+Filtering can also be performed at runtime with the
+.Sy F
+timeline view key binding as documented below.
+.It Fl h , -help
+Display timeline command help and usage information then exit.
+.It Fl n , -limit Ar n
+Limit timeline to the
+latest
+.Ar n
+commits.
+By default,
+.Nm
+will load the entire repository history.
+Negative values are a no-op.
+.It Fl T , -tag Ar tag
+Only display commits with T cards containing
+.Ar tag .
+The expected argument is a glob of a commit manifest's T card argument, with the
+most recent tag to match being selected.
+Pattern matching is case-insensitive unless
+.Ar tag
+has at least one uppercase character, which will make the search
+case-sensitive.
+By default,
+.Nm
+will display all commits irrespective of which T cards are attached
+to the commit manifest.
+.It Fl t , -type Ar type
+Only display
+.Ar type
+commits.
+Valid
+.Ar type
+values are as follows:
+.Bl -column -offset 2s YXZ description
+.Sy ci Ta check-in
+.Sy w Ta wiki
+.Sy t Ta ticket
+.Sy e Ta technote
+.Sy f Ta forum post
+.Sy g Ta tag artifact
+.El
+.Pp
+By default,
+.Nm
+will load all commits irrespective of
+.Ar type .
+This is a repeatable flag
+.Pq e.g., Nm Cm timeline Cm -t e -t t .
+.It Fl u , -username Ar user
+Only display commits authored by
+.Ar user .
+The search is case-insensitive by default unless
+.Ar user
+contains at least one uppercase character, which will make the search
+case-sensitive.
+.It Fl z , -utc
+Use Coordinated Universal Time (UTC) rather than local time when
+displaying commit dates and timestamps.
+.El
+.Pp
+Key bindings for
+.Nm Cm timeline
+are as follows:
+.Bl -tag -width Ds
+.It Ic Arrow-down, j, >, \&.
+Move selection cursor down the timeline.
+.It Ic Arrow-up, k, <, \&,
+Move selection cursor up the timeline.
+.It Ic Arrow-right, l
+Scroll view to the right in the buffer.
+Comment field contents move left on the screen.
+.It Ic Arrow-left, h
+Scroll view to the left in the buffer.
+Comment field contents move right on the screen.
+.It Ic $
+Scroll view to the rightmost position.
+This corresponds to the end of the longest log message summary line
+on the page.
+.It Ic 0
+Scroll view left to the start of the line.
+.It Ic C-f, Page-down
+Scroll timeline view one page downwards in the buffer.
+.It Ic C-b, Page-up
+Scroll timeline view one page upwards in the buffer.
+.It Ic C-d
+Scroll timeline view half of one page downwards in the buffer.
+.It Ic C-u
+Scroll timeline view half of one page upwards in the buffer.
+.It Ic Enter
+Open a
+.Cm diff
+view displaying the changeset of the currently selected commit.
+.It Ic Space
+Tag or untag the currently selected commit as the base commit
+for the next tagged commit to be diffed against.
+If another commit is already tagged, open a
+.Cm diff
+view showing the changes between it and the currently selected commit.
+.It Ic b
+Open and populate a
+.Cm branch
+view with all repository branches.
+One of the listed branches can be selected to display a new
+.Cm timeline
+view of its commit history.
+.It Ic C
+Diff local changes on disk in the current work tree against the currently
+selected commit.
+.It Ic c
+Toggle coloured timeline.
+On supported terminals,
+.Nm
+will default to displaying the timeline in colour.
+Colours can be customised using the
+.Cm config
+command or environment variables
+.Po see
+.Sx ENVIRONMENT
+for details
+.Pc .
+.It Ic F
+Prompt to enter a search term to filter a new timeline view that displays
+commits with comment, user, or branch fields that match the entered pattern.
+.It Ic t
+Open a
+.Cm tree
+view displaying the tree of the repository corresponding
+to the currently selected commit.
+.It Ic /
+Prompt to enter a search term to begin searching for commits matching
+the pattern provided.
+The search term is an extended regular expression that is matched against the
+comment, author username, branch, and SHA1 or SHA3 hash of each commit in the
+repository.
+See
+.Xr re_format 7
+for regular expression syntax.
+.It Ic n
+Find the next commit that matches the current search term.
+The search will continue until either a match is found or the earliest commit
+on the timeline is consumed.
+.It Ic N
+Find the previous commit that matches the current search term.
+The search will continue until either a match is found or the latest commit
+on the timeline is consumed.
+.It Ic Backspace
+Cancel the current search or timeline traversal in progress
+.Po
+i.e., operations executed with
+.Ic /
+or
+.Ic G Ns / Ns
+.Ic End
+.Pc .
+.El
+.Tg di
+.It Xo
+.Cm diff
+.Op Fl bCDhiloPqsWw
+.Op Fl x Ar n
+.Op Ar artifact1 Op Ar artifact2
+.Op Ar path ...
+.Xc
+.Dl Pq alias: Cm di
+Display the differences between two repository artifacts, or between the local
+changes in the work tree and a given commit.
+.Pp
+If invoked in a work tree with no
+.Ar artifact
+arguments
+specified,
+.Nm
+will show the differences between the local changes in the work tree and
+the commit on which the current checkout is based.
+If invoked in a work tree and only
+.Ar artifact1
+is specified,
+.Nm
+will show the differences between the local changes in the work tree and the
+commit referenced by
+.Ar artifact1 .
+When
+.Ar artifact1
+and
+.Ar artifact2
+are specified, the differences between
+these two versions will be displayed.
+Both artifact arguments must resolve to the same type
+.Pq i.e., commits or blobs ,
+and are expected to be either: symbolic references
+.Pq e.g., branch names, tags ;
+a commit or blob SHA1 or SHA3
+.Pq unique abbreviated
+hash; or an ISO 8601 formatted date.
+If one or more
+.Ar path
+arguments are supplied,
+.Nm
+will filter diffs
+so that only changes involving the file(s) in the named paths are displayed.
+Paths may be absolute, relative to the current working directory, or relative
+to the repository root.
+.Pp
+When invoked outside a work tree with the global
+.Fl R
+option or requesting the differences between blobs, both artifact arguments
+must be specified; in the latter case, any trailing arguments are invalid
+and will be ignored.
+.Pp
+Unless the global
+.Fl R
+option is used to specify a
+.Xr fossil 1
+repository, this command must be invoked from within a work tree; that is,
+.Nm
+assumes a local checkout is open in or above the current working directory.
+.Pp
+Options for
+.Nm Cm diff
+are as follows:
+.Bl -tag -width Ds
+.It Fl b , -brief
+Omit all changes.
+Show the file index and hash lines only.
+.It Fl C , -no-colour
+Disable coloured diff output, which is enabled by default on supported
+terminals.
+If this option is not used, colour can be toggled with the
+.Ic c
+diff view key binding as documented below.
+User-defined colours are also supported
+.Po see
+.Sx ENVIRONMENT
+for details
+.Pc .
+.It Fl D , -min-diffstat
+Show minimal diffstat instead of the more verbose plot bar histogram.
+.It Fl h , -help
+Display diff command help and usage information then exit.
+.It Fl i , -invert
+Invert the differences between artifacts.
+.It Fl l , -line-numbers
+Display actual file line numbers in diff output.
+.It Fl o , -no-curses
+Do not initialise curses to render the diff view.
+Write the diff directly to the standard output.
+.It Fl P , -no-prototype
+Do not display the enclosing function or scope in the hunk header.
+The heuristic used to determine the enclosing scope will produce reliable
+results for all C-like languages
+.Pq e.g., C/C++, Java, Python, JavaScript ;
+however, Lisps and non-source code
+.Po
+e.g.,
+.Xr make 1 ,
+Markdown, reStructuredText
+.Pc
+will return meaningless results.
+This option is mutually exclusive with
+.Fl l
+and
+.Fl s ,
+which produce incompatible hunk headers.
+.It Fl q , -quiet
+Do not output complete content of newly added
+or deleted files, which are displayed by default.
+Only show the file index and hash lines.
+.It Fl s , -sbs
+Display a side-by-side formatted diff.
+This option is mutually exclusive with
+.Fl l .
+.It Fl W , -whitespace-eol
+Ignore end-of-line whitespace-only changes.
+.It Fl w , -whitespace
+Ignore whitespace-only changes.
+.It Fl x , -context Ar n
+Set
+.Ar n
+context lines to be shown in the diff such that
+0 \*(Le
+.Ar n
+\*(Le 64.
+Illegal values are a no-op
+.Pq default: 5 .
+.El
+.Pp
+All the above options
+.Po
+except
+.Fl h
+and
+.Fl o
+.Pc
+can be made persistent as global or repository options via the
+.Ev FNC_DIFF_FLAGS
+option
+.Po see
+.Sx ENVIRONMENT
+for details
+.Pc .
+.Pp
+Key bindings for
+.Nm Cm diff
+are as follows:
+.Bl -tag -width Ds
+.It Ic Arrow-down, j
+Scroll view one line downwards in the buffer.
+Diff output moves upwards on the screen.
+.It Ic Arrow-up, k
+Scroll view one line upwards in the buffer.
+Diff output moves downwards on the screen.
+.It Ic Arrow-right, l
+Scroll view to the right in the buffer.
+Diff output moves left on the screen.
+.It Ic Arrow-left, h
+Scroll view to the left in the buffer.
+Diff output moves right on the screen.
+.It Ic $
+Scroll view to the rightmost position.
+This corresponds to the end of the longest line on the page.
+.It Ic 0
+Scroll view left to the start of the line.
+.It Ic C-e
+Move the selection cursor down one line.
+.It Ic C-y
+Move the selection cursor up one line.
+.It Ic C-f, Page-down, Space
+Scroll diff view one page downwards in the buffer.
+.It Ic C-b, Page-up
+Scroll diff view one page upwards in the buffer.
+.It Ic C-d
+Scroll diff view half of one page downwards in the buffer.
+.It Ic C-u
+Scroll diff view half of one page upwards in the buffer.
+.It Ic C-k, K, <, \&,
+If the
+.Cm diff
+view is derived from the
+.Cm timeline
+view, move up to the previous
+.Pq i.e., newer
+commit and display its diff.
+If derived from the
+.Cm blame
+view, move up to the previous line in the annotated file and display the
+corresponding diff.
+.It Ic C-j, J, >, \&.
+If the
+.Cm diff
+view is derived from the
+.Cm timeline
+view, move down the timeline to the next
+.Pq i.e., older
+commit and display its diff.
+If derived from the
+.Cm blame
+view, move down to the next line in the annotated file and display the
+corresponding diff.
+.It Ic C-p
+Navigate to the previous file in the diff.
+.It Ic C-n
+Navigate to the next file in the diff.
+.It Ic \&[
+Navigate to the previous hunk in the diff.
+.It Ic \&]
+Navigate to the next hunk in the diff.
+.It Ic \&-, \&_
+Decrease the number of context lines in the diff.
+.It Ic \&=, \&+
+Increase the number of context lines in the diff.
+.It Ic #
+Toggle the display of diff view
+.Pq not actual file
+line numbers.
+.It Ic @
+Open prompt to enter a line number and navigate to that line in the view.
+.It Ic b
+Toggle brief diff mode by only displaying file index and hash lines.
+.It Ic B
+Open and populate the
+.Cm branch
+view with all repository branches.
+.It Ic c
+Toggle coloured diff output.
+On supported terminals,
+.Nm
+will default to displaying changes and diff metadata in colour.
+.It Ic D
+Toggle between minimal and histogram diffstat.
+.It Ic i
+Toggle inversion of diff output.
+.It Ic L
+Toggle file line number formatted diff.
+.It Ic P
+Write the currently viewed diff to a file on disk.
+.Nm
+will prompt the user for a path, which can be absolute or relative, that
+points to a location in either the current work tree or the
+.Pa tmp
+directory.
+If no path is input and the
+.Sy return
+key is entered, the diff will be written to the current working directory
+using the first ten characters of the current artifact hash as the filename
+with a
+.Qq .diff
+extension
+.Pq e.g., Pa 2870235eef.diff .
+If the path already exists, it will be overwritten.
+.It Ic p
+In the diff hunk header, toggle display of which function or scope
+each change is in; for example:
+.Sy @@ -2360,10 +2361,11 @@ draw_commits(struct fnc_view *view)
+.It Ic S
+Toggle display of a side-by-side formatted diff.
+.It Ic v
+Toggle verbosity of diff output.
+By default,
+.Nm
+will display the entire content of newly added or deleted files.
+.It Ic W
+Toggle whether end-of-line whitespace changes are ignored when comparing lines
+in the diff.
+.It Ic w
+Toggle whether whitespace-only changes are ignored when comparing lines in the
+diff.
+.It Ic /
+Prompt to enter a search term to begin searching the diff output for
+lines matching the pattern provided.
+The search term is an extended regular expression, which is documented in
+.Xr re_format 7 .
+.It Ic n
+Find the next line that matches the current search term.
+.It Ic N
+Find the previous line that matches the current search term.
+.El
+.Tg dir
+.Tg tr
+.It Xo
+.Cm tree
+.Op Fl Ch
+.Op Fl c Ar commit
+.Op Ar path
+.Xc
+.Dl Pq aliases: Cm dir , Cm tr
+Display a navigable tree of the repository.
+.Pp
+If a
+.Ar path
+is specified, display the corresponding subtree, otherwise display the root
+of the tree.
+The
+.Ar path
+may be absolute, relative to the current working directory, or relative to the
+repository root.
+With no options passed, the tree will reflect the state of the latest commit on
+trunk.
+.Pp
+Unless the global
+.Fl R
+option is used to specify a
+.Xr fossil 1
+repository, this command must be invoked from within a work tree; that is,
+.Nm
+assumes a local checkout is open in or above the current working directory.
+.Pp
+Tree nodes are lexicographically ordered and may be postfixed with an
+identifier corresponding to the mode of the file object on disk as returned by
+.Xr lstat 2 :
+.Bl -column -offset Ds YXZ description
+.It / Ta directory
+.It * Ta executable
+.It @ Ta symbolic link
+.El
+.Pp
+Nodes representing symbolic links are further annotated with the path of the
+source file
+.Pq e.g., symlink@  ->  targetpath
+.Pp
+Options for
+.Nm Cm tree
+are as follows:
+.Bl -tag -width Ds
+.It Fl C , -no-colour
+Disable coloured output, which is enabled by default on supported terminals.
+If this option is not used, colour can be toggled with the
+.Sy c
+tree view key binding as documented below.
+User-defined colours are also supported
+.Po see
+.Sx ENVIRONMENT
+for details
+.Pc .
+.It Fl c , -commit Ar commit
+Display the repository tree corresponding to the checkin identified by
+.Ar commit .
+The expected argument is either a symbolic reference
+.Pq e.g., branch name, tag ,
+or (a unique abbreviated prefix of) a valid commit SHA1 or SHA3 hash,
+or an ISO 8601 formatted date.
+When this option is not used,
+.Nm
+will display the tree of the latest commit.
+For a complete list of valid arguments this option accepts, see
+.Lk https://fossil-scm.org/home/doc/trunk/www/checkin_names.wiki \
+"Fossil's Check-in Names".
+.It Fl h , -help
+Display tree command help and usage information then exit.
+.El
+.Pp
+Key bindings for
+.Nm Cm tree
+are as follows:
+.Bl -tag -width Ds
+.It Ic Enter, Arrow-right, l
+Enter the currently selected directory, or open a
+.Cm blame
+view of the currently selected file.
+.It Ic Backspace, Arrow-left, h
+Move up a level to the parent directory.
+This is a no-op when in the root tree.
+.It Ic Arrow-down, j
+Move selection cursor one node down the tree.
+.It Ic Arrow-up, k
+Move selection cursor one node up the tree.
+.It Ic C-f, Page-down
+Scroll tree view one page downwards in the buffer.
+.It Ic C-b, Page-up
+Scroll tree view one page upwards in the buffer.
+.It Ic C-d
+Scroll tree view half of one page downwards in the buffer.
+.It Ic C-u
+Scroll tree view half of one page upwards in the buffer.
+.It Ic Home, gg
+Move selection cursor to the first node in the tree.
+.It Ic End, G
+Move selection cursor to the last node in the tree.
+.It Ic b
+Open and populate the branch view with all repository branches.
+.It Ic c
+Toggle coloured output.
+On supported terminals,
+.Nm
+will default to displaying the tree in colour.
+.It Ic d
+Toggle display of the last modified timestamp for each tree entry.
+.It Ic i
+Toggle display of the hash ID for all file nodes in the tree.
+.It Ic t
+Open the
+.Cm timeline
+view of the currently selected tree entry.
+This will display the log of all commits involving the tracked
+file(s) corresponding to the selected tree node.
+.It Ic /
+Prompt to enter a search term to begin searching the tree for entries
+matching the entered pattern.
+The search term is an extended regular expression, as documented in
+.Xr re_format 7 ,
+and is matched against the path of each tree node.
+.It Ic n
+Find the next tree node that matches the current search pattern.
+.It Ic N
+Find the previous tree node that matches the current search pattern.
+.El
+.Tg praise
+.Tg bl
+.It Xo
+.Cm blame
+.Op Fl Chr
+.Op Fl c Ar commit
+.Op Fl l Ar lineno
+.Op Fl n Ar n
+.Ar path
+.Xc
+.Dl Pq aliases: Cm praise , Cm bl
+Show commit attribution history for each line of the file at the named
+.Ar path ,
+which may be absolute, relative to the current working directory,
+or relative to the repository root.
+.Pp
+Unless the global
+.Fl R
+option is used to specifiy a
+.Xr fossil 1
+repository, this command must be invoked from within a work tree; that is,
+.Nm
+assumes a local checkout is open in or above the current working directory.
+.Pp
+Options for
+.Nm Cm blame
+are as follows:
+.Bl -tag -width Ds
+.It Fl C , -no-colour
+Disable coloured output, which is enabled by default on supported terminals.
+If this option is not used, colour can be toggled with the
+.Sy c
+blame view key binding as documented below.
+User-defined colours are also supported
+.Po see
+.Sx ENVIRONMENT
+for details
+.Pc .
+.It Fl c , -commit Ar commit
+Start annotation of the tracked file from the specified
+.Ar commit .
+The expected argument is either a symbolic reference
+.Pq e.g., branch name, tag ,
+or (a unique abbreviated prefix of) a valid commit SHA1 or SHA3 hash,
+or an ISO 8601 formatted date.
+When this option is not used,
+.Nm
+will begin annotation from the latest commit.
+For a complete list of valid arguments this option accepts, see
+.Lk https://fossil-scm.org/home/doc/trunk/www/checkin_names.wiki \
+"Fossil's Check-in Names".
+.It Fl h , -help
+Display blame command help and usage information then exit.
+.It Fl l , -line Ar lineno
+Open the annotated file and navigate directly to
+.Ar lineno .
+.It Fl n , -limit Ar n
+Limit depth of blame history to
+.Ar n
+commits or seconds.
+The latter is denoted by a postfixed 's' (e.g., 30s).
+With this option,
+.Nm
+will traverse either as many commits as specified or as possible in the
+specified time limit.
+By default,
+.Nm
+will traverse the entire historical record of the file,
+which can be expensive for large files that span many commits.
+Use this option for a faster, more targeted annotation.
+.It Fl r , -reverse
+Reverse annotate the file starting from a historical commit and move forward
+in time so that instead of showing the most recent commit that changed each
+line, show the first commit that modified each line after the specified
+.Ar commit
+.Pq requires Fl c .
+.El
+.Pp
+Key bindings for
+.Nm Cm blame
+are as follows:
+.Bl -tag -width Ds
+.It Ic Arrow-down, j
+Move selection cursor down one line.
+.It Ic Arrow-up, k
+Move selection cursor up one line.
+.It Ic Arrow-right, l
+Scroll view to the right in the buffer.
+File contents move left on the screen.
+.It Ic Arrow-left, h
+Scroll view to the left in the buffer.
+File contents move right on the screen.
+.It Ic $
+Scroll view to the rightmost position.
+This corresponds to the end of the longest line on the page.
+.It Ic 0
+Scroll the view left to the beginning of the line.
+.It Ic C-f, Page-down
+Scroll blame view one page downwards in the buffer.
+.It Ic C-b, Page-up
+Scroll blame view one page upwards in the buffer.
+.It Ic C-d
+Scroll blame view half of one page downwards in the buffer.
+.It Ic C-u
+Scroll blame view half of one page upwards in the buffer.
+.It Ic Home, gg
+Move selection cursor to the first line in the file.
+.It Ic End, G
+Move selection cursor to the last line in the file.
+.It Ic Enter
+Open a
+.Cm diff
+view of the commit corresponding to the currently selected line.
+.It Ic #
+Toggle display of file line numbers.
+.It Ic @
+Open prompt to enter a line number and navigate to that line in the file.
+.It Ic B, Backspace
+Reload the previously blamed version of the file.
+.It Ic b
+Blame the version of the file corresponding to the commit in the currently
+selected line.
+.It Ic c
+Toggle coloured output.
+On supported terminals,
+.Nm
+will default to displaying the blamed file in colour.
+.It Ic p
+Blame the version of the file corresponding to the parent of the commit in
+the currently selected line.
+.It Ic T
+Open and populate a
+.Cm branch
+view with all repository branches.
+.It Ic /
+Prompt to enter a search term to begin searching the file for tokens matching
+the entered pattern.
+The search term is an extended regular expression, as documented in
+.Xr re_format 7 .
+.It Ic N
+Find the previous token that matches the current search pattern.
+.It Ic n
+Find the next token that matches the current search pattern.
+.El
+.Tg br
+.Tg tag
+.It Xo
+.Cm branch
+.Op Fl Cchopr
+.Op Fl a Ar date
+.Op Fl b Ar date
+.Op Fl s Ar order
+.Op Ar glob
+.Xc
+.Dl Pq aliases: Cm br , Cm ref
+Display navigable list of repository branches.
+.Pp
+If
+.Ar glob
+is specified, only display branches matching the pattern provided.
+Pattern matching is case-insensitive unless
+.Ar glob
+contains at least one uppercase character, which will make the search
+case-sensitive.
+.Pp
+Unless the global
+.Fl R
+option is used to specify a
+.Xr fossil 1
+repository, this command must be invoked from within a work tree; that is,
+.Nm
+assumes a local checkout is open in or above the current working directory.
+.Pp
+Branches are lexicographically ordered by default, and are prefixed with an
+identifier corresponding to the branch state (i.e., open/closed).
+The current and private branches are further annotated with a postfixed
+identifier:
+.Bl -column -offset Ds ABCDEFGHIJ description
+.It +dev-foo Ta open
+.It -rm-bar Ta closed
+.It +trunk@ Ta current
+.It +wip-baz* Ta private
+.El
+.Pp
+All branches, irrespective of state or privacy, are displayed by default, but
+can be filtered based on several characteristics.
+.Pp
+Options for
+.Nm Cm branch
+are as follows:
+.Bl -tag -width Ds
+.It Fl a , -after Ar date
+Display only those branches with activity after the specified
+.Ar date ,
+which is expected to be either an ISO 8601
+.Po e.g.,
+.Sy 2020-10-10
+.Pc
+or unambiguous
+.Sy DD/MM/YYYY
+or
+.Sy MM/DD/YYYY
+formatted date.
+.It Fl b , -before Ar date
+Display only those branches with activity before the specified
+.Ar date ,
+which is expected to be either an ISO 8601
+.Po e.g.,
+.Sy 2020-10-10
+.Pc
+or unambiguous
+.Sy DD/MM/YYYY
+or
+.Sy MM/DD/YYYY
+formatted date.
+.It Fl C , -no-colour
+Disable coloured output, which is enabled by default on supported terminals.
+If this option is not used, colour can be toggled with the
+.Sy c
+branch view key binding as documented below.
+User-defined colours are also supported
+.Po see
+.Sx ENVIRONMENT
+for details
+.Pc .
+.It Fl c , -closed
+Display only closed branches.
+.It Fl h , -help
+Display branch command help and usage information then exit.
+.It Fl o , -open
+Display only opened branches.
+.It Fl p , -no-private
+Do not show private branches, which are included in the list of displayed
+branches by default.
+.It Fl r , -reverse
+Reverse the order in which branches are displayed.
+.It Fl s , -sort Ar order
+Sort branches by
+.Ar order .
+Valid
+.Ar order
+values are as follows:
+.Bl -column -offset 2s YXZ description
+.Sy mru Ta most recently used
+.Sy state Ta open/closed state
+.El
+.Pp
+Branches are sorted in lexicographical order by default.
+.El
+.Pp
+Key bindings for
+.Nm Cm branch
+are as follows:
+.Bl -tag -width Ds
+.It Ic Arrow-down, j
+Move selection cursor down one branch.
+.It Ic Arrow-up, k
+Move selection cursor up one branch.
+.It Ic C-f, Page-down
+Scroll branch view one page downwards in the buffer.
+.It Ic C-b, Page-up
+Scroll branch view one page upwards in the buffer.
+.It Ic C-d
+Scroll branch view half of one page downwards in the buffer.
+.It Ic C-u
+Scroll branch view half of one page upwards in the buffer.
+.It Ic Home, gg
+Move selection cursor to the first branch in the list.
+.It Ic End, G
+Move selection cursor to the last branch in the list.
+.It Ic Enter, Space
+Display a
+.Cm timeline
+view of the currently selected branch.
+.It Ic c
+Toggle coloured output.
+On supported terminals,
+.Nm
+will default to displaying the branch list in colour.
+.It Ic d
+Toggle display of the date on which the branch last received changes.
+.It Ic i
+Toggle display of the SHA1 or SHA3 hash that identifies each branch,
+which is the commit hash of the branch tip.
+.It Ic s
+Toggle sort order of currently displayed branches.
+.Nm
+will cycle from lexicographical order to most recently used
+and then open/closed state.
+.It Ic t
+Open a
+.Cm tree
+view of the currently selected branch.
+.It Ic R, C-l
+Reload the view with all repository branches, irrespective of which options
+were used in this
+.Nm Cm branch
+invocation.
+.It Ic /
+Prompt to enter a search term to begin searching the list for branches matching
+the entered pattern.
+The search term is an extended regular expression, as documented in
+.Xr re_format 7 .
+.It Ic n
+Find the next branch that matches the current search pattern.
+.It Ic N
+Find the previous branch that matches the current search pattern.
+.El
+.El
+.Sh ENVIRONMENT
+Depending on the available screen estate determined by the LINES and COLUMNS
+environment variables,
+.Nm
+will display child views in either a horizontal or vertical split.
+By default, if COLUMNS is \(>= 120, a child view will open in a vertical split
+at least 80 columns wide.
+Otherwise, the child view will open in a horizontal split approximately 60%
+of the terminal height.
+This behaviour can be customised by configuring the following options as either
+exported environment variables or with
+.Nm Cm config
+as documented above.
+.Bl -tag -width FNC_VIEW_SPLIT_HEIGHT
+.It Ev FNC_VIEW_SPLIT_MODE
+Open child views in a horizontal or vertical split.
+Value can be one of
+.Qq auto ,
+.Qq horizontal ,
+or
+.Qq vertical
+.Pq default: auto .
+.It Ev FNC_VIEW_SPLIT_HEIGHT
+Height of the child view when opening in a horizontal split.
+Integers and percentage values denoted with a postfixed
+.Sq %
+.Pq e.g., Qq 75%
+are valid.
+Values that resolve to
+.Sy n
+lines such that 2 \(<=
+.Sy n
+< LINES - 2 are accepted while values outside this range are rejected
+.Pq default: 60% .
+.It Ev FNC_VIEW_SPLIT_WIDTH
+Minimum width of the child view when opening in a vertical split
+.Pq default: 80 .
+Currently a no-op.
+.El
+.Pp
+Similarly,
+.Cm diff
+options can be persistently applied to all diff views whether directly
+accessed with
+.Nm Cm diff
+or as a child view
+of the
+.Cm timeline
+or
+.Cm blame
+views by configuring the following options:
+.Bl -tag -width FNC_DIFF_CONTEXT
+.It Ev FNC_DIFF_FLAGS
+String containing any or all of the available short form
+.Cm diff
+boolean flag options documented above except for the
+.Fl h
+and
+.Fl o
+options
+.Po
+i.e., bCDilPqsWw
+.Pc .
+If mutually exclusive options
+.Qq l
+and
+.Qq s
+are both specified, whichever is last will take precedence; for example,
+.Qq lqs
+will display side-by-side formatted diffs
+.Pq default: Qq .
+.It Ev FNC_DIFF_CONTEXT
+Numeric value as per
+the above documented
+.Fl x
+option
+.Po
+i.e.,
+0 \*(Le n \*(Le 64
+.Pc
+specifying the number of context lines
+.Pq default: 5 .
+.El
+.Pp
+Any options passed to
+.Nm Cm diff
+will override the above settings.
+.Pp
+.Nm
+displays coloured output by default in supported terminals.
+Each colour object identified below can be defined by either exporting
+environment variables
+.Po e.g.,
+.Cm export Ev FNC_COLOUR_COMMIT=red
+.Pc ,
+or with
+.Nm Cm config
+as documented above.
+At startup,
+.Nm
+will search for user-defined colours in the following order:
+.Bl -column " environment variables " description -offset Ds
+.It 1. repository options Ta Pa repo.fossil
+.It 2. environment variables Ta Sy shell
+.El
+.Pp
+If none are found, the default colour scheme will be displayed.
+This enables setting per-project colours to visually distinguish the current
+repository being viewed, and globally changing the colour scheme for all
+repositories with no local options configured.
+Except where documented below, colours supported in
+.Nm
+are:
+.Bl -column "black" "yellow" "magenta" "default" -offset indent-two
+.It Qo black Qc Ta Qo green Qc Ta Qo blue Qc Ta Qo cyan Qc
+.It Qo red Qc Ta Qo yellow Qc Ta Qo magenta Qc Ta Qo default Qc
+.El
+.Pp
+Where
+.Qq default
+is the current foreground (i.e., text) colour in the terminal.
+User-definable colour objects displayed in various
+.Nm
+views are as follows:
+.Bl -tag -width FNC_COLOUR_BRANCH_PRIVATE
+.It Ev FNC_COLOUR_COMMIT
+The commit hash ID field displayed in the timeline, diff, tree, and blame views
+.Pq default: Qq green .
+.It Ev FNC_COLOUR_USER
+The username field displayed in the timeline and diff views
+.Pq default: Qq cyan .
+.It Ev FNC_COLOUR_DATE
+The date field displayed in the timeline and diff views
+.Pq default: Qq yellow .
+.It Ev FNC_COLOUR_DIFF_MINUS
+Removed lines displayed in the diff view
+.Pq default: Qq magenta .
+.It Ev FNC_COLOUR_DIFF_PLUS
+Added lines displayed in the diff view
+.Pq default: Qq cyan .
+.It Ev FNC_COLOUR_DIFF_HUNK
+Hunk header lines
+.Po e.g.,
+.Li @@ -732,34 +747,40 @@
+.Pc
+displayed in the diff view
+.Pq default: Qq yellow .
+.It Ev FNC_COLOUR_DIFF_META
+Metadata displayed in the diff view
+.Pq default: Qq green .
+.It Ev FNC_COLOUR_DIFF_TAGS
+The tag field displayed in the diff view
+.Pq default: Qq magenta .
+.It Ev FNC_COLOUR_DIFF_SBS_EDIT
+Changed
+.Pq i.e., not added or removed
+lines in the diff view when displaying side-by-side diffs
+.Pq default: Qq red .
+.It Ev FNC_COLOUR_TREE_DIR
+Directory entries displayed in the tree view
+.Pq default: Qq cyan .
+.It Ev FNC_COLOUR_TREE_EXEC
+Executable file entries displayed in the tree view
+.Pq default: Qq green .
+.It Ev FNC_COLOUR_TREE_LINK
+Symbolic link entries displayed in the tree view
+.Pq default: Qq magenta .
+.It Ev FNC_COLOUR_BRANCH_OPEN
+Open branches displayed in the branch view
+.Pq default: Qq cyan .
+.It Ev FNC_COLOUR_BRANCH_CLOSED
+Closed branches displayed in the branch view
+.Pq default: Qq magenta .
+.It Ev FNC_COLOUR_BRANCH_CURRENT
+The branch corresponding to the current checkout displayed in the branch view
+.Pq default: Qq green .
+.It Ev FNC_COLOUR_BRANCH_PRIVATE
+Private branches displayed in the branch view
+.Pq default: Qq yellow .
+.It Ev FNC_COLOUR_HL_LINE
+Selected line highlight in the diff view.
+Value can be one of
+.Sy auto
+or
+.Sy mono .
+The former will invert the foreground colour of the selected line, while the
+latter will use a monochromatic highlight
+.Pq default: Qq auto .
+.It Ev FNC_COLOUR_HL_SEARCH
+Search term highlight in the blame and diff views
+.Pq default: Qq yellow .
+.El
+.Pp
+To clear environment variables, invoke the shell builtin
+.Cm unset ;
+for example,
+.Qq unset Ev FNC_DIFF_CONTEXT .
+As documented above, local options can be unset with
+.Nm
+.Cm config
+.Fl u Ar option .
+.Pp
+.Nm
+displays best with UTF-8, and will detect whether UTF-8 is enabled to determine
+which characters to draw in certain views.
+If UTF-8 is supported by your terminal but is currently disabled, it can be
+enabled with
+.Qq export LC_CTYPE=en_US.UTF-8 ;
+If not available,
+.Nm
+will revert to ASCII.
+Relatedly, some fonts may render certain characters poorly in the help screen
+as they lack the requisite glyphs;
+.Li Monospace Regular ,
+.Li JetBrains Mono ,
+and
+.Li Menlo
+are known to render all characters well.
+.Sh EXIT STATUS
+.Ex -std fnc
+.Sh SEE ALSO
+.Xr fossil 1 ,
+.Xr sqlite3 1 ,
+.Xr re_format 7
+.Sh AUTHORS
+.An Mark Jamsek Aq Mt mark@jamsek.com

@@ -1,0 +1,22 @@
+<title>Fossilized Bash Prompt</title>
+
+Dan Kennedy has contributed a
+[./fossil_prompt.sh?mimetype=text/plain | bash script]
+that manipulates the bash prompt to show the status of
+the Fossil repository that the user is currently visiting.
+The prompt shows the branch, version, and time stamp for the
+current checkout, and the prompt changes colors from blue to
+red when there are uncommitted changes.
+
+To try out this script, simply download it from the link above, then
+type:
+
+<pre>
+. fossil_prompt.sh
+</pre>
+
+For a permanent installation, you can graft the code into your
+<tt>.bashrc</tt> file in your home directory.
+
+The code is very simple (only 32 non-comment lines, as of this writing)
+and hence easy to customize.

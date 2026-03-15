@@ -1,0 +1,41 @@
+#!/bin/env bash
+#
+# A test and debugging script for use with:
+#
+#   fossil clone --transport-command THIS_SCRIPT ...
+#
+# $1 = URL, $2=request input file, $3=response output file
+#
+# Example:
+#
+#  rm -f y.f x.?
+#  f clone http://localhost:8081 --xverbose -v --transport-command ./$0 y.f
+#  ls -la x.?
+#
+# It requires a GNU-style stat command, where %s is the file's size.
+#
+set -e
+outName=x # base name of output files
+url=$1
+host=${url#*://} # strip scheme:// part
+host=${host%%:*} # strip port
+host=${host##*:} # strip user name
+port=${url##*:}
+#echo "host=$host port=$port"; exit 1
+cp -p $2 ${outName}.in
+{
+    sz=$(stat -c %s $2)
+    echo -n -e "POST /xfer HTTP/1.0\r\n"
+    echo -n -e "Host: ${host}:${port}\r\n"
+    echo -n -e "Content-Type: application/x-fossil-debug\r\n"
+    echo -n -e "Content-Length: ${sz}\r\n"
+    echo -n -e "\r\n"
+    cat $2
+} > ${outName}.0
+netcat localhost $port < ${outName}.0 > ${outName}.1
+rc=$?
+# Strip out HTTP headers, else sync will fail:
+awk '/^\r/{x++; if (1==x) next;} x' ${outName}.1 > ${outName}.2
+#     ^^^ \r\n does not work with my awk
+cp -p ${outName}.2 $3
+exit $rc

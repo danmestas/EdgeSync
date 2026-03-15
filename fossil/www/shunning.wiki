@@ -1,0 +1,163 @@
+<title>Deleting Content From Fossil</title>
+
+<h2>Good Reasons for Removing Content from a Fossil Repository</h2>
+
+Fossil is designed to keep all historical content forever. Fossil
+purposely makes it difficult for users to delete content.  Old content
+is part of the project's <i>*ahem*</i> fossil record and should be
+maintained indefinitely to maintain an accurate history of the project.
+
+Nevertheless, there may occasionally arise legitimate reasons for
+deleting content.  Such reasons include:
+
+  *  Spammers inserted inappropriate content into a wiki page, forum post,
+     or ticket. Fossil lets you easily hide or amend such content, but
+     since it is not a legitimate part of the project's history, there
+     is no value in keeping it, so it is best removed permanently.
+
+  *  A file that contains trade secrets or that is under someone else's
+     copyright was accidentally committed and needs to be backed out.
+
+  *  A malformed control artifact was inserted and is disrupting the
+     operation of Fossil.
+
+  *  A legitimate legal request was received requiring content to
+     be removed. This would most likely be related to the accidental 
+     intellectual property error or spam cases listed above. Some countries 
+     recognise software patents, and so allow legal claims targetting code 
+     commits. Some countries can require publicly-available encryption 
+     software to be taken down if it is committed to the DAG without 
+     the correct government authorisation.
+
+<h2>Alternatives</h2>
+
+All of these are rare cases: Fossil is [./antibot.wiki | designed to
+foil spammers up front], legally problematic check-ins should range from
+rare to nonexistent, and you have to go way out of your way to force
+Fossil to insert bad control artifacts. Therefore, before we get to
+methods of permanently deleting content from a Fossil repo, let's give
+some alternatives that usually suffice, which don't damage the project's
+fossil record:
+
+  *  When a forum post or wiki article is "deleted," what actually
+     happens is that a new empty version is added to the Fossil repository.
+     The web interface interprets this
+     as "deleted," but the prior version remains available if you go
+     digging for it.
+ 
+  *  When you close a ticket, it's marked in a way that causes it
+     to not show up in the normal ticket reports. You usually want to
+     give it a Resolution such as "Rejected" when this happens, plus
+     possibly a comment explaining why you're closing it. This is all new
+     information added to the ticket, not deletion.
+ 
+  *  When you <tt>fossil rm</tt> a file, a new manifest is
+     checked into the repository with the same file list as for the prior
+     version minus the "removed" file. The file is still present in the
+     repository; it just isn't part of that version forward on that
+     branch.
+ 
+  *  If you make a bad check-in, you can shunt it off to the side
+     by amending it to put it on a different branch, then continuing
+     development on the prior branch:
+     <br><br>
+     <code>$ fossil amend abcd1234 --branch BOGUS --hide<br>
+     $ fossil up trunk</code>
+     <br><br>
+     The first command moves check-in ID <tt>abcd1234</tt> (and any
+     subsequent check-ins on that branch!) to a branch called
+     <tt>BOGUS</tt>, then hides it so it doesn't show up on the
+     timeline. You can call this branch anything you like, and you can
+     re-use the same name as many times as you like. No content is
+     actually deleted: it's just shunted off to the side and hidden away.
+     You might find it easier to do this from the Fossil web UI in
+     the "edit" function for a check-in.
+     <br><br>
+     The second command returns to the last good check-in on that branch
+     so you can continue work from that point.
+ 
+  *  When the check-in you want to remove is followed by good
+     check-ins on the same branch, you can't use the previous method,
+     because it will move the good check-ins, too. The solution is:
+     <br><br>
+     <tt>$ fossil merge --backout abcd1234</tt>
+     <br><br>
+     That creates a diff in the check-out directory that backs out the
+     bad check-in <tt>abcd1234</tt>. You then fix up any merge conflicts,
+     build, test, etc., then check the reverting change into the
+     repository. Again, nothing is actually deleted; you're just adding
+     more information to the repository which corrects a prior
+     check-in.
+
+<h2>Exception: Non-versioned Content</h2>
+
+It is normal and expected to delete data which is not versioned, such as
+usernames and passwords in the user table. The [/help/scrub|fossil scrub]
+command will remove all sensitive non-versioned data from a repository.
+
+The scrub command will remove user 'bertina', along with their password,
+any supplied IP address, any concealed email address etc. However, in the 
+DAG, commits by 'bertina' will continue to be visible unchanged even though
+there is no longer any such user in Fossil.
+
+<h2>Shunning</h2>
+
+Fossil provides a mechanism called "shunning" for removing content from
+a repository.
+
+Every Fossil repository maintains a list of the hash names of
+"shunned" artifacts.
+Fossil will refuse to push or pull any shunned artifact.
+Furthermore, all shunned artifacts (but not the shunning list
+itself) are removed from the
+repository whenever the repository is reconstructed using the
+"rebuild" command.
+
+<h3>Shunning lists are local state</h3>
+
+The shunning list is part of the local state of a Fossil repository.
+In other words, shunning does not propagate to a remote repository
+using the normal "sync" mechanism.  An artifact can be
+shunned from one repository but be allowed to exist in another.  The fact that
+the shunning list does not propagate is a security feature.  If the
+shunning list propagated then a malicious user (or
+a bug in the fossil code) might introduce a shun record that would
+propagate through all repositories in a network and permanently
+destroy vital information.  By refusing to propagate the shunning list,
+Fossil ensures that no remote user will ever be able to remove
+information from your personal repositories without your permission.
+
+The shunning list does not propagate to a remote repository
+by the normal "sync" mechanism,
+but it is still possible to copy shuns from one repository to another
+using the "configuration" command:
+
+    <b>fossil configuration pull shun</b> <i>remote-url</i><br>
+    <b>fossil configuration push shun</b> <i>remote-url</i>
+
+The two commands above will pull or push shunning lists from or to
+the <i>remote-url</i> indicated and merge the lists on the receiving
+end.  "Admin" privilege on the remote server is required in order to
+push a shun list.  In contrast, the shunning list will be automatically
+received by default as part of a normal client "pull" operation unless
+disabled by the "<tt>auto-shun</tt>" setting.
+
+Note that the shunning list remains in the repository even after the
+shunned artifact has been removed.  This is to prevent the artifact
+from being reintroduced into the repository the next time it syncs with
+another repository that has not shunned the artifact.
+
+<h3>Managing the shunning list</h3>
+
+The complete shunning list for a repository can be viewed by a user
+with "admin" privilege on the "/shun" URL of the web interface to Fossil.
+That URL is accessible under the "Admin" button on the default menu
+bar.  Items can be added to or removed from the shunning list.  "Sync"
+operations are inhibited as soon as the artifact is added to the
+shunning list, but the content of the artifact is not actually removed
+from the repository until the next time the repository is rebuilt.
+
+When viewing individual artifacts with the web interface, "admin"
+users will usually see a "Shun" option in the submenu that will take
+them directly to the shunning page and enable that artifact to be
+shunned with a single additional mouse click.

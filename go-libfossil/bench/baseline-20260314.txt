@@ -1,0 +1,38 @@
+PASS
+ok  	github.com/dmestas/edgesync/go-libfossil	0.250s
+goos: darwin
+goarch: arm64
+pkg: github.com/dmestas/edgesync/go-libfossil/blob
+cpu: Apple M4 Pro
+BenchmarkStore-14    	   10798	    110922 ns/op	  816829 B/op	      50 allocs/op
+PASS
+ok  	github.com/dmestas/edgesync/go-libfossil/blob	2.248s
+goos: darwin
+goarch: arm64
+pkg: github.com/dmestas/edgesync/go-libfossil/content
+cpu: Apple M4 Pro
+BenchmarkExpand_DeltaChain-14    	   19004	     62662 ns/op	  194552 B/op	     208 allocs/op
+PASS
+ok  	github.com/dmestas/edgesync/go-libfossil/content	2.192s
+PASS
+ok  	github.com/dmestas/edgesync/go-libfossil/db	0.241s
+goos: darwin
+goarch: arm64
+pkg: github.com/dmestas/edgesync/go-libfossil/delta
+cpu: Apple M4 Pro
+BenchmarkApply-14     	  339156	      3165 ns/op	   10240 B/op	       1 allocs/op
+BenchmarkCreate-14    	     720	   1668915 ns/op	   18552 B/op	       6 allocs/op
+PASS
+ok  	github.com/dmestas/edgesync/go-libfossil/delta	2.672s
+goos: darwin
+goarch: arm64
+pkg: github.com/dmestas/edgesync/go-libfossil/hash
+cpu: Apple M4 Pro
+BenchmarkSHA1-14    	  400392	      2987 ns/op	      96 B/op	       2 allocs/op
+BenchmarkSHA3-14    	  135170	      8907 ns/op	     128 B/op	       2 allocs/op
+PASS
+ok  	github.com/dmestas/edgesync/go-libfossil/hash	3.573s
+PASS
+ok  	github.com/dmestas/edgesync/go-libfossil/repo	0.285s
+PASS
+ok  	github.com/dmestas/edgesync/go-libfossil/testutil	0.292s

@@ -1,0 +1,115 @@
+# ftcl makefile for use with the teaish framework.
+
+dir.libf = @LIBFOSSIL_DIR@
+dir.g = $(tx.dir)/generic
+#tx.CFLAGS =
+T.exe = @TARGET_EXEEXT@
+ftclsh = ftclsh$(T.exe)
+tx.dist.basename = libfossil-tcl-$(tx.version)
+
+CFLAGS.sqlite3 = @CFLAGS_sqlite3@
+LDFLAGS.sqlite3 = @LDFLAGS_sqlite3@
+CPPFLAGS.sqlite3 = @CPPFLAGS_sqlite3@
+
+#tx.CFLAGS += $(CFLAGS.sqlite3)
+#tx.LDFLAGS += $(LDFLAGS.sqlite3)
+
+ftcl.src-deps-common = $(dir.g)/ftcl.h $(dir.g)/th.h
+
+$(dir.g)/th.h:
+$(dir.g)/th.c: $(dir.g)/th.h
+$(dir.g)/ftcl.h: $(dir.g)/th.h
+$(dir.g)/db.c: $(ftcl.src-deps-common)
+$(dir.g)/ls.c: $(ftcl.src-deps-common)
+$(dir.g)/shell.c: $(ftcl.src-deps-common)
+
+@RULES_FTCL_OBJ@
+
+dir.extsrc = $(dir.libf)/extsrc
+linenoise.c = $(dir.extsrc)/linenoise.c
+CPPFLAGS.linenoise = -I$(dir.extsrc)
+
+tx.obj = @FTCL_LIB_OBJ@
+tx.shell.obj = @FTCL_LIB_OBJ@ @FTCL_SHELL_OBJ@
+
+$(tx.dll): $(tx.obj)
+
+tx.clean-files = $(ftclsh) *.o
+clean: clean-ftcl
+clean-ftcl:
+	rm -f $(tx.clean-files)
+
+@if SQLITE3_SRC
+#
+#
+sqlite3.src = @SQLITE3_SRC@
+tx.obj += sqlite3.o
+sqlite3.o: $(sqlite3.src) Makefile
+	$(CC) -o $@ -c $(sqlite3.src) @SH_CFLAGS@ $(CFLAGS.sqlite3) $(CPPFLAGS.sqlite3)
+@endif # SQLITE3_SRC
+
+#
+# FTCL_LIBFOSSIL_SOURCE = @FTCL_LIBFOSSIL_SOURCE@
+#
+# 1 = canonical tree
+# 2 = canonical tree configured with --ftcl-full-dist
+# 3 = a dist bundle created from (2)
+#
+@if 1 == FTCL_LIBFOSSIL_SOURCE
+libf.a = $(dir.libf)/libfossil.a
+tx.LDFLAGS = $(libf.a)
+tx.shell.obj += $(libf.a)
+$(libf.a):
+	$(MAKE) -C $(dir.libf) libfossil.a libfossil.c
+$(tx.dll): $(libf.a)
+tx.shell.obj += linenoise.o
+linenoise.o: $(linenoise.c)
+	$(CC) -c -o $@ $(linenoise.c) $(CFLAGS) $(CPPFLAGS.linenoise)
+@endif # 1==@FTCL_LIBFOSSIL_SOURCE@
+
+@if FTCL_LIBFOSSIL_SOURCE > 1
+localf.o = libfossil.o
+localf.c = $(dir.g)/libfossil.c
+localf.src = $(localf.c) $(dir.g)/libfossil.h $(dir.g)/libfossil-config.h
+tx.shell.obj += $(localf.o)
+tx.obj += $(localf.o)
+#tx.LDFLAGS += -lsqlite3
+# ^^^^^ fixme: dynamic
+@if FTCL_LIBFOSSIL_SOURCE == 2
+$(dir.g)/libfossil-config.h: $(dir.libf)/libfossil-config.h
+	$(MAKE) -C $(dir.libf) libfossil.c
+	cp -p $(dir.libf)/libfossil.[ch] $(dir.libf)/libfossil-config.h $(dir.g)/.
+@endif # FTCL_LIBFOSSIL_SOURCE == 2
+
+$(dir.g)/libfossil.h: $(dir.g)/libfossil-config.h
+$(dir.g)/libfossil.c: $(dir.g)/libfossil.h
+$(localf.o): $(localf.c)
+	$(CC) -o $@ @SH_CFLAGS@ $(CFLAGS) -c $(localf.c)
+distclean-ftcl:
+	rm -f $(localf.src)
+distclean: distclean-ftcl
+
+# Stupid workaround for make dist
+generic/libfossil.h: $(dir.g)/libfossil.h
+generic/libfossil.c: $(dir.g)/libfossil.c
+generic/libfossil-config.h: $(dir.g)/libfossil-config.h
+@endif # FTCL_LIBFOSSIL_SOURCE > 1
+
+tx.src = $(tx.obj)
+$(tx.dll): $(tx.obj)
+#backfires $(tx.shell.obj): $(tx.tcl)
+
+@if 1 == FTCL_LIBFOSSIL_SOURCE
+# This mis-links in modes 2 and 3...
+$(ftclsh): $(tx.shell.obj) $(dir.g)/ftcl.c Makefile
+	$(CC.tcl) -DTCLFOSSILSH \
+    $(tx.shell.obj) $(LDFLAGS.configure) $(LDFLAGS) \
+    $(TCL_INCLUDE_SPEC) $(TCL_LIB_SPEC)
+all: $(ftclsh)
+clean: clean-ftclsh
+clean-ftclsh:
+	rm -f $(ftclsh)
+@endif
+
+shell:
+	FTCL_HISTORY_FILE=./$(ftclsh)

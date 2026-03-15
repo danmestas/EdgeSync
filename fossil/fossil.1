@@ -1,0 +1,107 @@
+.TH FOSSIL "1" "Oct 2024" "https://fossil-scm.org" "User Commands"
+.SH NAME
+fossil \- Distributed Version Control System
+.SH SYNOPSIS
+.B fossil
+\fIhelp\fR
+.br
+.B fossil
+\fIhelp COMMAND\fR
+.br
+.B fossil
+\fICOMMAND [OPTIONS]\fR
+.SH DESCRIPTION
+Fossil is a distributed version control system (DVCS) with built-in
+forum, wiki, ticket tracker, CGI/HTTP interface, and HTTP server.
+
+.SH Common COMMANDs:
+
+add            cherrypick     grep           push           sync
+.br
+addremove      clean          help           rebuild        tag
+.br
+all            clone          info           remote         timeline
+.br
+amend          commit         init           repack         tree
+.br
+annotate       dbstat         ls             revert         ui
+.br
+bisect         delete         merge          rm             undo
+.br
+blame          describe       merge-base     settings       unversioned
+.br
+branch         diff           mv             sql            update
+.br
+cat            extras         open           ssl-config     version
+.br
+changes        finfo          patch          stash          xdiff
+.br
+chat           gdiff          pull           status
+
+.SH FEATURES
+
+Features as described on the fossil home page.
+
+.HP
+1.
+.B Integrated Bug Tracking, Wiki, Forum, and Technotes
+- In addition to doing distributed version control like Git and
+Mercurial, Fossil also supports bug tracking, wiki, forum, and
+technotes.
+
+.HP
+2.
+.B Built-in Web Interface
+- Fossil has a built-in and intuitive web interface that promotes
+project situational awareness. Type "fossil ui" and Fossil automatically
+opens a web browser to a page that shows detailed graphical history and
+status information on that project.
+
+.HP
+3.
+.B Self-Contained
+- Fossil is a single self-contained stand-alone executable. To install,
+simply download a precompiled binary for Linux, Mac, OpenBSD, or Windows
+and put it on your $PATH. Easy-to-compile source code is available for
+users on other platforms.
+
+.HP
+4.
+.B Simple Networking
+- No custom protocols or TCP ports. Fossil uses plain old HTTP (or HTTPS
+or SSH) for all network communications, so it works fine from behind
+restrictive firewalls, including proxies. The protocol is bandwidth
+efficient to the point that Fossil can be used comfortably over dial-up
+or over the exceedingly slow Wifi on airliners.
+
+.HP
+5.
+.B CGI/SCGI Enabled
+- No server is required, but if you want to set one up, Fossil supports
+four easy server configurations.
+
+.HP
+6.
+.B Autosync
+- Fossil supports "autosync" mode which helps to keep projects moving
+forward by reducing the amount of needless forking and merging often
+associated with distributed projects.
+
+.HP
+7.
+.B Robust & Reliable
+- Fossil stores content using an enduring file format in an SQLite
+database so that transactions are atomic even if interrupted by a
+power loss or system crash. Automatic self-checks verify that all
+aspects of the repository are consistent prior to each commit.
+
+.HP
+8.
+.B Free and Open-Source
+- Uses the 2-clause BSD license.
+
+.SH DOCUMENTATION
+https://fossil-scm.org/
+.br
+.B fossil
+\fIui\fR

@@ -1,0 +1,94 @@
+D 2013-08-15T17:11:53.697
+L f-tools
+P bae93f0e99e0862ccf69b6c38619b4c039c3b11e
+U stephan
+W 6537
+<h1>The f-tools</h1>
+
+The source tree contains a few test/demo apps which are named <tt>f-something</tt> (the "f" is for "fossil", of course).
+
+   *  <tt>[/finfo?name=f-tag.c|f-tag]</tt> can add tags to artifacts.
+   *  <tt>[/finfo?name=f-timeline.c|f-timeline]</tt> provides a simple timeline 
+   *  <tt>[/finfo?name=f-resolve.c|f-resolve]</tt> resolves symbolic checkin names (like "trunk", "current", and "prev") and partial UUIDs to their full UUIDs and RIDs.
+
+These applications provide demonstrations of using the library and give devs a place to test new features. <tt>[/finfo?name=FossilApp.c|FossilApp.c]</tt> provides a mini-framework which takes care of bootstrapping fossil for these applications, making it pretty simple to create new ones. FossilApp handles the CLI parsing, global flags, opening of a repo/checkout, and other "getting started" bits.
+
+<h2>Demos</h2>
+
+<nowiki><pre>
+[stephan@host:~/cvs/fossil/f2]$ ./f-tag -a tip -t demo-tag -v "demo for prosperity purposes" --trace-sql 
+SQL TRACE #1: SELECT '/home/stephan/cvs/fossil/f2' || '/' || value FROM vvar WHERE name='repository';
+SQL TRACE #2: ATTACH DATABASE '/home/stephan/cvs/fossil/f2.fsl' AS repo;
+SQL TRACE #3: SELECT julianday('now');
+SQL TRACE #4: SELECT objid FROM event WHERE type='ci' ORDER BY event.mtime DESC LIMIT 1;
+SQL TRACE #5: SELECT uuid FROM blob WHERE rid=1226;
+SQL TRACE #6: SELECT strftime('%Y-%m-%dT%H:%M:%f',2456517.117559);
+SQL TRACE #7: BEGIN TRANSACTION;
+SQL TRACE #8: SELECT rid, size FROM blob WHERE uuid='daa063582c2cd9d6029a5616f8a05eaa12c1b01b';
+SQL TRACE #9: INSERT INTO blob(rcvid,size,uuid,content)&lt;...SNIP...&gt;;
+SQL TRACE #10: INSERT OR IGNORE INTO unclustered VALUES(1227);
+SQL TRACE #11: COMMIT;
+SQL TRACE #12: SELECT 1 FROM private WHERE rid=1226;
+SQL TRACE #13: BEGIN TRANSACTION;
+SQL TRACE #14: SELECT rid FROM blob WHERE uuid GLOB '2a84ad397a134ca3f278a44f4f969f962eb47a7b*';
+SQL TRACE #15: SELECT tagid FROM tag WHERE tagname='demo-tag';
+SQL TRACE #16: INSERT INTO tag(tagname) VALUES('demo-tag');
+SQL TRACE #17: SELECT 1 FROM tagxref WHERE tagid=30   AND rid=1226   AND mtime>=2456517.11755911;
+SQL TRACE #18: REPLACE INTO tagxref(tagid,tagtype,srcId,origid,value,mtime,rid) VALUES(30,1,1227,1226,&lt;...SNIP...&gt;);
+SQL TRACE #19: SELECT &lt;...SNIP...&gt; WHERE pid=1226 AND isprim;
+SQL TRACE #20: REPLACE INTO event(type,mtime,objid,user,comment)VALUES(&lt;...SNIP...&gt;);
+SQL TRACE #21: COMMIT;
+SQL TRACE #22: DETACH DATABASE repo;
+
+[stephan@host:~/cvs/fossil/f2]$ ./f-timeline -n 1
+g  [daa063582c2c] @ 2013-08-12 16:49:17 by [stephan]
+	Edit [2a84ad39]: Add "demo-tag" with value "demo for prosperity purposes".
+
+[stephan@host:~/cvs/fossil/f2]$ ./f-timeline -n 1 --trace-sql
+SQL TRACE #1: SELECT '/home/stephan/cvs/fossil/f2' || '/' || value FROM vvar WHERE name='repository';
+SQL TRACE #2: ATTACH DATABASE '/home/stephan/cvs/fossil/f2.fsl' AS repo;
+SQL TRACE #3: SELECT substr(uuid,1,12) AS uuid, &lt;...BIG SNIP...&gt; ORDER BY event.mtime DESC LIMIT 1;
+g  [daa063582c2c] @ 2013-08-12 16:49:17 by [stephan]
+	Edit [2a84ad39]: Add "demo-tag" with value "demo for prosperity purposes".
+SQL TRACE #4: DETACH DATABASE repo;
+
+
+[stephan@host:~/cvs/fossil/f2]$ ./f-resolve current prev 
+b170fb24fe5d94a5b7fa7a00a9911083bf69b27b    1466 current
+1ec904fa6a54b45b0a35cd14bab41af138584e45    1461 prev
+</pre></nowiki>
+
+
+<h2>f-tag</h2>
+
+f-tag can be used to add and cancel tags on arbitrary repository artifacts. Tags in fossil are actually key/value pairs, but the value is optional. The ability to tag arbitrary artifacts, including other tags, allows (in principal) for applying arbitrary key/value-pair metadata to arbitrary artifacts. This can be used for a great many things above and beyond what fossil currently uses tags for. For example, tags could be used to implement a simple form of comment thread system, by implementing comments as tags, and replies as tags to those comment tags, ad nauseum.
+
+Anyway... this tool is a very basic test/demonstration of this library which allows one to apply tags to artifacts. It allows some things the current fossil UI/CLI cannot make much sense of or do anything useful with (e.g. tags on tags or "cancel" tags with values), but nothing it does is incompatible with how fossil works internally.
+
+
+<blockquote>
+<strong><em>FOREWARNINGS</em></strong>: changing branch tags or other "fossil-special" tags (e.g. Wiki pages or tickets) with this tool is as yet untested, is not yet expected to work (it's an ongoing process), <em>and might break things</em> (relationships between data records). It also does not yet honor the 'private' flag, so tags are always public for the time being (even if applied to private branches). Try such things at your own risk. Better yet, don't try them at all until this warning message is gone.
+</blockquote>
+
+Examples of setting and cancelling flags:
+
+<nowiki><pre>
+# Change the color of a single commit:
+# f-tag -a current -t bgcolor -v '#ffff33'
+
+# Propagate the bg color starting at a commit:
+# f-tag -a current -t '*bgcolor' -v '#ffff33'
+
+# Cancel that color:
+# f-tag -a current -t -bgcolor -v 'that was uglier than i thought it would be'
+
+# Change the checkin comment on the current checkout:
+# f-tag -a current -t comment -v '...new comment...'
+</pre></nowiki>
+
+Values are always optional but Fossil internally treats some tag names specially and may require (or expect) a value. The <tt>bgcolor</tt> tag is one example. When cancelling a tag, the value is always optional, regardless of whether or not it is a special tag.
+
+When adding a tag, the tag name may optionally be prefixed with a <tt>+</tt> sign, for symmetry with the cancel (<tt>-</tt>) and propagate (<tt>*</tt>) markers. Cancel tags might <em>look</em> like options/flags because they start with a minus, but they are not interpreted as a flag due to a happy accident of design. When using propagating tags, it is wise to enclose the tag in quotes to prevent any unwanted side-effects of shell globbing. Optionally, use <tt>-t=*tagname</tt>, which would only match a glob in the most unusual of circumstances. Likewise, <tt>-t=-tag-to-cancel</tt> can be used if having the tag value look like a flag seems disturbing to you.
+
+Note that the +/-/* prefixes were not chosen arbitrarily: they reflect how Fossil internally stores and recognizes the type of a tag: <tt>+</tt> represents an "add tag", <tt>-</tt> a "cancel tag" (a.k.a. "anti-tag"), and <tt>*</tt> a propagating tag.
+Z d8fbbffa6b7be27ea90756b6fe982901

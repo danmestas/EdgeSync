@@ -1,0 +1,113 @@
+package sync
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/dmestas/edgesync/go-libfossil/repo"
+	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/dmestas/edgesync/go-libfossil/xfer"
+)
+
+const (
+	// DefaultMaxSend is the default byte budget per round for file payloads.
+	DefaultMaxSend = 250000
+	// MaxRounds caps the number of sync rounds before giving up.
+	MaxRounds = 100
+	// MaxGimmeBase is the minimum gimme cap per round.
+	MaxGimmeBase = 200
+)
+
+// SyncOpts configures a sync session.
+type SyncOpts struct {
+	Push, Pull              bool
+	ProjectCode, ServerCode string
+	User, Password          string
+	MaxSend                 int
+	Env                     *simio.Env // nil defaults to RealEnv
+}
+
+// SyncResult reports what happened during a sync.
+type SyncResult struct {
+	Rounds, FilesSent, FilesRecvd int
+	Errors                        []string
+}
+
+// session holds the mutable state of a running sync.
+type session struct {
+	repo                *repo.Repo
+	env                 *simio.Env
+	opts                SyncOpts
+	result              SyncResult
+	cookie              string
+	remoteHas           map[string]bool
+	phantoms            map[string]bool
+	pendingSend         map[string]bool
+	filesRecvdLastRound int
+	igotSentThisRound   int
+	maxSend             int
+}
+
+func newSession(r *repo.Repo, opts SyncOpts) *session {
+	ms := opts.MaxSend
+	if ms <= 0 {
+		ms = DefaultMaxSend
+	}
+	env := opts.Env
+	if env == nil {
+		env = simio.RealEnv()
+	}
+	return &session{
+		repo:        r,
+		env:         env,
+		opts:        opts,
+		maxSend:     ms,
+		remoteHas:   make(map[string]bool),
+		phantoms:    make(map[string]bool),
+		pendingSend: make(map[string]bool),
+	}
+}
+
+// Sync runs the client sync loop against the given transport.
+// It returns once the protocol has converged or a fatal error occurs.
+func Sync(ctx context.Context, r *repo.Repo, t Transport, opts SyncOpts) (*SyncResult, error) {
+	s := newSession(r, opts)
+	for cycle := 0; ; cycle++ {
+		select {
+		case <-ctx.Done():
+			return &s.result, ctx.Err()
+		default:
+		}
+		if cycle >= MaxRounds {
+			return &s.result, fmt.Errorf("sync: exceeded %d rounds", MaxRounds)
+		}
+		req, err := s.buildRequest(cycle)
+		if err != nil {
+			return &s.result, fmt.Errorf("sync: buildRequest round %d: %w", cycle, err)
+		}
+		resp, err := t.Exchange(ctx, req)
+		if err != nil {
+			return &s.result, fmt.Errorf("sync: exchange round %d: %w", cycle, err)
+		}
+		done, err := s.processResponse(resp)
+		if err != nil {
+			return &s.result, fmt.Errorf("sync: processResponse round %d: %w", cycle, err)
+		}
+		s.result.Rounds = cycle + 1
+		if done {
+			break
+		}
+	}
+	return &s.result, nil
+}
+
+// cardsByType is a helper that filters cards by type for testing/debugging.
+func cardsByType(msg *xfer.Message, ct xfer.CardType) []xfer.Card {
+	var out []xfer.Card
+	for _, c := range msg.Cards {
+		if c.Type() == ct {
+			out = append(out, c)
+		}
+	}
+	return out
+}

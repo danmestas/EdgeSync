@@ -1,0 +1,263 @@
+<title>Defense Against Robots</title>
+
+A typical Fossil website can have billions and billions of pages,
+and many of those pages (for example diffs and annotations and tarballs) 
+can be expensive to compute.
+If a robot walks a Fossil-generated website,
+it can present a crippling bandwidth and CPU load.
+A "robots.txt" file can help, but in practice, most robots these
+days ignore the robots.txt file, so it won't help much.
+
+A Fossil website is intended to be used
+interactively by humans, not walked by robots.  This article
+describes the techniques used by Fossil to try to welcome human
+users while keeping out robots.
+
+<h2>Defenses Are Enabled By Default</h2>
+
+In the latest implementations of Fossil, most robot defenses are
+enabled by default.  You can probably get by with standing up a
+public-facing Fossil instance in the default configuration.  But
+you can also customize the defenses to serve your particular needs.
+
+<h2>Customizing Anti-Robot Defenses</h2>
+
+Admin users can configure robot defenses on the
+"Robot Defense Settings" page (/setup_robot).
+That page is accessible (to Admin users) from the default menu bar
+by click on the "Admin" menu choice, then selecting the
+"Robot-Defense" link from the list.
+
+<h2>The Hyperlink User Capability</h2>
+
+Every Fossil web session has a "user".  For random passers-by on the internet
+(and for robots) that user is "nobody".  The "anonymous" user is also
+available for humans who do not wish to identify themselves.  The difference
+is that "anonymous" requires a login (using a password supplied via
+a CAPTCHA) whereas "nobody" does not require a login.
+The site administrator can also create logins with
+passwords for specific individuals.
+
+Users without the <b>[./caps/ref.html#h | Hyperlink]</b> capability
+do not see most Fossil-generated hyperlinks. This is
+a simple defense against robots, since [./caps/#ucat | the "nobody"
+user category] does not have this capability by default.
+Users must log in (perhaps as
+"anonymous") before they can see any of the hyperlinks.  A robot
+that cannot log into your Fossil repository will be unable to walk
+its historical check-ins, create diffs between versions, pull zip
+archives, etc. by visiting links, because there are no links.
+
+A text message appears at the top of each page in this situation to
+invite humans to log in as anonymous in order to activate hyperlinks.
+
+But requiring a login, even an anonymous login, can be annoying.
+Fossil provides other techniques for blocking robots which
+are less cumbersome to humans.
+
+<h2>Automatic Hyperlinks Based on UserAgent and Javascript</h2>
+
+Fossil has the ability to selectively enable hyperlinks for users
+that lack the <b>Hyperlink</b> capability based on their UserAgent string in the
+HTTP request header and on the browsers ability to run Javascript.
+
+The UserAgent string is a text identifier that is included in the header
+of most HTTP requests that identifies the specific maker and version of
+the browser (or robot) that generated the request.  Typical UserAgent
+strings look like this:
+
+<ul>
+<li> Mozilla/5.0 (Windows NT 6.1; rv:19.0) Gecko/20100101 Firefox/19.0
+<li> Mozilla/4.0 (compatible; MSIE 8.0; Windows_NT 5.1; Trident/4.0)
+<li> Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)
+<li> Wget/1.12 (openbsd4.9)
+</ul>
+
+The first two UserAgent strings above identify Firefox 19 and
+Internet Explorer 8.0, both running on Windows NT.  The third
+example is the robot used by Google to index the internet.
+The fourth example is the "wget" utility running on OpenBSD.
+Thus the first two UserAgent strings above identify the requester
+as human whereas the second two identify the requester as a robot.
+Note that the UserAgent string is completely under the control
+of the requester and so a malicious robot can forge a UserAgent
+string that makes it look like a human.  But most robots want
+to "play nicely" on the internet and are quite open
+about the fact that they are a robot.  And so the UserAgent string
+provides a good first-guess about whether or not a request originates
+from a human or a robot.
+
+The [/help/auto-hyperlink|auto-hyperlink] setting, shown as
+"<b>Enable hyperlinks based on User-Agent and/or Javascript</b>" on
+the Robot Defense Settings page, 
+can be set to "UserAgent only" or "UserAgent and Javascript" or "off".
+If the UserAgent string looks like a human and not a robot, then
+Fossil will enable hyperlinks even if the <b>Hyperlink</b> capability
+is omitted from the user permissions.  This setting gives humans easy
+access to the hyperlinks while preventing robots
+from walking the billions of pages on a typical Fossil site.
+
+If the setting is "UserAgent only" (2), then the hyperlinks are simply
+enabled and that is all.  But if the setting is "UserAgent and Javascript" (1),
+then the hyperlinks are not enabled directly.
+Instead, the HTML code that is generated contains anchor tags ("&lt;a&gt;")
+with "href=" attributes that point to [/honeypot] rather than the correct
+link.  JavaScript code is added to the end of the page that goes back and
+fills in the correct "href=" attributes of
+the anchor tags with the true hyperlink targets, thus enabling the hyperlinks.
+This extra step of using JavaScript to enable the hyperlink targets
+is a security measure against robots that forge a human-looking
+UserAgent string.  Most robots do not bother to run JavaScript and
+so to the robot the empty anchor tag will be useless.  But all modern
+web browsers implement JavaScript, so hyperlinks will show up
+normally for human users.
+
+If the [/help/auto-hyperlink|"auto-hyperlink"] setting is (2)
+"<b>Enable hyperlinks using User-Agent and/or Javascript</b>",
+then there are now two additional sub-settings that control when
+hyperlinks are enabled.
+
+The first new sub-setting is a delay (in milliseconds) before setting
+the "href=" attributes on anchor tags.  The default value for this
+delay is 10 milliseconds.  The idea here is that a robots will try to
+interpret the links on the page immediately, and will not wait for delayed
+scripts to be run, and thus will never enable the true links.
+
+The second sub-setting waits to run the
+JavaScript that sets the "href=" attributes on anchor tags until after
+at least one "mousedown" or "mousemove" event has been detected on the
+&lt;body&gt; element of the page.  The thinking here is that robots will not be
+simulating mouse motion and so no mouse events will ever occur and
+hence the hyperlinks will never become enabled for robots.
+
+See also [./loadmgmt.md|Managing Server Load] for a description
+of how expensive pages can be disabled when the server is under heavy
+load.
+
+<h2>Do Not Allow Robot Access To Certain Pages</h2>
+
+The [/help/robot-restrict|robot-restrict setting] is a comma-separated
+list of GLOB patterns for pages for which robot access is prohibited.
+The default value is:
+
+<blockquote><pre>
+timelineX,diff,annotate,fileage,file,finfo,reports,tree,hexdump,download
+</pre></blockquote>
+
+Each entry corresponds to the first path element on the URI for a
+Fossil-generated page.  If Fossil does not know for certain that the
+HTTP request is coming from a human, then any attempt to access one of
+these pages brings up a javascript-powered captcha.  The user has to
+click the accept button the captcha once, and that sets a cookie allowing
+the user to continue surfing without interruption for 15 minutes or so
+before being presented with another captcha.
+
+Some path elements have special meanings:
+
+  *  <b>timelineX &rarr;</b>
+     This means a subset of /timeline/ pages that are considered
+     "expensive".  The exact definition of which timeline pages are
+     expensive and which are not is still the subject of active
+     experimentation and is likely to change by the time you read this
+     text.  The idea is that anybody (including robots) can see a timeline
+     of the most recent changes, but timelines of long-ago change or that
+     contain lists of file changes or other harder-to-compute values are
+     prohibited.
+
+  *  <b>zip &rarr;</b>
+     The special "zip" keyword also matches "/tarball/" and "/sqlar/".
+
+  *  <b>zipX &rarr;</b>
+     This is like "zip" in that it restricts access to "/zip/", "/tarball"/
+     and "/sqlar/" but with exceptions:<ol type="a">
+     <li><p> If the [/help/robot-zip-leaf|robot-zip-leaf] setting is
+             true, then tarballs of leaf check-ins are allowed.  This permits
+             URLs that attempt to download the latest check-in on trunk or
+             from a named branch, for example.
+     <li><p> If a check-in has a tag that matches the GLOB list in
+             [/help/robot-zip-tag|robot-zip-tag], then tarballs of that
+             check-in are allowed.  This allow check-ins tagged with
+             "release" or "allow-robots" (for example) to be downloaded
+             without restriction.
+     </ol>
+     The "zipX" restriction is not in the default robot-restrict setting.
+     This is something you might want to add, depending on your needs.
+
+  *  <b>diff &rarr;</b>
+     This matches /vdiff/ and /fdiff/ and /vpatch/ and any other page that
+     is primarily about showing the difference between two check-ins or two
+     file versioons.
+
+  *  <b>annotate &rarr;</b>
+     This also matches /blame/ and /praise/.
+
+Other special keywords may be added in the future.
+
+The default [/help/robot-restrict|robot-restrict]
+setting has been shown in practice to do a good job of keeping 
+robots from consuming all available CPU and bandwidth while will
+still allowing humans access to the full power of the site without
+having to be logged in.
+
+One possible enhancement is to add "zipX" to the 
+[/help/robot-restrict|robot-restrict] setting,
+and enable [help?cmd=robot-zip-leaf|robot-zip-leaf]
+and configure [help?cmd=robot-zip-tag|robot-zip-tag].
+Do this if you find that robots downloading lots of
+obscure tarballs is causing load issues on your site.
+
+<h2>Anti-robot Exception RegExps</h2>
+
+The [/help/robot-exception|robot-exception setting] under the name
+of <b>Exceptions to anti-robot restrictions</b> is a list of
+[/re_rules|regular expressions], one per line, that match
+URIs that will bypass the captcha and allow robots full access.  The
+intent of this setting is to allow automated build scripts
+to download specific tarballs of project snapshots.
+
+The recommended value for this setting allows robots to use URIs of the
+following form:
+
+<blockquote>
+<b>https://</b><i>DOMAIN</i><b>/tarball/release/</b><i>HASH</i><b>/</b><i>NAME</i><b>.tar.gz</b>
+</blockquote>
+
+The <i>HASH</i> part of this URL can be any valid 
+[./checkin_names.wiki|check-in name].  The link works as long as that
+check-in is tagged with the "release" symbolic tag.  In this way,
+robots are permitted to download tarballs (and ZIP archives) of official
+releases, but not every intermediate check-in between releases.  Humans
+who are willing to click the captcha can still download whatever they
+want, but robots are blocked by the captcha.  This prevents aggressive
+robots from downloading tarballs of every historical check-in of your
+project, once per day, which many robots these days seem eager to do.
+
+For example, on the Fossil project itself, this URL will work, even for
+robots:
+
+<blockquote>
+https://fossil-scm.org/home/tarball/release/version-2.27/fossil-scm.tar.gz
+</blockquote>
+
+But the next URL will not work for robots because check-in 3bbd18a284c8bd6a
+is not tagged as a "release":
+
+<blockquote>
+https://fossil-scm.org/home/tarball/release/3bbd18a284c8bd6a/fossil-scm.tar.gz
+</blockquote>
+
+The second URL will work for humans, just not robots.
+
+<h2>The Ongoing Struggle</h2>
+
+Fossil currently does a good job of providing easy access to humans
+while keeping out troublesome robots.  However, robots
+continue to grow more sophisticated, requiring ever more advanced
+defenses.  This "arms race" is unlikely to ever end.  The developers of
+Fossil will continue to try improve the robot defenses of Fossil so
+check back from time to time for the latest releases and updates.
+
+Readers of this page who have suggestions on how to improve the robot
+defenses in Fossil are invited to submit your ideas to the Fossil Users
+forum:
+[https://fossil-scm.org/forum].

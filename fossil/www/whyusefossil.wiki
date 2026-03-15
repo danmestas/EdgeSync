@@ -1,0 +1,196 @@
+<title>Why You Should Use Fossil</title>
+
+<h4>(Or if not Fossil, at least some kind of modern
+version control such as Git, Mercurial, or Subversion.)</h4>
+
+<h5>I. Benefits of Version Control</h5>
+
+  <ol type='A'>
+  <li><p><b>Immutable file and version identification</b>
+     <ol type='i'>
+     <li>Simplified and unambiguous communication between developers
+     <li>Detect accidental or surreptitious changes
+     <li>Locate the origin of discovered files
+     </ol>
+  <li><p><b>Parallel development</b>
+     <ol type='i'>
+     <li>Multiple developers on the same project
+     <li>Single developer with multiple subprojects
+     <li>Experimental features do not contaminate the main line
+     <li>Development/Testing/Release branches
+     <li>Incorporate external changes into the baseline
+     </ol>
+  <li><p><b>Historical record</b>
+     <ol type='i'>
+     <li>Exactly reconstruct historical builds
+     <li>Locate when and by whom faults were injected
+     <li>Find when and why content was added or removed
+     <li>Team members see the big picture
+     <li>Research the history of project features or subsystems
+     <li>Copyright and patent documentation
+     <li>Regulatory compliance
+     </ol>
+   <li><p><b>Automatic replication and backup</b>
+     <ol type='i'>
+     <li>Everyone always has the latest code
+     <li>Failed disk-drives cause no loss of work
+     <li>Avoid wasting time doing manual file copying
+     <li>Avoid human errors during manual backups
+     </ol>
+  </ol>
+
+<h5 id="definitions">II. Definitions</h5>
+
+<div class="indent">Moved to [./glossary.md | a separate document].</div>
+
+<h5>III. Basic Fossil commands</h5>
+
+ <ul>
+ <li><p><b>clone</b> &rarr;
+     Make a copy of a repository.  The original repository
+     is usually (but not always) on a remote machine and the copy is on
+     the local machine.  The copy remembers the network location from
+     which it was copied and (by default) tries to keep itself synchronized
+     with the original.
+ <li><p><b>open</b> &rarr;
+     Create a new check-out from a repository on the local machine.
+ <li><p><b>update</b> &rarr;
+     Modify an existing check-out so that it is derived from a
+     different version of the same project.
+ <li><p><b>commit</b> &rarr;
+     Create a new version (a new check-in) of the project that
+     is a snapshot of the current check-out.
+ <li><p><b>revert</b> &rarr;
+     Undo all local edits on a check-out.  Make the check-out
+     be an exact copy of its associated check-in.
+ <li><p><b>push</b> &rarr;
+     Copy content found in a local repository over to a remote
+     repository.  (Fossil usually does this automatically in response to
+     a "commit" and so this command is seldom used, but it is important
+     to understand it.)
+ <li><p><b>pull</b> &rarr;
+     Copy new content found in a remote repository into a local
+     repository.  A "pull" by itself does not modify any check-out.  The
+     "pull" command only moves content between repositories.  However,
+     the "update" command will (often) automatically do a "pull" before
+     attempting to update the local check-out.
+ <li><p><b>sync</b> &rarr;
+     Do both a "push" and a "pull" at the same time.
+ <li><p><b>add</b> &rarr;
+     Add a new file to the local check-out.  The file must already be
+     on disk.  This command tells Fossil to start tracking and managing
+     the file.  This command affects only the local check-out and does
+     not modify any repository.  The new file is inserted into the
+     repository at the next "commit" command.
+ <li><p><b>rm/mv</b> &rarr;
+     Short for 'remove' and 'move', these commands are like "add"
+     in that they specify pending changes to the structure of the check-out.
+     As with "add", no changes are made to the repository until the next
+     "commit".
+ </ul>
+
+<h5>IV. The history of a project is a Directed Acyclic Graph (DAG)</h5>
+
+ <ul>
+ <li><p>Fossil (and other distributed VCSes like Git and Mercurial, but
+     not Subversion) represent
+     the history of a project as a directed acyclic graph (DAG).
+     <ul>
+     <li><p>Each check-in is a node in the graph
+     <li><p>If check-in Y is derived from check-in X then there is
+         an arc in the graph from node X to node Y.
+     <li><p>The older check-in (X) is call the "parent" and the newer
+         check-in (Y) is the "child".  The child is derived from
+         the parent.
+     </ul>
+ <li><p>Two users (or the same user working in different check-outs)
+     might commit different changes against the same check-in.  This
+     results in one parent node having two or more children.
+ <li><p>Command: <b>merge</b> &rarr;
+     combines the work of multiple check-ins into
+     a single check-out.  That check-out can then be committed to create
+     a new check-in that has two (or more) parents.
+     <ul>
+     <li><p>Most check-ins have just one parent, and either zero or
+         one child.
+     <li><p>When a check-in has two or more parents, one of those parents
+         is the "primary parent". All the other parent nodes are "secondary"
+         or "merge" parents.
+         Conceptually, the primary parent shows the main line of
+         development.  Content from the merge parents is added
+         into the main line.
+     <li><p>The "direct children" of a check-in X are all children that
+         have X as their primary parent.
+     <li><p>A check-in node with no direct children is sometimes called
+         a "leaf".
+     <li><p>The "merge" command changes only the check-out.
+         The "commit" command must be run subsequently to make the merge
+         a permanent part of project.
+     </ul>
+ <li><p>Definition: <b>branch</b> &rarr;
+     a sequence of check-ins that are all linked
+     together in the DAG through the primary parent.
+      <ul>
+      <li><p>Branches are often given names which propagate to direct children.
+          The tradition in Fossil is to call the main branch "trunk".  In
+          Git, it's called "master" by default, though some call it
+          something else, like "main".
+      <li><p>It is possible to have multiple branches with the same name.
+         Fossil has no problem with this, but it can be confusing to
+         humans, so best practice is to give each branch a unique name.
+      <li><p>The name of a branch can be changed by adding special tags
+         to the first check-in of a branch.  The name assigned by this
+         special tag automatically propagates to all direct children.
+      </ul>
+ </ul>
+
+<h5>V. Why version control is important (reprise)</h5>
+
+ <ol>
+ <li><p>Every check-in and every individual file has a unique name - its
+     SHA1 or SHA3-256 hash.  Team members can unambiguously identify
+     any specific
+     version of the overall project or any specific version of an
+     individual file.
+ <li><p>Any historical version of the whole project or of any individual
+     file can be easily recreated at any time and by any team member.
+ <li><p>Accidental changes to files can be detected by recomputing their
+     cryptographic hash.
+ <li><p>Files of unknown origin can be identified using their hash.
+ <li><p>Developers are able to work in parallel, review each others work,
+     and easily merge their changes together.  External revisions to
+     the baseline can be easily incorporated into the latest changes.
+ <li><p>Developers can follow experimental lines of development,  then
+     revert back to an earlier stable version if the experiment does
+     not work out.  Creativity is enhanced by allowing crazy ideas to
+     be investigated without destabilizing the project.
+ <li><p>Developers can work on several independent subprojects, flipping
+     back and forth from one subproject to another at will, and merge
+     patches together or back into the main line of development as they
+     mature.
+ <li><p>Older changes can be easily backed out of recent revisions, for
+     example if bugs are found long after the code was committed.
+ <li><p>Enhancements in a branch can be easily copied into other branches,
+     or into the trunk.
+ <li><p>The complete history of all changes is plainly visible to
+     all team members.  Project leaders can easily keep track of what
+     all team members are doing.  Check-in comments help everyone to
+     understand and/or remember the reason for each change.
+ <li><p>New team members can be brought up-to-date with all of the historical
+     code, quickly and easily.
+ <li><p>New developers, interns, or inexperienced staff members who still
+     do not understand all the details of the project or who are otherwise
+     prone to making mistakes can be assigned significant subprojects to
+     be carried out in branches without risking main line stability.
+ <li><p>Code is automatically synchronized across all machines.  No human
+     effort is wasted copying files from machine to machine.  The risk
+     of human errors during file transfer and backup is eliminated.
+ <li><p>A hardware failure results in minimal lost work because
+     all previously committed changes will have been automatically
+     replicated on other machines.
+ <li><p>The complete work history of the project is conveniently archived
+     in a single file, simplifying long-term record keeping.
+ <li><p>A precise historical record is maintained which can be used to
+     support copyright and patent claims or regulatory compliance.
+ </ol>
+</ol>

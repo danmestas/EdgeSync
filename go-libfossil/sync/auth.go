@@ -1,0 +1,32 @@
+package sync
+
+import (
+	"crypto/sha1"
+	"encoding/hex"
+	"fmt"
+
+	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/dmestas/edgesync/go-libfossil/xfer"
+)
+
+// computeLogin produces a LoginCard for the given credentials.
+// payload is the encoded bytes of all non-login cards (including random comment).
+func computeLogin(user, password, projectCode string, payload []byte) *xfer.LoginCard {
+	nonce := sha1Hex(payload)
+	sharedSecret := sha1Hex([]byte(projectCode + "/" + user + "/" + password))
+	signature := sha1Hex([]byte(nonce + sharedSecret))
+	return &xfer.LoginCard{User: user, Nonce: nonce, Signature: signature}
+}
+
+// appendRandomComment appends "# <random-hex>\n" to payload for nonce uniqueness.
+func appendRandomComment(payload []byte, rng simio.Rand) []byte {
+	rb := make([]byte, 20)
+	rng.Read(rb)
+	comment := fmt.Sprintf("# %s\n", hex.EncodeToString(rb))
+	return append(payload, []byte(comment)...)
+}
+
+func sha1Hex(data []byte) string {
+	h := sha1.Sum(data)
+	return hex.EncodeToString(h[:])
+}

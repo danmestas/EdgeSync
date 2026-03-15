@@ -1,0 +1,1273 @@
+/******************************************************************************
+ * Xekri
+ *
+ * To adjust the width of the contents for this skin, look for the "max-width"
+ * property and change its value.  (It's in the "Main Area" section)  The value
+ * determines how much of the browser window to use.  Some like 100%, so that
+ * the entire window is used.  Others prefer 80%, which makes the contents
+ * easier to read for them.
+ */
+
+
+/**************************************
+ * General HTML
+ */
+
+html {
+  background-color: #333;
+  color: #eee;
+  font-family: Monospace;
+  font-size: 1em;
+  min-height: 100%;
+}
+
+body {
+  background-color: #333;
+  margin: 0;
+  padding: 0;
+  text-size-adjust: none;
+}
+
+a {
+  color: #40a0ff;
+}
+
+a:hover {
+  font-weight: bold;
+}
+
+blockquote pre {
+  border: 1px dashed #ee0;
+}
+
+blockquote pre, pre.verbatim {
+  background-color: #000;
+  border-radius: 0.75rem;
+  padding: 0.5rem;
+  white-space: pre-wrap;
+}
+
+input[type="password"], input[type="text"], textarea {
+  background-color: #111;
+  color: #fff;
+  font-size: 1rem;
+}
+
+h1 {
+  font-size: 2rem;
+}
+
+h2 {
+  font-size: 1.5rem;
+}
+
+h3 {
+  font-size: 1.25rem;
+}
+
+/**************************************
+ * Main Area
+ */
+
+header, nav.mainmenu, div.submenu, div.content, footer {
+  clear: both;
+  margin: 0 auto;
+  max-width: 90%;
+  padding: 0.25rem 1rem;
+}
+
+
+/**************************************
+ * Main Area: Header
+ */
+
+header {
+  margin: 0.5rem auto 0 auto;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+}
+div.logo {
+  display: inline;
+  max-height: 4em;
+  max-width: 4em;
+  flex: 0 1 auto;
+}
+
+div.logo img {
+  padding: 0;
+  box-shadow: 2px 4px 6px rgba(180,180,180,0.70);
+  border-radius: 2mm;
+}
+
+div.logo br {
+  display: none;
+}
+
+div.logo nobr {
+  color: #eee;
+  font-size: 1.2rem;
+  font-weight: bold;
+  padding: 0;
+  text-shadow: 3px 3px 1px #000;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+div.title {
+  color: #3297f9;
+  font-family: Verdana, sans-serif;
+  font-weight: bold;
+  font-size: 2.5rem;
+  padding: 0.5rem;
+  text-align: center;
+  text-shadow: 3px 3px 1px #000;
+  flex: 10 0 auto;
+}
+
+div.status {
+  color: #ee0;
+  font-size: 1rem;
+  padding: 0.25rem;
+  text-align: right;
+  text-shadow: 2px 2px 1px #000;
+  flex: 0 1 auto;
+}
+
+
+/**************************************
+ * Main Area: Global Menu
+ */
+
+nav.mainmenu, div.submenu {
+  background-color: #080;
+  border-radius: 1rem 1rem 0 0;
+  box-shadow: 3px 4px 1px #000;
+  color: #000;
+  font-weight: bold;
+  font-size: 1.1rem;
+  text-align: center;
+}
+
+nav.mainmenu {
+  padding-top: 0.33rem;
+  padding-bottom: 0.25rem;
+}
+
+div.submenu {
+  border-top: 1px solid #0a0;
+  border-radius: 0;
+  display: block;
+}
+
+nav.mainmenu a, div.submenu a, div.submenu label {
+  color: #000;
+  padding: 0 0.75rem;
+  text-decoration: none;
+}
+
+nav.mainmenu a:hover, div.submenu a:hover, div.submenu label:hover {
+  color: #fff;
+  text-shadow: 0px 0px 6px #0f0;
+}
+
+div.submenu * {
+  margin: 0 0.5rem;
+  vertical-align: middle;
+}
+
+div.submenu select, div.submenu input {
+  background-color: #222;
+  border: 1px inset #080;
+  color: #eee;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+div.submenu select {
+  height: 1.75rem;
+}
+
+/**************************************
+ * Main Area: Content
+ */
+
+div.content {
+  background-color: #222;
+  border-radius: 0 0 1rem 1rem;
+  box-shadow: 3px 3px 1px #000;
+  min-height:40%;
+  padding-bottom: 1rem;
+  padding-top: 0.5rem;
+}
+
+div.content table[bgcolor="white"] {
+  color: #000;
+}
+
+.piechartLabel {
+  fill: white;
+}
+.piechartLine {
+  stroke: white;
+}
+
+/**************************************
+ * Main Area: Footer
+ */
+
+footer {
+  color: #ee0;
+  font-size: 0.75rem;
+  padding: 0;
+  text-align: right;
+  width: 75%;
+}
+
+
+footer div {
+  background-color: #222;
+  box-shadow: 3px 3px 1px #000;
+  border-radius: 0 0 1rem 1rem;
+  margin: 0 0 10px 0;
+  padding: 0.25rem 0.75rem;
+}
+
+footer div.page-time {
+  float: left;
+}
+
+footer div.fossil-info {
+  float: right;
+}
+
+footer a, footer a:link, footer a:visited {
+  color: #ee0;
+}
+
+footer a:hover {
+  color: #fff;
+  text-shadow: 0px 0px 6px #ee0;
+}
+
+
+/**************************************
+ * Check-in
+ */
+
+table.label-value th {
+  vertical-align: top;
+  text-align: right;
+  padding: 0.1rem 1rem;
+}
+
+
+/**************************************
+ * Diffs
+ */
+
+tr.diffskip.jchunk {
+  background-color: black;
+}
+tr.diffskip > td.chunkctrl .jcbutton {
+  background-color: #303536;
+}
+
+/* Code Added */
+td.diffln ins,
+td.difftxt ins > ins {
+  background-color: #7f7;
+  color: #000;
+}
+td.difftxt ins {
+  background-color: inherit;
+}
+
+/* Code Deleted */
+td.diffln del,
+td.difftxt del > del {
+  background-color: #f77;
+  color: #000;
+}
+td.difftxt del {
+  background-color: inherit;
+}
+
+
+/**************************************
+ * Diffs : Side-By-Side
+ */
+
+/* display (column-based) */
+table.splitdiff {
+  border-spacing: 0;
+  font-size: 0.85rem;
+}
+
+table.splitdiff pre {
+  border: 0;
+  margin: 0 0.5em;
+  padding: 0;
+}
+
+table.splitdiff td {
+  padding: 0;
+  vertical-align: top;
+}
+
+/* line number column */
+td.diffln {
+  color: #ee0;
+  padding-right: 0.75em;
+  text-align: right;
+}
+
+/* diff text column */
+td.difftxt {
+  background-color: #111;
+  overflow-x: auto;
+  width: 45em;
+}
+
+
+/* diff marker column */
+td.diffsep {
+  padding: 0 0.5em;
+}
+
+
+/**************************************
+ * Diffs : Unified
+ */
+
+table.udiff pre {
+  background-color: #111;
+}
+
+
+/**************************************
+ * File List : Flat
+ */
+
+table.browser {
+  width: 100%;
+  border: 0;
+}
+
+td.browser {
+  width: 24%;
+  vertical-align: top;
+}
+
+ul.browser {
+  margin: 0.5rem;
+  padding: 0.5rem;
+  white-space: nowrap;
+}
+
+ul.browser li.dir {
+  font-style: italic
+}
+
+
+/**************************************
+ * File List : Age
+ */
+
+.fileage tr:hover {
+  background-color: #225;
+}
+
+
+/**************************************
+ * File List : Tree
+ */
+
+.filetree {
+  line-height: 1.5;
+  margin: 1rem 0;
+}
+
+/* list */
+.filetree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* collapsed list */
+.filetree ul.collapsed {
+  display: none;
+}
+
+/* lists below the root */
+.filetree ul ul {
+  margin: 0 0 0 21px;
+  position: relative;
+}
+
+/* lists items */
+.filetree li {
+  margin: 0;
+  padding: 0;
+  position: relative;
+}
+
+/* node lines */
+.filetree li li:before {
+  border-bottom: 2px solid #000;
+  border-left: 2px solid #000;
+  content: '';
+  height: 1.5rem;
+  left: -14px;
+  position: absolute;
+  top: -0.8rem;
+  width: 14px;
+}
+
+/* directory lines */
+.filetree li > ul:before {
+  border-left: 2px solid #000;
+  bottom: 0;
+  content: '';
+  left: -35px;
+  position: absolute;
+  top: -1.5rem;
+}
+
+/* hide lines for last-child directories */
+.filetree li.last > ul:before {
+  display: none;
+}
+
+.filetree a {
+  background-image: url(data:image/gif;base64,R0lGODlhEAAQAJEAAP\/\/\/yEhIf\/\/\/wAAACH5BAEHAAIALAAAAAAQABAAAAIvlIKpxqcfmgOUvoaqDSCxrEEfF14GqFXImJZsu73wepJzVMNxrtNTj3NATMKhpwAAOw==);
+  background-position: center left;
+  background-repeat: no-repeat;
+  display: inline-block;
+  min-height: 16px;
+  padding-left: 21px;
+  position: relative;
+  z-index: 1;
+}
+
+.filetree .dir > a {
+  background-image: url(data:image/gif;base64,R0lGODlhEAAQAJEAAP/WVCIiIv\/\/\/wAAACH5BAEHAAIALAAAAAAQABAAAAInlI9pwa3XYniCgQtkrAFfLXkiFo1jaXpo+jUs6b5Z/K4siDu5RPUFADs=);
+  font-style: italic
+}
+
+.filetreeline:hover {
+  color: #000;
+  font-weight: bold;
+}
+
+.filetreeline .filetreeage {
+  padding-right: 0.5rem;
+}
+
+/**************************************
+ * Logout
+ */
+
+span.loginError {
+  color: #f00;
+}
+
+table.login_out {
+  margin: 10px;
+  text-align: left;
+}
+
+td.login_out_label {
+  text-align: center;
+}
+
+div.captcha {
+  padding: 1rem;
+  text-align: center;
+}
+
+table.captcha {
+  background-color: #111;
+  border-color: #111;
+  border-style: inset;
+  border-width: 2px;
+  margin: auto;
+  padding: 0.5rem;
+}
+
+table.captcha pre {
+  color: #ee0;
+}
+
+
+/**************************************
+ * Statistics Reports
+ */
+
+.statistics-report-graph-line {
+  border: 2px solid #22e;
+  background-color: #22e;
+}
+.statistics-report-graph-extra {
+  border: 2px dashed #22e;
+  border-left-style: none;
+}
+
+.statistics-report-table-events th {
+  padding: 0 1rem;
+}
+
+.statistics-report-table-events td {
+  padding: 0.1rem 1rem;
+}
+
+.statistics-report-row-year {
+  color: #ee0;
+  text-align: left;
+}
+
+.statistics-report-week-number-label {
+  font-size: 0.8rem;
+  text-align: right;
+}
+
+.statistics-report-week-of-year-list {
+  font-size: 0.8rem;
+}
+
+
+/**************************************
+ * Search
+ */
+
+.searchResult .snippet mark {
+  color: #ee0;
+}
+
+
+/**************************************
+ * Sections
+ */
+
+div.section, div.sectionmenu {
+  color: #2ee;
+  background-color: #22c;
+  border-radius: 0 3rem;
+  box-shadow: 2px 2px #000;
+  display: flex;
+  font-size: 1.1rem;
+  font-weight: bold;
+  justify-content: space-around;
+  margin: 1.2rem auto 0.75rem auto;
+  padding: 0.2rem;
+  text-align: center;
+}
+
+div.sectionmenu {
+  border-radius: 0 0 3rem 3rem;
+  margin-top: auto;
+  width: 75%;
+}
+
+div.sectionmenu > a:link, div.sectionmenu > a:visited {
+  color: #000;
+  text-decoration: none;
+}
+
+div.sectionmenu > a:hover {
+  color: #eee;
+  text-shadow: 0px 0px 6px #eee;
+}
+
+
+/**************************************
+ * Sidebox
+ */
+
+div.sidebox {
+  background-color: #333;
+  border-radius: 0.5rem;
+  box-shadow: 3px 3px 1px #000;
+  float: right;
+  margin: 1rem 0.5rem;
+  padding: 0.5rem;
+}
+
+div.sidebox ol {
+  margin: 0 0 0.5rem 2.5rem;
+  padding: 0 0;
+}
+
+div.sidebox ol li {
+  margin-top: 0.75rem;
+}
+
+div.sideboxTitle {
+  background-color: #ee0;
+  border-radius: 0.5rem 0.5rem 0 0;
+  color: #000;
+  font-weight: bold;
+  margin: -0.5rem -0.5rem 0 -0.5rem;
+  padding: 0.25rem;
+  text-align: center;
+}
+
+div.sideboxDescribed {
+  display: inline;
+}
+
+/* --- Untested : Begin --- */
+/* The defined element in sideboxes for branches,.. */
+span.disabled {
+  color: #f00;
+}
+/* --- Untested : End --- */
+
+
+/**************************************
+ * Tag
+ */
+
+/* --- Untested : Begin --- */
+/* the format for the tag links */
+a.tagLink {
+}
+/* the format for the tag display(no history permission!) */
+span.tagDsp {
+  font-weight: bold;
+}
+/* the format for fixed/canceled tags,.. */
+span.infoTagCancelled {
+  font-weight: bold;
+  text-decoration: line-through;
+}
+/* --- Untested : End --- */
+
+
+/**************************************
+ * Ticket
+ */
+
+table.report {
+  color: #000;
+  border: 1px solid #999;
+  border-collapse: collapse;
+  margin: 1rem 0;
+}
+
+table.report tr th {
+  color: #eee;
+  padding: 3px 5px;
+  text-transform : capitalize;
+}
+
+table.report tr td {
+  padding: 3px 5px;
+}
+
+/* example ticket colors */
+table.rpteditex {
+  border-collapse: collapse;
+  border-spacing: 0;
+  color: #000;
+  float: right;
+  margin: 0;
+  padding: 0;
+  text-align: center;
+  width: 125px;
+}
+
+td.rpteditex {
+  border-color: #000;
+  border-style: solid;
+  border-width: thin;
+}
+
+#reportTable {
+}
+
+/* format for labels on ticket display page */
+td.tktDspLabel {
+  text-align: right;
+}
+
+/* format for values on ticket display page */
+td.tktDspValue {
+  background-color: #111;
+  text-align: left;
+  vertical-align: top;
+}
+
+/* Tickets on timelines */
+td.tktTlOpen {
+  color: #ffa0a0;
+}
+
+/* format for ticket error messages */
+span.tktError {
+  color: #f00;
+  font-weight: bold;
+}
+
+
+/**************************************
+ * Timeline
+ */
+
+/* The suppressed duplicates lines in timeline, .. */
+.timelineDisabled {
+  font-size:  0.5rem;
+  font-style: italic;
+}
+
+/* the format for the timeline version display(no history permission!) */
+.timelineHistDsp {
+  font-weight: bold;
+}
+
+.content .timelineTable {
+  border:         0;
+  border-spacing: 0 0.5rem;
+}
+
+.content .timelineTable tr {
+  background: #222;
+  border:     0;
+  padding:    0;
+  box-shadow: none;
+}
+
+.timelineTable .timelineDate {
+  color:       #ee0;
+  font-size:   1.2rem;
+  font-weight: bold;
+  margin-top:  1rem;
+  white-space: nowrap;
+}
+
+.timelineTable .timelineTime {
+  border-radius: 0;
+  border-width:  0;
+  padding:       0.25rem 0.5rem 0.5rem 0.5rem;
+  white-space:   nowrap;
+}
+
+.timelineGraph {
+  text-align:     left;
+  vertical-align: top;
+  width:          20px;
+}
+
+.timelineTable .timelineModernCell  ,
+.timelineTable .timelineCompactCell ,
+.timelineTable .timelineVerboseCell ,
+.timelineTable .timelineDetailCell  {
+/*
+  background:    linear-gradient(to bottom, #222 0%, #333 16%, #222 100%);
+*/
+  border-radius: 0;
+  border-width:  0;
+  padding:       0.25rem 0.5rem 0.5rem 0.5rem;
+}
+
+.timelineTable .timelineColumnarCell {
+/*
+  background:    linear-gradient(to bottom, #222 0%, #333 16%, #222 100%);
+*/
+  border-radius: 0;
+  border-width:  0;
+  padding:       0.25rem 0.5rem 0.5rem 0.5rem;
+}
+
+.timelineTable .timelineModernCell[id]   ,
+.timelineTable .timelineCompactCell[id]  ,
+.timelineTable .timelineVerboseCell[id]  ,
+.timelineTable .timelineColumnarCell[id] ,
+.timelineTable .timelineDetailCell[id]   {
+  background: #272727;
+}
+
+.timelineTable .timelineCurrent .timelineTime {
+  background:    #333;
+  border-radius: 1rem 0 0 1rem;
+  border-width:  0;
+}
+
+.timelineTable .timelineCurrent .timelineColumnarCell {
+  background:    #333;
+}
+
+.timelineTable .timelineCurrent .timelineModernCell  ,
+.timelineTable .timelineCurrent .timelineCompactCell ,
+.timelineTable .timelineCurrent .timelineVerboseCell ,
+.timelineTable .timelineCurrent .timelineDetailCell  {
+  background:    #333;
+  border-radius: 0 1rem 1rem 0;
+}
+
+.timelineTable .timelineSelected {
+  background: #222;
+  border:     0;
+  box-shadow: none;
+}
+.timelineSelected {}
+.timelineSecondary {}
+
+.timelineTable .timelineSelected .timelineTime {
+  background:    #333;
+  border-radius: 1rem 0 0 1rem;
+  box-shadow:    2px 2px 1px #000;
+}
+
+.timelineTable .timelineSelected .timelineColumnarCell {
+  background: #333;
+  box-shadow: 2px 2px 1px #000;
+}
+
+.timelineTable .timelineSelected .timelineModernCell  ,
+.timelineTable .timelineSelected .timelineCompactCell ,
+.timelineTable .timelineSelected .timelineVerboseCell ,
+.timelineTable .timelineSelected .timelineDetailCell  {
+  background:    #333;
+  border-radius: 0 1rem 1rem 0;
+  box-shadow:    2px 2px 1px #000;
+}
+
+span.timelineSelected {
+  padding: 0 1em 0 1em;
+  border-radius: 1rem;
+  background: #333;
+  box-shadow:    2px 2px 1px #000;
+}
+
+.timelineTable .timelineModernCell  .timelineModernComment  ,
+.timelineTable .timelineModernCell  .timelineModernDetail   ,
+.timelineTable .timelineCompactCell .timelineCompactComment ,
+.timelineTable .timelineCompactCell .timelineCompactDetail  ,
+.timelineTable .timelineVerboseCell .timelineVerboseComment ,
+.timelineTable .timelineVerboseCell .timelineVerboseDetail  {
+}
+
+.timelineTable .timelineModernCell     .timelineLeaf ,
+.timelineTable .timelineCompactCell    .timelineLeaf ,
+.timelineTable .timelineVerboseCell    .timelineLeaf ,
+.timelineTable .timelineVerboseComment .timelineLeaf {
+  font-weight: bold;
+}
+
+.timelineTable .timelineModernCell .timelineModernDetail ,
+.timelineTable .timelineDetailCell {
+  font-size: 85%;
+}
+
+.timelineTable .timelineDetailCell .timelineColumnarDetail {
+  white-space: pre-line;
+}
+
+.timelineTable .timelineDetailCell ul.filelist::before {
+  content: "files:";
+}
+
+.timelineTable .timelineDetailCell ul.filelist {
+  margin-left:  0;
+  padding-left: 0;
+}
+
+.timelineTable .timelineDetailCell ul.filelist li {
+  margin-left:  1.5rem;
+  padding-left: 0;
+  white-space:  nowrap;
+}
+
+/* the format for the timeline version links */
+a.timelineHistLink {
+}
+
+/* Timeline graph style taken from Ardoise, with
+** minor adjustments (2025-03-28) */
+.tl-canvas {
+  margin: 0 6px 0 10px
+}
+.tl-rail {
+  width: 18px
+}
+.tl-mergeoffset {
+  width: 2px
+}
+.tl-nodemark {
+  margin-top: .8em
+}
+.tl-node {
+  width: 10px;
+  height: 10px;
+  border: 1px solid #bbb;
+  background: #111;
+  cursor: pointer
+}
+.tl-node.leaf:after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 4px;
+  height: 4px;
+  background: #bbb
+}
+.tl-node.closed-leaf svg {
+  position: absolute;
+  top: 0px;
+  left: 0px;
+  width: 10px;
+  height: 10px;
+  color: #bbb;
+}
+.tl-node.sel:after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 8px;
+  height: 8px;
+  background: #ff8000
+}
+.tl-arrow {
+  width: 0;
+  height: 0;
+  transform: scale(.999);
+  border: 0 solid transparent
+}
+.tl-arrow.u {
+  margin-top: -1px;
+  border-width: 0 3px;
+  border-bottom: 7px solid
+}
+.tl-arrow.u.sm {
+  border-bottom: 5px solid #bbb
+}
+.tl-line {
+  background: #bbb;
+  width: 2px
+}
+.tl-arrow.merge {
+  height: 1px;
+  border-width: 2px 0
+}
+.tl-arrow.merge.l {
+  border-right: 3px solid #bbb
+}
+.tl-arrow.merge.r {
+  border-left: 3px solid #bbb
+}
+.tl-line.merge {
+  width: 1px
+}
+.tl-arrow.cherrypick {
+  height: 1px;
+  border-width: 2px 0;
+}
+.tl-arrow.cherrypick.l {
+  border-right: 3px solid #bbb;
+}
+.tl-arrow.cherrypick.r {
+  border-left: 3px solid #bbb;
+}
+.tl-line.cherrypick.h {
+  width: 0px;
+  border-top: 1px dashed #bbb;
+  border-left: 0px dashed #bbb;
+  background: rgba(255,255,255,0);
+}
+.tl-line.cherrypick.v {
+  width: 0px;
+  border-top: 0px dashed #bbb;
+  border-left: 1px dashed #bbb;
+  background: rgba(255,255,255,0);
+}
+
+/**************************************
+ * User Edit
+ */
+
+/* layout definition for the capabilities box on the user edit detail page */
+div.ueditCapBox {
+  float: left;
+  margin: 0 20px 20px 0;
+}
+
+/* format of the label cells in the detailed user edit page */
+td.usetupEditLabel {
+  text-align: right;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+/* color for capabilities, inherited by nobody */
+span.ueditInheritNobody {
+  color: #0f0;
+}
+
+/* color for capabilities, inherited by developer */
+span.ueditInheritDeveloper {
+  color: #f00;
+}
+
+/* color for capabilities, inherited by reader */
+span.ueditInheritReader {
+  color: #ee0;
+}
+
+/* color for capabilities, inherited by anonymous */
+span.ueditInheritAnonymous {
+  color: #00f;
+}
+
+/* format for capabilities */
+span.capability {
+  font-weight: bold;
+}
+
+/* format for different user types */
+span.usertype {
+  font-weight: bold;
+}
+
+span.usertype:before {
+  content:"'";
+}
+
+span.usertype:after {
+  content:"'";
+}
+
+
+/**************************************
+ * User List
+ */
+
+table.usetupLayoutTable {
+  margin: 0.5rem;
+  outline-style: none;
+  padding: 0;
+}
+
+td.usetupColumnLayout {
+  vertical-align: top
+}
+
+td.usetupColumnLayout ol th {
+  padding: 0 0.75rem 0.5rem 0;
+}
+
+span.note {
+  color: #ee0;
+  font-weight: bold;
+}
+
+table.usetupUserList {
+  margin: 0.5rem;
+}
+
+.usetupListUser {
+  padding-right: 20px;
+  text-align: right;
+}
+
+.usetupListCap {
+  padding-right: 15px;
+  text-align: center;
+}
+
+.usetupListCon {
+  text-align: left;
+}
+
+
+/**************************************
+ * Wiki
+ */
+
+span.wikiError {
+  font-weight: bold;
+  color: #f00;
+}
+
+/* the format for fixed/cancelled tags */
+span.wikiTagCancelled {
+  text-decoration: line-through;
+}
+
+
+/**************************************
+ * Did not encounter these
+ */
+
+/* selected lines of text within a linenumbered artifact display */
+table.numbered-lines td.line-numbers span.selected-line {
+  font-weight: bold;
+  color: #00f;
+  background-color: #d5d5ff;
+  border-color: #00f;
+}
+
+/* format for missing privileges note on user setup page */
+p.missingPriv {
+  color: #00f;
+}
+
+/* format for leading text in wikirules definitions */
+span.wikiruleHead {
+  font-weight: bold;
+}
+
+
+/* format for user color input on checkin edit page */
+input.checkinUserColor {
+  /* no special definitions, class defined, to enable color pickers,
+  * f.e.:
+  * ** add the color picker found at http:jscolor.com as java script
+  * include
+  * ** to the header and configure the java script file with
+  * ** 1. use as bindClass :checkinUserColor
+  * ** 2. change the default hash adding behaviour to ON
+  * ** or change the class definition of element identified by
+  * id="clrcust"
+  * ** to a standard jscolor definition with java script in the footer.
+  * */
+}
+
+/* format for end of content area, to be used to clear page flow. */
+div.endContent {
+  clear: both;
+}
+
+/* format for general errors */
+p.generalError {
+  color: #f00;
+}
+
+/* format for tktsetup errors */
+p.tktsetupError {
+  color: #f00;
+  font-weight: bold;
+}
+/* format for xfersetup errors */
+p.xfersetupError {
+  color: #f00;
+  font-weight: bold;
+}
+/* format for th script errors */
+p.thmainError {
+  color: #f00;
+  font-weight: bold;
+}
+/* format for th script trace messages */
+span.thTrace {
+  color: #f00;
+}
+/* format for report configuration errors */
+p.reportError {
+  color: #f00;
+  font-weight: bold;
+}
+/* format for report configuration errors */
+blockquote.reportError {
+  color: #f00;
+  font-weight: bold;
+}
+/* format for artifact lines, no longer shunned */
+p.noMoreShun {
+  color: yellow;
+}
+/* format for artifact lines being shunned */
+p.shunned {
+  color: yellow;
+}
+/* a broken hyperlink */
+span.brokenlink {
+  color: #f00;
+}
+/* List of files in a timeline */
+ul.filelist {
+  margin-top: 3px;
+  line-height: 100%;
+}
+/* Moderation Pending message on timeline */
+span.modpending {
+  color: #b30;
+  font-style: italic;
+}
+/* format for textarea labels */
+span.textareaLabel {
+  font-weight: bold;
+}
+/* format for th1 script results */
+pre.th1result {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+/* format for th1 script errors */
+pre.th1error {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  color: #f00;
+}
+
+/* even table row color */
+tr.row0 {
+  /* use default */
+}
+/* odd table row color */
+tr.row1 {
+  /* Use default */
+}
+
+.fossil-PopupWidget,
+.fossil-tooltip.help-buttonlet-content {
+  background-color: #111;
+  border: 1px solid rgba(255,255,255,0.5);
+}
+.fossil-PopupWidget a,
+.fossil-PopupWidget a:visited {
+  color: white;
+}
+div.forumSel {
+  background-color: #663399;
+}
+div.forumPostBody blockquote {
+  border-width: 1pt;
+  border-style: solid;
+  padding: 0 0.5em;
+  border-radius: 0.25em;
+}
+
+body.forum .forumPosts.fileage a {
+  color: #60c0ff;
+}
+body.forum .forumPosts.fileage a:visited {
+  color: #40a0ff;
+}
+
+.debug {
+  color: black;
+}
+
+body.branch .brlist > table > tbody > tr:hover:not(.selected),
+body.branch .brlist > table > tbody > tr.selected {
+  background-color: #444;
+}
+
+body.chat header, body.chat footer,
+body.chat nav.mainmenu, body.chat div.submenu,
+body.chat div.content {
+  margin-left: 0.5em;
+  margin-right: 0.5em;
+  margin-top: auto/*eliminates unnecessary scrollbars*/;
+}
+body.chat.chat-only-mode div.content {
+  max-width: revert;
+}
+body.chat #chat-user-list .chat-user{
+  color: white;
+}

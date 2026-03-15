@@ -1,0 +1,543 @@
+<title>Compiling and Installing Fossil</title>
+
+<h2>0.0 Using A Pre-compiled Binary</h2>
+
+[/uv/download.html|Pre-compiled binaries] are available for recent
+releases. Just download
+the appropriate executable for your platform
+and put it on your $PATH.
+To uninstall, simply delete the executable.
+To upgrade from an older release, just overwrite the older binary with
+the newer one.
+
+For details about how those binaries are built, see
+[/wiki?name=Release+Build+How-To | the Release Build How-To wiki page].
+
+
+<h2>0.1 Executive Summary</h2>
+
+Building and installing is very simple.  Three steps:
+
+<ol>
+<li> Download and unpack a source tarball or ZIP.
+<li> <b>./configure; make</b>
+<li> Move the resulting "fossil" or "fossil.exe" executable to someplace on
+your $PATH.
+</ol>
+
+<hr>
+
+<h2>1.0 Obtaining The Source Code</h2>
+
+Fossil is self-hosting, so you can obtain a ZIP archive or tarball
+containing a snapshot of the <em>latest</em> version directly from
+Fossil's own fossil repository. Additionally, source archives of
+<em>released</em> versions of
+fossil are available from the [/uv/download.html|downloads page].
+To obtain a development version of fossil, follow these steps:
+
+<ol>
+<li>Point your web browser to [https://fossil-scm.org/]</li>
+
+<li>Click on the [/timeline|Timeline]
+link at the top of the page.</li>
+
+<li>Select a version of Fossil you want to download.  The latest
+version on the trunk branch is usually a good choice.  Click on its
+link.</li>
+
+<li>Finally, click on one of the
+"Zip Archive" or "Tarball" links, according to your preference.
+These links will build a ZIP archive or a gzip-compressed tarball of the
+complete source code and download it to your computer.</li>
+</ol>
+
+<h2>Aside: Is it really safe to use an unreleased development version of
+the Fossil source code?</h2>
+
+Yes!  Any check-in on the
+[/timeline?t=trunk | trunk branch] of the Fossil
+[https://fossil-scm.org/ | self-hosting repository]
+will work fine.  (Dodgy code is always on a branch.)  In the unlikely
+event that you pick a version with a serious bug, it still won't
+clobber your files.  Fossil uses several
+[./selfcheck.wiki | self-checks] prior to committing any
+repository change that prevent loss-of-work due to bugs.
+
+The Fossil [./selfhost.wiki | self-hosting repositories], especially
+the one at [https://fossil-scm.org/home], usually run a version
+of trunk that is less than a week or two old.  Look at the bottom
+left-hand corner of this screen (to the right of "This page was
+generated in...") to see exactly which version of Fossil is
+rendering this page.  It is always safe to use whatever version
+of the Fossil code you find running on the main Fossil website.
+
+<h2>2.0 Compiling</h2>
+
+<ol>
+<li value="5">
+Unpack the ZIP or tarball you downloaded then
+<b>cd</b> into the directory created.</li>
+
+<li><i>(Optional, Debian-compatible Linux only)</i>
+Make sure you have all the necessary tools and libraries at hand by running:
+<b>sudo apt install tcl-dev tk libssl-dev zlib1g-dev</b>.
+
+<li><i>(Optional, Unix only)</i>
+Run <b>./configure</b> to construct a makefile.
+
+<ol type="a">
+<li>
+The build system for Fossil on Unix-like systems assumes that the
+OpenSSL development and runtime files are available on your system,
+because unprotected repositories are trivial to attack otherwise.
+Indeed, some public Fossil repositories — including Fossil's own — today
+run in an HTTPS-only mode, so that you can't even do an anonymous clone
+from them without using the TLS features added to Fossil by OpenSSL. To
+weaken that stance could allow a
+[https://en.wikipedia.org/wiki/Man-in-the-middle_attack|man in the
+middle attack], such as one that substitutes malicious code into your
+Fossil repository clone.
+
+You can force the Fossil build system to avoid searching for, building
+against, and linking to the OpenSSL library by passing
+<b>--with-openssl=none</b> to the <tt>configure</tt> script.
+
+If you do not have the OpenSSL development libraries on your system,
+we recommend that you install them, typically via your OS's package
+manager. The Fossil build system goes to a lot of effort to seek these
+out wherever they may be found, so that is typically all you need to
+do.
+
+For more advanced use cases, see the [./ssl.wiki#openssl-bin|OpenSSL
+discussion in the "TLS and Fossil" document].
+</li>
+
+<li>
+To build a statically linked binary, you can <i>try</i> adding
+the <b>--static</b> option, but
+[https://stackoverflow.com/questions/3430400/linux-static-linking-is-dead
+| it may well not work]. If your platform of choice is affected by this,
+the simplest workaround we're aware of is to build a Fossil container,
+then [./containers.md#static | extract the static executable from it].
+</li>
+
+<li>
+To enable the native [./th1.md#tclEval | Tcl integration feature] feature,
+add the <b>--with-tcl=1</b> and <b>--with-tcl-private-stubs=1</b> options.
+</li>
+
+<li>
+Other configuration options can be seen by running
+<b>./configure --help</b>
+</li>
+</ol>
+
+<li>Run "<b>make</b>" to build the "fossil" or "fossil.exe" executable.
+The details depend on your platform and compiler.</li>
+
+<ol type="a">
+<li><i>Unix</i> → the configure-generated Makefile should work on
+all Unix and Unix-like systems.  Simply type "<b>make</b>".</li>
+
+<li><i>Unix without running "configure"</i> → if you prefer to avoid
+running configure, you can also use: <b>make -f Makefile.classic</b>.  You may
+want to make minor edits to Makefile.classic to configure the build for your
+system.</li>
+
+<li><i>MinGW / MinGW-w64</i> → The best-supported path is to build
+via the MinGW specific Makefile under a POSIX build of GNU make:
+"<b>make -f win/Makefile.mingw</b>".</li>
+
+To enable the native [./th1.md#tclEval | Tcl integration feature], use a
+command line like the following (all on one line):
+
+<pre>make -f win/Makefile.mingw FOSSIL_ENABLE_TCL=1 FOSSIL_ENABLE_TCL_STUBS=1 FOSSIL_ENABLE_TCL_PRIVATE_STUBS=1</pre>
+
+<li><i>MSYS2 / Cygwin</i> → This is something of a hybrid between
+options "a" and "c" above: it configures and builds
+<code>fossil.exe</code> much as on Linux, but you get a native Windows
+executable out at the end. The primary downside is that this type of
+executable can become confused when attempting to interoperate with
+fully native Windows EXEs by making assumptions that only hold true when
+all elements are running under the Cygwin/MSYS environment. The MSVC and
+MinGW options do not have this limitation.
+
+Even so, there is value to Linux/Unix natives in having this hybrid
+while off in Windows-land. The simpler of the two paths is MSYS2, since
+it lets you install the necessary prerequisites in a single command
+after installing the base environment:
+
+<pre>pacman -sS gcc make openssl-devel zlib-devel</pre>
+
+The equivalent in Cygwin's <code>setup.exe</code> requires stepping
+through the GUI package chooser, and then if you miss one of the
+prereqs, going all the way back through it again until you get it right.
+
+<li><i>MSVC</i> → Use the MSVC makefile.</li>
+
+<em>NB:</em> Run the following <code>nmake</code> commands from a "x64 Native
+Tools Command Prompt"; <code>buildmsvc.bat</code> is able to automatically load
+the build tools (x64 by default, pass "x86" as the first argument to use the
+x86 tools), so it can be called from a normal command prompt.
+
+First, change to the "win/" subdirectory ("<b>cd win</b>"), then run
+"<b>nmake /f Makefile.msc</b>".<br><br>Alternatively, the batch
+file "<b>win\buildmsvc.bat</b>" may be used and it will attempt to
+detect and use the latest installed version of MSVC.<br><br>To enable
+the optional <a href="https://www.openssl.org/">OpenSSL</a> support,
+first <a href="https://www.openssl.org/source/">download the official
+source code for OpenSSL</a> and extract it to an appropriately named
+"<b>openssl</b>" subdirectory within the local
+[/tree?ci=trunk&name=compat | compat] directory then make sure that some recent
+<a href="http://www.perl.org/">Perl</a> binaries are installed locally,
+and finally run one of the following commands:
+<pre>
+nmake /f Makefile.msc FOSSIL_ENABLE_SSL=1 FOSSIL_BUILD_SSL=1 PERLDIR=C:\full\path\to\Perl\bin
+</pre>
+<pre>
+buildmsvc.bat FOSSIL_ENABLE_SSL=1 FOSSIL_BUILD_SSL=1 PERLDIR=C:\full\path\to\Perl\bin
+</pre>
+To enable the optional native [./th1.md#tclEval | Tcl integration feature],
+run one of the following commands or add the &quot;FOSSIL_ENABLE_TCL=1&quot;
+argument to one of the other NMAKE command lines:
+<pre>
+nmake /f Makefile.msc FOSSIL_ENABLE_TCL=1
+</pre>
+<pre>
+buildmsvc.bat FOSSIL_ENABLE_TCL=1
+</pre>
+
+<li><i>Cygwin</i> → The same as other Unix-like systems. It is
+recommended to configure using: "<b>configure --disable-internal-sqlite</b>",
+making sure you have the "libsqlite3-devel" , "zlib-devel" and
+"openssl-devel" packages installed first.</li>
+</ol>
+</ol>
+
+<h2>3.0 Installing</h2>
+
+<ol>
+<li value="9">
+The finished binary is named "fossil" (or "fossil.exe" on Windows).
+Put this binary in a
+directory that is somewhere on your PATH environment variable.
+It does not matter where.
+</li>
+
+<li>
+<b>(Optional:)</b>
+To uninstall, just delete the binary.
+</li>
+</ol>
+
+<h2>4.0 Additional Considerations</h2>
+
+<ul>
+<li>
+  If the makefiles that come with Fossil do not work for
+  you, or for some other reason you want to know how to build
+  Fossil manually, then refer to the
+  [./makefile.wiki | Fossil Build Process] document which describes
+  in detail what the makefiles do behind the scenes.
+</li>
+
+<li>
+  The fossil executable is self-contained and stand-alone and usually
+  requires no special libraries or other software to be installed.  However,
+  the "--tk" option to the [/help/diff|diff command] requires that Tcl/Tk
+  be installed on the local machine.  You can get Tcl/Tk from
+  [http://www.activestate.com/activetcl|ActiveState].
+</li>
+
+<li>
+  To build on older Macs (circa 2002, MacOS 10.2) edit the Makefile
+  generated by configure to add the following lines:
+  <pre>
+  TCC += -DSQLITE_WITHOUT_ZONEMALLOC
+  TCC += -D_BSD_SOURCE
+  TCC += -DWITHOUT_ICONV
+  TCC += -Dsocketlen_t=int
+  TCC += -DSQLITE_MAX_MMAP_SIZE=0
+  </pre>
+</li>
+</ul>
+
+
+<h2 id="docker" name="oci">5.0 Building a Docker Container</h2>
+
+The information on building Fossil inside an
+[https://opencontainers.org/ | OCI container] is now in
+[./containers.md | a separate document].
+
+This includes the instructions on using the OCI container as an
+expedient intermediary for building a statically-linked Fossil binary on
+modern Linux platforms, which otherwise make this difficult.
+
+
+<h2>6.0 Building on/for Android</h2>
+
+<h3>6.1 Cross-compiling from Linux</h3>
+
+The following instructions for building Fossil for Android via Linux,
+without requiring a rooted OS, are adapted from
+[forum:/forumpost/e0e9de4a7e | a forum post].
+
+On the development machine, from the fossil source tree:
+
+<pre><code>export CC=$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang
+./configure --with-openssl=none
+make
+</code></pre>
+
+
+On the Android device, enable the <em>USB debugging</em> option from
+Developer menu in Device Options. Connect the device to the development
+system with USB. If it's configured and connected properly,
+the device should show up in the output of <code>adb devices</code>:
+
+<pre><code>sudo adb devices
+</code></pre>
+
+Copy the resulting fossil binary onto the device...
+
+<pre><code>sudo adb push fossil /data/local/tmp
+</code></pre>
+
+And run it from an <code>adb</code> shell:
+
+<pre><code>sudo adb shell
+&gt; cd /data/local/tmp
+# Fossil requires a HOME directory to work with:
+&gt; export HOME=$PWD
+&gt; export PATH=$PWD:$PATH
+&gt; fossil version
+This is fossil version 2.11 &#91;e5653a4ceb] 2020-03-26 18:54:02 UTC
+</code></pre>
+
+The output might, or might not, include warnings such as:
+
+<pre><code>WARNING: linker: ./fossil: unused DT entry: type 0x6ffffef5 arg 0x1464
+WARNING: linker: ./fossil: unused DT entry: type 0x6ffffffe arg 0x1ba8
+WARNING: linker: ./fossil: unused DT entry: type 0x6fffffff arg 0x2
+</code></pre>
+
+The source of such warnings is not 100% certain.
+Some information about these (reportedly harmless) warnings can
+be found
+[https://stackoverflow.com/a/41900551 | on this StackOverflow post].
+
+
+<a id='fuzzer'></a>
+<h2>7.0 Building for Fuzz Testing</h2>
+
+This feature is primarily intended for fossil's developers and may
+change at any time. It is only known to work on Linux systems and has
+been seen to work on x86/64 and ARM.
+
+Fossil has builtin support for processing specific features using
+<tt>libfuzzer</tt>. The features which can be tested this way are
+found in the help text for the [/help/test-fuzz|test-fuzz
+command].
+
+Fuzzing requires:
+
+  *  The clang C compiler.
+  *  libfuzzer. On Ubuntu-derived systems, it can be installed with
+     <tt>apt install libfuzzer-XYZ</tt>, where XYZ is a version number
+     (several versions may be available on any given system)
+
+
+Compile as follows:
+
+<pre><code>make clean
+make TCCFLAGS='-DFOSSIL_FUZZ -fsanitize=fuzzer,address,undefined -O0 -g' CC=clang
+</code></pre>
+
+The resulting <tt>fossil</tt> binary differs from the standard
+one primarily in that it runs the <tt>test-fuzz</tt> command by
+default. It needs to be told what to fuzz and needs to be given a
+directory of input files to seed the fuzzer with:
+
+
+<pre><code>$ mkdir cases
+  # Copy input files into ./cases. e.g. when fuzzing the markdown
+  # processor, copy any to-be-tested .md files into that directory.
+  # Then start the fuzzer:
+$ ./fossil-fuzz --fuzztype markdown cases
+</code></pre>
+
+As it works, it writes its mutated test files into the "cases"
+directory, each one named in the form of a hash. When it finds a
+problem it will produce a stack trace for the offending code, will
+output the name of the file which triggered the crash (named
+<tt>cases/SOME_HASH</tt>) and may, depending on the nature of the
+problem, produce a file named <tt>crash-SOMETHING</tt>.  In theory the
+crash file can be fed directly back into the fuzzer to reproduce the
+problem:
+
+<pre></code>$ ./fossil-fuzz --fuzztype markdown crash-SOMETHING
+</code></pre>
+
+But whether or not it will genuinely crash may depend on static
+app-level state which might not trigger the crash when running an
+individual test.
+
+For a detailed information about the fuzzer's flags and features, see:
+
+  *  [https://llvm.org/docs/LibFuzzer.html]
+  *  [https://github.com/google/fuzzing/blob/master/tutorial/libFuzzerTutorial.md]
+ 
+Flags for the fuzzer can be passed directly to fossil,
+e.g. <tt>-jobs=4</tt> to start four fuzzer jobs in parallel, but doing
+so may cause the fuzzer to <em>strip the --fuzztype flag</em>, leading
+to it testing the wrong thing. When passing on fuzzer-specific flags
+along with <tt>--fuzztype</tt>, be sure to check your system's process
+list to ensure that your <tt>--fuzztype</tt> flag is there.
+
+
+<a id='wasm'></a>
+<h2>8.0 Building WebAssembly Components</h2>
+
+Fossil uses one component built as
+[https://developer.mozilla.org/en-US/docs/WebAssembly | WebAssembly]
+a.k.a. WASM. Because compiling WASM code requires non-trivial
+client-side tooling, the repository includes compiled copies of these
+pieces. Most Fossil hackers should never need to concern themselves
+with the WASM parts, but this section describes how to for those who
+want or need to do so.
+
+<strong>The bits described in this section are necessary when updating
+<tt>extsrc/pikchr.c</tt></strong> from the upstream source, or the
+fossil binary will use a different version of pikchr than
+[/pikchrshow] does (as the latter runs the WASM build of pikchr).
+
+These instructions have only ever been tested on Linux systems. They
+"should" work on any Unix-like system supported by Emscripten. The
+fossil makefiles for Windows builds <em>do not</em> include any of the
+WASM-related components (patches to add that would be welcomed, of
+course).
+
+The first step is to configure the tree with support for
+[https://emscripten.org/|Emscripten]. This requires that the system
+has the Emscripten SDK (a.k.a. emsdk) installed, as documented at:
+
+[https://emscripten.org/docs/getting_started/downloads.html]
+
+For instructions on keeping the SDK up to date, see:
+
+[https://emscripten.org/docs/tools_reference/emsdk.html]
+
+<div class="sidebar">Getting Emscripten up and running is trivial and
+painless, at least on Linux systems, but the installer downloads
+many hundreds of megabytes of tools and dependencies, all of which
+will be installed under the single SDK directory (as opposed to
+being installed at the system level). It does, however, require
+that python3 be installed at the system level and it can
+optionally make use of a system-level cmake for certain tasks
+unrelated to how fossil uses the SDK.</div>
+
+After installing the SDK, configure the fossil tree with emsdk
+support:
+
+<pre><code>$ ./configure --with-emsdk=/path/to/emsdk \
+  --and-other-options...
+</code></pre>
+
+If the <tt>--with-emsdk</tt> flag is not provided, the configure
+script will check for the environment variable <tt>EMSDK</tt>, which
+is one of the standard variables the SDK environment uses. If that
+variable is found, its value will implicitly be used in place of the
+missing <tt>--with-emsdk</tt> flag. Thus, if the <tt>emsdk_env.sh</tt>
+script is sourced into the shell before running the configure script,
+the SDK will be detected even without the config flag.
+
+The configure script installs some makefile variables which tell the
+build where to find the SDK and it generates a script named
+<tt>tools/emcc.sh</tt> (from the template file
+<tt>[/file/tools/emcc.sh.in|/tools/emcc.sh.in]</tt>), which is a
+wrapper around the Emscripten C compiler (<tt>emcc</tt>). The wrapper
+script uses the configure-time state to attempt to set up the various
+environment variables which are required by <tt>emcc</tt> and will
+fail if it cannot do so. Once it's set up the environment, it passes
+on all of its arguments to <tt>emcc</tt>.
+
+The WASM-related build parts are set up such that none of them should
+ever trigger implicitly (e.g. via dependencies resolution) in a normal
+build cycle. They are instead explicitly built as described below.
+
+From the top of the source tree, all WASM-related components can be
+built with:
+
+<pre><code>$ make wasm</code></pre>
+
+<div class="sidebar">The file
+<tt>[/file/extsrc/pikcher-worker.js|extsrc/pikcher-worker.js]</tt>
+is hand-coded and intended to be loaded as a "Worker" in
+JavaScript. That file loads the main module and provides an
+interface via which a main JavaScript thread can communicate with
+pikchr running in a Worker thread. The file
+<tt>[/file/src/fossil.page.pikchrshowasm.js|src/fossil.page.pikchrshowasm.js]</tt>
+implements the [/pikchrshow] app and demonstrates how
+<tt>pikchr-worker.js</tt> is used.</div>
+
+As of this writing, those parts include:
+
+   *  <tt>extsrc/pikchr.wasm</tt> is a WASM-compiled form of
+      <tt>extsrc/pikchr.c</tt>.
+   *  <tt>extsrc/pikchr.js</tt> is JS/WASM glue code generated by Emscripten
+      to give JS code access to the API exported by the WASM file.
+
+When a new version of <tt>extsrc/pikchr.c</tt> is installed, the
+files <tt>pikchr.{js,wasm}</tt> will need to be recompiled to account
+for that. Running <tt>make wasm</tt> will, if the build is set up for
+the emsdk, recompile those:
+
+<pre><code>$ rm extsrc/pikchr.{js,wasm}
+# ^^^^ that rm has proven necessary in order to ensure rebuilds
+$ make wasm
+./tools/emcc.sh -o extsrc/pikchr.js ...
+$ ls -la extsrc/pikchr.{js,wasm}
+-rw-rw-r-- 1 stephan stephan 17263 Jun  8 03:59 extsrc/pikchr.js
+-rw-rw-r-- 1 stephan stephan 97578 Jun  8 03:59 extsrc/pikchr.wasm
+</code></pre>
+
+<div class="sidebar">If that fails with a message along the lines of
+“<code>setting `EXPORTED_RUNTIME_METHODS` expects `<class 'list'>` but
+got `<class 'str'>`</code>” then the emcc being invoked is too old: emcc
+changed the format of list-type arguments at some point.  The required
+minimum version is unknown, but any SDK version from May 2022 or later
+"should" (as of this writing) suffice. Any older version may or may not
+work.</div>
+
+After that succeeds, we need to run the normal build so that those
+generated files can be compiled in to the fossil binary, accessible
+via the [/help/www/builtin|/builtin page]:
+
+<pre><code>$ make</code></pre>
+
+Before checking in those newly-built files, they need to be tested by
+running the [/pikchrshow] page. If that page loads, the compilation
+process fundamentally worked (a load failure will be made obvious to
+the viewer). If it fails to load then the browser's dev tools console
+likely provides at least a small hint (and <em>sometimes</em> a useful
+hint) about the nature of the problem. Don't check those files in
+until [/pikchrshow] runs, though!
+
+Should pikchr's C interface ever change, <tt>pikchr-worker.js</tt>
+will need to be updated to accommodate it, but such modification is
+typically trivial.
+
+<h3>8.1 Solutions other than Emscripten?</h3>
+
+Emscripten is not the only option for building C as WASM, but it
+provides a complete toolchain which eliminates many other steps which
+must otherwise be accounted for on a per-project basis.  Despite its
+convenience, it behooves us to explore other build options for the
+sake of portability and avoiding what amounts to vendor lock-in.
+
+For later refererence, here are articles specifically covering
+building WASM projects without using Emscripten:
+
+   *  [https://surma.dev/things/c-to-webassembly/]
+   *  [https://schellcode.github.io/webassembly-without-emscripten]

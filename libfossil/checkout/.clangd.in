@@ -1,0 +1,22 @@
+# https://clangd.llvm.org/config
+CompileFlags:          # Tweak the parse settings
+#  Add: [-xc++, -Wall] # treat all files as C++, enable more warnings
+  Remove: [-W*]        # strip all other warning-related flags
+#  Compiler: clang++   # Change argv[0] of compile flags to `clang++`
+CompilationDatabase: compile_commands.json
+
+Includes:
+  IgnoreHeader: libfossil.h libfossil++.hpp
+  # ^^^ generated files
+
+SemanticTokens:
+  DisabledKinds: []
+  DisabledModifiers: []
+
+@if CLANGD_INDEX_FILE
+Index:
+  External:
+    File: @CLANGD_INDEX_FILE@
+Index:
+  Background: Build
+@endif

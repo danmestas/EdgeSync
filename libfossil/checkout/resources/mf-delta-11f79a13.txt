@@ -1,0 +1,8 @@
+B 20b54357ebd080aa541fb8725fe687a22f054f8f
+C it\sturns\sout\scommit\ssupports\sa\s--delta\soption\sand\si\sneed\sa\sdelta\smanifest\sfor\stesting,\sso\shere's\sa\scomment-only\spatch\sfor\sdelta\stesting.
+D 2013-08-18T12:10:24.622
+F src/fsl_mf.c 60a24107e694f255f7d3077714cf403ebaa40f68
+P 20b54357ebd080aa541fb8725fe687a22f054f8f
+R 6f94927663f297a98d2b5ed40a0f9298
+U stephan
+Z aa128fb1baae44e252d16e5b1ae2e76e

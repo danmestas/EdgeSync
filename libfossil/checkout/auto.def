@@ -1,0 +1,1039 @@
+# vim:se syn=tcl:
+#
+use wh-common cc cc-shared cc-lib
+if {"--help" ne $::argv} {
+  proj-tweak-default-env-dirs
+}
+
+set DUMP_DEFINES_FILE config.defines.txt
+file delete -force $DUMP_DEFINES_FILE
+options-add [subst [proj-strip-hash-comments {
+  shared=1 => {Disable build of a shared library.}
+  no-debug=0 => {Disable debug build options.}
+  amal => {Generates a conservative config file for the amalgamation build.}
+  static=1 => {Disable build of a static library.}
+  profile=0 => {Enables the -pg (profiling) compile/link flag if CC is gcc.}
+  no-fnc=0 => {Disable client/fnc build even if ncurses is found.}
+  compile-commands=0 =>
+    {Enable the check for compile_commands.json support,
+    noting that it often detects a false positive. If CC is clang
+    then it defaults to on instead of off.}
+  c++=0  => {Enable the C++ bits. These fail to build on many clang systems for as-yet-unknown reasons.}
+  ctags=0 => {Build ctags tag file, if available.}
+  etags=0 => {Build etags tag file, if available.}
+  assume-c99 => {Skip the check for C99 and _assume_ the compiler can handle C99 without the -std=c99 flag. This is a workaround for gcc 4.x.}
+  ncurses=1 => {Disable ncurses pieces. Some platforms detect them and then can't build with it. Implies --no-fnc.}
+  dump-defines=0  => {Write all configure-defined vars to $DUMP_DEFINES_FILE.}
+
+  f-apps-link-lib-static=0 => {Link the f-apps statically to libfossil.}
+  fnc-link-lib-static=0 => {Link fnc statically to libfossil.}
+  apps-static=0
+    => {As for --f-apps-link-lib-static and --fnc-link-lib-static, but also
+      link the binaries statically. This may not work on all platforms,
+      due to limitations of static linking in, e.g., glibc. Similarly, it
+      only works if all dependent libraries are available in static form.}
+
+  deps=1 => {Disable automatic dependencies generation.}
+  pedantic=0 => {Enable pedantic build flags (may break with some imported upstream code)}
+  soname:=none
+          => {SONAME for libfossil.so. "none", or not using this flag, sets no
+            soname. A value of "version" uses the library's package version. A
+            value matching the glob "libfossil.*" sets it to that literal value.
+            Any other value is assumed to be a suffix which gets applied to
+            "libfossil.so.", e.g. --soname=9.10 equates to "libfossil.so.9.10".}
+}]]
+wh-handle-dll-basename -options
+wh-handle-out-implib -options
+wh-handle-with-sqlite -options
+options {}
+
+# autosetup interceps 'debug' and 'enable-debug' flags :/
+#    prefix:=[get-env HOME /usr/local] -> "Installation prefix."
+
+define FSL_PACKAGE_NAME "libfossil"
+define FSL_LIBRARY_VERSION 0.6.0
+
+########################################################################
+# See if we can get the fossil schema version from the current
+# checkout. If so, use that one, otherwise fall back to some
+# hard-coded default. 2025-07-20: in all of libfossil's lifespan,
+# these values have changed a single time. i.e. it's not really necessary
+# to do this.
+apply {{} {
+  set auxSchema {}
+  set contentSchema {}
+  set fossilBin [proj-bin-define fossil]
+  if {"" ne $fossilBin} {
+    catch {
+      set auxSchema [string trimright \
+                       [exec "$fossilBin" sqlite3 {SELECT value FROM config WHERE name='aux-schema';}] ]
+      set contentSchema [string trimright \
+                           [exec "$fossilBin" sqlite3 {SELECT value FROM config WHERE name='content-schema';}] ]
+    } ex
+  }
+
+  if {[string length $auxSchema] == 16} {
+    msg-result "Got aux-schema value from current repo: $auxSchema"
+    msg-result "Got content-schema value from current repo: $contentSchema"
+  } else {
+    set auxSchema "2015-01-24"
+    set contentSchema 2
+    msg-result "Using hard-coded aux-schema: $auxSchema"
+    msg-result "Using hard-coded content-schema: $contentSchema"
+  }
+  define FSL_AUX_SCHEMA $auxSchema
+  define FSL_CONTENT_SCHEMA $contentSchema
+}}
+
+########################################################################
+# Grab the code version and timestamp from manifest.uuid and manifest
+# files...
+#
+# This requires that the repo is NOT generating delta manifests. As
+# of 2020-03, the libfossil server uses the forbid-delta-manifest
+# setting.
+apply {{} {
+  set sd $::autosetup(srcdir)
+  set ::timestamp [clock format [clock seconds] \
+                   -gmt 1 -format "%Y-%m-%d %H:%M"]
+  set ::libVersionHash [proj-file-content -trim "$sd/manifest.uuid"]
+
+  set fp [open "$sd/manifest" rb]
+  gets $fp line; # Skip C-card
+  if {[string match "B *" $line]} {
+    # Nope, that was a B-card. Try again.
+    gets $fp line ; # Get C-card
+  }
+  gets $fp line ; # Get D-card
+  close $fp
+  set ::manifestTimestamp [string map {"D " "" T " "} $line]
+}}
+msg-result "libVersionHash = $libVersionHash"
+msg-result "manifestTimestamp = $manifestTimestamp"
+
+#
+# Create VERSION.h, an intermediary file used by other pieces of the
+# build process. This is not a distributable.
+#
+define VERSION_H ""
+apply {{} {
+  set ofile VERSION.h
+  set out [open $ofile w]
+  set vh [subst {#define FSL_PACKAGE_NAME "[get-define FSL_PACKAGE_NAME]"
+#define FSL_LIBRARY_VERSION "[get-define FSL_LIBRARY_VERSION]"
+#define FSL_LIB_VERSION_HASH "$::libVersionHash"
+#define FSL_LIB_VERSION_TIMESTAMP "$::manifestTimestamp UTC"
+#define FSL_LIB_CONFIG_TIMESTAMP "$::timestamp GMT"
+#define FSL_AUX_SCHEMA "[get-define FSL_AUX_SCHEMA]"
+#define FSL_CONTENT_SCHEMA "[get-define FSL_CONTENT_SCHEMA]"
+#define FOSSIL_RELEASE_VERSION_NUMBER 22700
+#define FOSSIL_MANIFEST_NUMERIC_DATE 20250727
+#define FOSSIL_MANIFEST_NUMERIC_TIME 110738
+}]
+  puts $out $vh
+  close $out
+  define VERSION_H $vh
+  msg-result "Created $ofile"
+}}
+
+if {[opt-bool amal]} {
+  apply {{} {
+    msg-result "Generating conservative config for the amalgamation build..."
+    set incGuard _NET_FOSSIL_SCM_FSL_AMALGAMATION_CONFIG_H_INCLUDED_
+    set ofile libfossil-config.h
+    set out [open $ofile w]
+    puts $out "#if !defined($incGuard)"
+    puts $out "#define $incGuard 1"
+    puts $out "/* Tweak the following for your system... */"
+    set notOnWindows "<skipped>"
+    foreach {def valUnix valWin} [subst -nocommands {
+      HAVE_COMPRESS 1 1
+      HAVE_STDINT_H 1 1
+      HAVE_LSTAT 1 0
+      HAVE_OPENDIR 1 1
+      HAVE_PIPE 1 0
+      HAVE_STAT 1 0
+      _DEFAULT_SOURCE 1 $notOnWindows
+      _XOPEN_SOURCE 700 $notOnWindows
+      HAVE_CLOCK_GETTIME 1 0
+    }] {
+      if {$valUnix eq $valWin || $notOnWindows eq $valWin} {
+        puts -nonewline $out [subst -nocommands \
+{#if !defined($def)
+#  define $def $valUnix
+#endif
+}]
+      } else {
+        puts -nonewline $out [subst -nocommands \
+{#if defined(_WIN32)
+#  if !defined($def)
+#    define $def $valWin
+#  endif
+#else
+#  if !defined($def)
+#    define $def $valUnix
+#  endif
+#endif
+}]
+      }
+    }
+    puts $out "#endif /* $incGuard */"
+    close $out
+    msg-result "Generated $ofile"
+  }}
+  return; # leave the configure script!
+}
+# end of --amal bootstrap config generation
+########################################################################
+
+wh-require-bash; # for amalgamation generation (TODO: port that to tcl)
+#cc-check-c11
+
+if {![wh-cc-check-c99 0]} {
+  if {[opt-bool assume-c99]} {
+    proj-indented-notice {
+      WARNING: the compiler claims to not support C99, but --assume-c99 was used,
+      so ignoring that and continuing.
+    }
+  } else {
+    user-error "As of 2021-02-21, libfossil requires C99 or higher."
+  }
+}
+
+if {![wh-handle-with-sqlite extsrc]} {
+  user-error "libsqlite3 not found. Use --with-sqlite=tree to use the built-in copy."
+}
+
+#
+# --compile-commands must be checked relatively early or else flags
+# added later, like -Werror, break it.
+#
+proj-check-compile-commands -assume-for-clang compile-commands
+
+if {![proj-check-rpath]} {
+  proj-warn "could not figure out how to add the rpath, so f-apps linking might not work"
+}
+
+cc-check-sizeof "void *"
+
+cc-with {} {
+  if {![cc-check-includes zlib.h] ||
+      ![cc-check-function-in-lib compress z]} {
+    user-error "Missing functional zlib"
+  }
+
+  if {[cc-check-function-in-lib iconv iconv]} {
+    # Needed on Mac platforms for text conversions
+    define LDFLAGS_ICONV [get-define lib_iconv]
+    undefine lib_iconv
+  } else {
+    define LDFLAGS_ICONV ""
+  }
+
+  define LDFLAGS_clock_gettime ""
+  define HAVE_CLOCK_GETTIME 0
+  if {[cc-check-functions clock_gettime]} {
+    define LDFLAGS_clock_gettime ""
+  } elseif {[cc-check-functions-in-lib clock_gettime rt]} {
+    define LDFLAGS_clock_gettime [get-define lib_clock_gettime]
+  }
+}; # cc-with
+
+#
+# Set up deps generation. Must also come early due to CFLAGS/LDFLAGS
+# interference.
+#
+apply {{} {
+  define F_CC_DOT_D ""
+  define F_CXX_DOT_D ""
+  if {![opt-bool deps]} {
+    msg-result "C deps generation disabled."
+    return
+  }
+  if {[wh-check-cc-deps-gen]} {
+      define F_CC_DOT_D [join [list [get-define CC_DEPS_GEN_FLAG] \${@:.o=.d}]]
+  }
+  if {[opt-bool c++] && [wh-check-cc-deps-gen c++]} {
+    define F_CXX_DOT_D [join [list [get-define CC_DEPS_GEN_FLAG] \${@:.o=.d}]]
+  }
+}}
+
+cc-check-functions sigaction fork
+#if {![cc-check-functions iconv] &&
+#    ![cc-check-function-in-lib iconv iconv]} {
+#    user-error "Cannot find iconv(3) in libc or libiconv"
+#}
+
+wh-check-pthread
+proj-file-extensions
+
+########################################################################
+# Module loader is currently used only by the s2 binding, which is no
+# longer actively maintained.
+#define FSL_ENABLE_MODULE_LOADER [wh-check-module-loader]
+#if {![get-define FSL_ENABLE_MODULE_LOADER]} {
+#    msg-result "No usable module loading library found. No worries, because we won't have a module system yet. :-D"
+#} else {
+#    msg-result "Found a module loader. Now we just need something to do with it."
+#}
+#wh-check-module-loader; wh-check-module-loader
+
+########################################################################
+# readline is only used (if at all) by s2sh. If it's not available, we
+# fall back to a tree-local copy of the BSD-licensed linenoise editing
+# library.
+#define FSL_ENABLE_READLINE 0
+#define LIB_READLINE ""
+#    define LIB_READLINE ""
+#if {[cc-check-includes readline/readline.h] &&
+#    [proj-check-function-in-lib readline readline]} {
+#    define FSL_ENABLE_READLINE 1
+#    define FSL_ENABLE_LINENOISE 0
+#    msg-result "Enabling libreadline."
+#} else {
+#    msg-result "libreadline not found. Using the linenoise line editor."
+#    define FSL_ENABLE_READLINE 0
+#    define FSL_ENABLE_LINENOISE 1
+#    define LIB_READLINE ""
+#}
+
+# cc-check-functions getcwd fopen
+#inet_ntop getaddrinfo
+
+cc-with {} {
+  cc-check-functions opendir stat pipe
+  if {[cc-check-functions lstat]} {
+    # for lstat() on Linux and FreeBSD:
+    define _XOPEN_SOURCE 600
+    # alternate for lstat() on Linux:
+    # define _BSD_SOURCE 1
+    # ^^^^ causes warning (-Werror breakage) with glibc >=2.20
+    define _DEFAULT_SOURCE 1
+    define _POSIX_C_SOURCE 200112L
+  }
+}
+
+
+# Find some tools
+cc-check-tools strip ar
+
+# Set up initial CFLAGS...
+apply {{} {
+  set cFlags {}
+  set wFlags {
+    -Wall     F_WALL
+    -Werror   F_WERROR
+  }
+  if {[opt-bool pedantic]} {
+    lappend wFlags \
+      -Wextra F_WEXTRA \
+      -pedantic F_PEDANTIC
+  }
+
+  lappend wFlags -fPIE F_PIE
+  wh-cc-check-flag {*}$wFlags
+  foreach {f d} $wFlags {
+    #  -Wno-missing-field-initializers F_Wno-missing-field-initializers
+    lappend cFlags [get-define $d]
+  }
+  wh-cc-check-flag -fPIC F_PIC
+  if {![proj-looks-like-windows]} {
+    lappend cFlags [get-define F_PIC]
+  }
+  msg-checking "Debug build ??? "
+  if {[proj-opt-truthy no-debug]} {
+    msg-result "Non-debug build."
+    lappend cFlags -O2
+  } else {
+    msg-result "Debug build enabled. Use --no-debug to build in non-debug mode."
+    lappend cFlags -DDEBUG -O0
+    if {[cc-with {} {cc-check-flags -gdwarf-4}]} {
+      lappend cFlags -gdwarf-4
+    }
+  }
+  define CFLAGS $cFlags
+}}
+
+msg-checking "gprof profiling? "
+if {[proj-check-profile-flag profile]} {
+  msg-result "gcc detected: building with profiling option."
+  # $(CC_PROFILE_FLAG) gets added to CFLAGS and LDFLAGS in the
+  # makefile
+} else {
+  msg-result "no. Use --profile and gcc to enable."
+}
+
+proj-opt-define-bool shared LIBFOSSIL_SHARED
+proj-opt-define-bool static LIBFOSSIL_STATIC
+
+if {"" eq [proj-bin-define dot]} {
+    define DOXYGEN_HAVE_DOT NO
+} else {
+    define DOXYGEN_HAVE_DOT YES
+}
+
+########################################################################
+# "soname" for libfossil.so. See discussion at:
+# https://sqlite.org/src/forumpost/5a3b44f510df8ded
+apply {{} {
+  define LDFLAGS_SONAME ""
+  if {[proj-opt-was-provided soname]} {
+    set soname [join [opt-val soname] ""]
+  } else {
+    # Enabling soname breaks linking for the --dynlink-tools feature,
+    # and this project has no direct use for soname, so default to
+    # none. Package maintainers, on the other hand, like to have an
+    # soname.
+    set soname none
+  }
+  switch -exact -- $soname {
+    none - "" { return 0 }
+    version {
+      set soname "libfossil.so.[get-define FSL_LIBRARY_VERSION]"
+    }
+    default {
+      if {[string match libfossil.* $soname]} {
+        # use it as-is
+      } else {
+        # Assume it's a suffix
+        set soname "libfossil.so.${soname}"
+      }
+    }
+  }
+  if {[proj-check-soname $soname]} {
+    define LDFLAGS_SONAME [get-define LDFLAGS_SONAME_PREFIX]$soname
+    msg-result "Setting SONAME using: [get-define LDFLAGS_SONAME]"
+  } elseif {[proj-opt-was-provided soname]} {
+    # --soname was explicitly requested but not available, so fail fatally
+    proj-fatal "This environment does not support SONAME."
+  } else {
+    # --soname was not explicitly requested but not available, so just warn
+    msg-result "This environment does not support SONAME."
+  }
+}}
+
+
+define LDFLAGS_LIBBSD ""
+if {[wh-check-ncurses ncurses]} {
+  if {[opt-bool no-fnc]} {
+    define BUILD_CLIENT_FNC 0
+    msg-result "--no-fnc used: disabling client/fnc build."
+  } else {
+    define BUILD_CLIENT_FNC 1
+    # Brick Viking reports that his Linux system requires -lbsd to
+    # build fnc. My Linuxes, on the other hand, can't link with it.
+    # Haiku likes this, too.
+    if {[cctest -libs -lbsd -link 1]} {
+      msg-result "Adding -lbsd to fnc build."
+      define LDFLAGS_LIBBSD -lbsd
+    }
+  }
+} else {
+  define BUILD_CLIENT_FNC 0
+  msg-result "Curses not found or disabled. Disabling client/fnc build."
+}
+
+# Extract FNC version/date info which we need for the build. Do this
+# even when not building FNC simply so that the generated makefile
+# does not have unresolved @FNC_...@ entries in it.
+source $::autosetup(srcdir)/client/fnc/fnc-version.tcl
+
+msg-checking "Enable C++ pieces? "
+if {![opt-bool c++]} {
+    define ENABLE_CXX 0
+    msg-result "disabling C++ parts"
+    define CXX ""
+    # ^^^ don't use (undefine CXX) b/c then @CXX@ won't get replaced
+    # in the filtered files.
+} elseif {"" ne [get-define CXX ""]} {
+  define ENABLE_CXX 1
+  msg-result "enabled"
+} else {
+  msg-result "C++ is not available on this system"
+}
+
+proj-bin-define install
+proj-if-opt-truthy etags { proj-bin-define etags } { define BIN_ETAGS "" }
+proj-if-opt-truthy ctags { proj-bin-define ctags } { define BIN_CTAGS "" }
+proj-if-opt-truthy apps-static {
+  define LDFLAGS_FAPPS_STATIC -static
+  define FAPPS_LINK_LIBF_STATIC 1
+  define FNC_LINK_LIBF_STATIC 1
+} {
+  define LDFLAGS_FAPPS_STATIC ""
+  define FAPPS_LINK_LIBF_STATIC [opt-bool f-apps-link-lib-static]
+  define FNC_LINK_LIBF_STATIC [opt-bool fnc-link-lib-static]
+}
+
+if {0} {
+  define SH_LINKRPATH [regsub "%s" [get-define SH_LINKRPATH] "[get-define prefix]/lib"]
+  #msg-result "SH_LINKRPATH = [get-define SH_LINKRPATH]"
+  # On Martin's QNX, SH_LINKFLAGS is -rdynamic, which then causes a
+  # build error.
+  if {![cc-with {} {cc-check-flags [get-define SH_LINKFLAGS]]}} {
+    msg-result "Clearing out SH_LINKFLAGS because flags check fails for them: [get-define SH_LINKFLAGS]"
+    define SH_LINKFLAGS ""
+  }
+}
+
+set inTreeBuild [expr {$::autosetup(srcdir) eq $::autosetup(builddir)}]
+define IS_IN_TREE_BUILD $inTreeBuild
+
+
+########################################################################
+# Performs various tweaks to the build which are only relevant on
+# certain platforms, e.g. Mac and "Unix on Windows" platforms (msys2,
+# cygwin, ...).
+#
+# 1) DLL installation:
+#
+# [define]s LIBFOSSIL_DLL_INSTALL_RULES to a symbolic name suffix for
+# a set of "make install" rules to use for installation of the DLL
+# deliverable. The makefile is tasked with with providing rules named
+# install-dll-NAME which runs the installation for that set, as well
+# as providing a rule named install-dll which resolves to
+# install-dll-NAME (perhaps indirectly, depending on whether the DLL
+# is (de)activated).
+#
+# The default value is "unix-generic".
+#
+# 2) --out-implib:
+#
+# On platforms where an "import library" is conventionally used but
+# --out-implib was not explicitly used, automatically add that flag.
+# This conventionally applies to the "Unix on Windows" environments
+# like msys and cygwin.
+#
+# 3) --dll-basename:
+#
+# On the same platforms addressed by --out-implib, if --dll-basename
+# is not specified, --dll-basename=auto is implied.
+apply {{} {
+  set instName unix-generic; # name of installation rules set
+  set autoDll 0; # true if --out-implib/--dll-basename should be implied
+  set host [get-define host]
+  switch -glob -- $host {
+    *apple* -
+    *darwin*    { set instName darwin }
+    default {
+      set x [wh-env-is-unix-on-windows $host]
+      if {"" ne $x} {
+        set instName $x
+        set autoDll 1
+      }
+    }
+  }
+  define LIBFOSSIL_DLL_INSTALL_RULES $instName
+  if {$autoDll} {
+    if {![proj-opt-was-provided out-implib]} {
+      # Imply --out-implib=auto
+      proj-indented-notice [subst -nocommands -nobackslashes {
+        NOTICE: auto-enabling --out-implib for environment [$host].
+        Use --out-implib=none to disable this special case
+        or --out-implib=auto to squelch this notice.
+      }]
+      proj-opt-set out-implib auto
+    }
+    if {![proj-opt-was-provided dll-basename]} {
+      # Imply --dll-basename=auto
+      proj-indented-notice [subst -nocommands -nobackslashes {
+        NOTICE: auto-enabling --dll-basename for environment [$host].
+        Use --dll-basename=default to disable this special case
+        or --dll-basename=auto to squelch this notice.
+      }]
+      proj-opt-set dll-basename auto
+    }
+  }
+  wh-handle-dll-basename fossil
+  wh-handle-out-implib fossil
+}}
+
+#
+# Set up build of the library-level object files and libs...
+#
+# We "could" move much, perhaps all, of the following makefile code
+# generation into an external script and check in a generated/static
+# copy of it into the tree, and include it from Makefile.in after that
+# file sets up the configure bits that file would need. Maybe someday.
+#
+apply {{} {
+  msg-result "Setting up build of library sources..."
+  set mo {}; # makefile rules
+  set lsrc {}; # list of .c and internal .h files for libfossil
+  set lobj {}; # list of .o files for libfossil
+  # files for processing with tools/text2c.c
+  set lFile2C {
+    difftk_cstr.c        $(DIR.src)/difftk.tcl
+    schema_ckout_cstr.c  $(DIR.sql)/checkout.sql
+    schema_config_cstr.c $(DIR.sql)/config.sql
+    schema_forum_cstr.c  $(DIR.sql)/forum.sql
+    schema_repo1_cstr.c  $(DIR.sql)/repo-static.sql
+    schema_repo2_cstr.c  $(DIR.sql)/repo-transient.sql
+    schema_ticket_cstr.c $(DIR.sql)/ticket.sql
+    schema_ticket_reports_cstr.c $(DIR.sql)/ticket-reports.sql
+  }
+  # libfossil impl files and internal headers
+  set lfile {
+    fsl.c annotate.c appendf.c auth.c
+    bag.c buffer.c cache.c checkin.c checkout.c
+    cli.c content.c config.c cx.c db.c deck.c
+    delta.c dibu.c diff.c encode.c event.c
+    foci.c fs.c forum.c glob.c io.c leaf.c
+    list.c lookslike.c md5.c merge.c merge3.c
+    msg.c popen.c pq.c repo.c schema.c search.c
+    sha1.c sha3.c sc.c strftime.c tag.c ticket.c
+    udf.c url.c utf8.c vfile.c vpath.c wiki.c
+    xfer.c zip.c
+    ext_regexp.c ext_regexp.h
+    xdirent.h
+  }
+  foreach {x y} $lFile2C {
+    lappend lfile $x
+  }
+  foreach f $lfile {
+    set fc \$(DIR.src)/$f
+    lappend lsrc $fc
+    if {[string match *.h $f]} {
+      # we need internal-only headers only for deps purposes
+      continue
+    }
+    set fo \$(DIR.bout)/src_[file rootname $f].o
+    lappend lobj $fo
+    set xtra ""
+    wh-make-append mo "$fo: $fc \$(DEPS.common)" -nltab \
+      -space \$(CC.libfossil.o) $fc $xtra -nl
+  }
+  if {$::inTreeBuild} {
+    # Create rules to regenerate the files listed in $lFile2C if needed
+    foreach {dest src} $lFile2C {
+      set fc \$(DIR.src)/$dest
+      set ftD [file tail $dest]
+      set fr [file root $ftD]
+      set ftS [file tail $src]
+      wh-make-append mo "\n$fc: $src \$(bin.text2c)" -nl \
+        -tab "@echo Creating \$@ from $src..." \; -bnl \
+        -tab \{ -bnl \
+        "\t\techo '/** @page page_${fr} ${ftS}'; echo;" -bnl \
+        "\t\techo 'Binary form of file ${ftS}.'; echo;" -bnl \
+        "\t\techo '*/';" -bnl \
+        "\t\t\$(bin.text2c) fsl_${fr} < ${src};" -bnl \
+        "\t\techo '/* end of ${ftS} */';" -bnl \
+        -tab "\} > \$@\n"
+    }
+  }
+
+  # Finish up the sqlite-related handling, which might change
+  # LIBFOSSIL_OBJ and $mo.
+  set sqo [get-define SQLITE3_ORIGIN 0]
+  define LDFLAGS_FAPPS_SQLITE3 ""
+  switch -exact -- $sqo {
+    1 {
+      # sqlite3 from local source tree
+      set sqC [get-define SQLITE3_SRC]
+      lappend lsrc $sqC
+      define-append CFLAGS_sqlite3 -I[relative-path $::autosetup(srcdir)/extsrc]
+      set fo \$(DIR.bout)/sqlite3-${sqo}.o
+      lappend lobj $fo
+      # makefile rule to build the $fo:
+      wh-make-append mo "$fo: $sqC \$(DEPS.common)" -nltab \
+        -space \$(T.cc) \$(CFLAGS.core) \$(CPPFLAGS.sqlite3) \
+                 -c -o \$@ $sqC -nl
+    }
+    2 {
+      # Out-of-tree sqlite3.c/h
+      set sqC [get-define SQLITE3_SRC]
+      set fo \$(DIR.bout)/sqlite3-${sqo}.o
+      lappend lobj $fo
+      # makefile rule to build the $fo:
+      wh-make-append mo "$fo: $sqC \$(DEPS.common)" -nltab \
+        -space \$(T.cc) \$(CFLAGS.core) \$(CPPFLAGS.sqlite3) \
+        -c -o \$@ $sqC -nl \
+        -space compile_commands.json: $fo -nl
+    }
+    3 {
+      # Out-of-tree sqlite3.o is in LDFLAGS_sqlite3.
+      lappend lobj [get-define SQLITE3_OBJ "?missing SQLITE3_OBJ?"]
+    }
+    4 - 5 - 6 - 7 {
+      # lib/headers are in LDFLAGS_sqlite3 and CFLAGS_sqlite3
+    }
+    default {
+      user-error "Could not determine how to set up build of/with sqlite3."
+    }
+  }; # SQLITE_ORIGIN
+
+  # These SQLite3 flags are only relevant when SQLITE3_ORIGIN in {1 2}
+  # Potential TODO is grab the list of config flags from: [exec fossil
+  # version -vv | grep ^SQLITE_] and then massage it a bit, e.g. use
+  # our own definition of SQLITE_THREADSAFE.
+  define-append CPPFLAGS_sqlite3 \
+    -UDEBUG -DNDEBUG \
+    -DSQLITE_DQS=0 \
+    -DSQLITE_THREADSAFE=[get-define HAVE_PTHREAD] \
+    -DSQLITE_DEFAULT_MEMSTATUS=0 \
+    -DSQLITE_DEFAULT_WAL_SYNCHRONOUS=1 \
+    -DSQLITE_LIKE_DOESNT_MATCH_BLOBS \
+    -DSQLITE_OMIT_DECLTYPE \
+    -DSQLITE_OMIT_PROGRESS_CALLBACK \
+    -DSQLITE_OMIT_SHARED_CACHE \
+    -DSQLITE_OMIT_DEPRECATED \
+    -DSQLITE_OMIT_LOAD_EXTENSION \
+    -DSQLITE_MAX_EXPR_DEPTH=0 \
+    -DSQLITE_ENABLE_LOCKING_STYLE=0 \
+    -DSQLITE_DEFAULT_FILE_FORMAT=4 \
+    -DSQLITE_ENABLE_EXPLAIN_COMMENTS \
+    -DSQLITE_ENABLE_DBSTAT_VTAB \
+    -DSQLITE_ENABLE_FTS5 \
+    -DSQLITE_ENABLE_STMTVTAB \
+    -DSQLITE_HAVE_ZLIB \
+    -DSQLITE_INTROSPECTION_PRAGMAS \
+    -DSQLITE_ENABLE_DBPAGE_VTAB \
+    -DSQLITE_TRUSTED_SCHEMA=0
+
+  # Finalize the list of library objects and their makefile
+  # rules.
+  set d $::autosetup(srcdir)
+  define LIBFOSSIL_SRC [join $lsrc]
+  define LIBFOSSIL_HEADERS [join [glob $d/include/fossil-scm/*.h]]
+  define SRCDIR_IS_FOSSIL_CKOUT \
+    [expr {[file exists $d/.fslckout] || [file exists $d/_FOSSIL_]}]
+  define LIBFOSSIL_OBJ [join $lobj]
+  define RULES_LIBFOSSIL_OBJ $mo
+
+}}; # libfossil.{so,a,c,h}
+
+#
+# Set up the f-apps builds...
+#
+apply {{} {
+  msg-result "Setting up build of the f-apps..."
+  set lapps1 {
+    f-acat {-install}
+    f-add {-install} f-adiff {-install}
+    f-annotate {-install} f-aparse {-install}
+    f-ci {-install} f-ciwoco {-install}
+    f-clone {}
+    f-co {-install}
+    f-config {-install} f-delta {-install} f-extract {-install}
+    f-hash {}
+    f-ls {-install} f-merge {-install} f-new {-install}
+    f-open {-install} f-query {-install} f-rebuild {-install}
+    f-rename {-install} f-repostat {-install} f-resolve {-install}
+    f-revert {-install} f-rm {-install} f-status {-install}
+    f-tag {-install} f-timeline {-install} f-update {-install}
+    f-wiki {-install}
+    f-zip {-install}
+
+    f-event {} f-parseparty {} f-sanity {}
+    f-sizeof {} f-_scratchpad {} f-import-blob {}
+    f-_template {} f-test-canonical-name {}
+    f-test-ckout-db-search {} f-test-ckout-has-changes {}
+    f-test-cidiff {} f-test-ciwoco {}
+    f-test-diff-builder {} f-test-filename-preferred-case {}
+    f-test-line-diff {} f-test-merge3 {}
+    f-test-reserved-name-check {}
+    f-test-sync {-skip}
+    f-test-url {}
+  }
+
+  if {"stephan" eq [get-env USER ""] &&
+      [file exists /home/stephan/bin/fossil]} {
+    proj-indented-notice {
+      Welcome back, Mr. Beal. We're activating f-steve.c
+    }
+    lappend lapps1 f-steve {}
+  }
+
+  set ldcurses [get-define LDFLAGS_CURSES ""]
+  set hasCurses [expr {"" ne $ldcurses}]
+  if {$hasCurses} {
+    lappend lapps1 f-vdiff [subst {
+      -install
+      -src {f-vdiff.c fsl-ncurses.c}
+      -ldflags {$ldcurses}
+      -cflags {-DHAS_NCURSES [get-define CFLAGS_CURSES ""]}
+    }]
+    lappend lapps1 f-test-custom-builder [subst {
+      -src {f-test-custom-builder.c fsl-ncurses.c}
+      -ldflags {$ldcurses}
+      -cflags {-DHAS_NCURSES [get-define CFLAGS_CURSES ""]}
+    }]
+  } else {
+    lappend lapps1 f-vdiff {-install}
+  }
+
+  array set ::_seenSrc {}; # cache to avoid duplicated recipes
+  # Add makefile rules to $tgtvar for building binary $name from the
+  # configuration defined in $opt.
+  set addFapp {{tgtvar name opt} {
+    upvar $tgtvar tgt; # target makefile code string
+    proj-parse-flags opt flags [subst -nocommands {
+      -src => ${name}.c
+      -cflags => {}
+      -ldflags => {}
+      -install 0 {expr 1}
+      -skip 0 1
+    }]
+    set lobj {}
+    if { $flags(-skip) } {
+      msg-result "Skipping rules for: $flags(-src)"
+      return
+    }
+    wh-make-append tgt "\n#\n# app: $name\n#\n"
+    foreach f $flags(-src) {
+      set fr [file tail [file rootname $f]]
+      set fo \$(DIR.bout)/f-apps_${fr}.o
+      lappend lobj $fo
+      if {![info exists ::_seenSrc($f)]} {
+        incr ::_seenSrc($f)
+        set fc \$(DIR.f-apps)/$f
+        wh-make-append tgt "$fo: $fc \$(DEPS.common)" -nltab \
+          -space \$(CC.f-apps.o) {*}$flags(-cflags) $fc -nl
+      }
+    }
+    if {[string match f-test-* $name]} {
+      set fbin [string range ${name} 2 end]\$(T.exe)
+      # ^^^ Strip the f- prefix of f-test-*.c binaries because (A)
+      # this simplifies symlinking ~/bin/f-* to here and (B) it causes
+      # less interference with tab completion.
+    } else {
+      set fbin ${name}\$(T.exe)
+    }
+    wh-make-append tgt \
+      "CLEAN.f-apps += ${fbin}\n" \
+      "$fbin: \$(DEPS.f-apps) [join $lobj]" -nltab \
+      -space \$(T.link.f-apps) {*}$lobj {*}$flags(-ldflags) \$(LDFLAGS.f-apps) -nl \
+      -space all: $fbin -nl \
+      -space compile_commands.json: $fbin -nl
+    if {$flags(-install)} {
+      wh-make-append tgt \
+        "install: install-${fbin}\n" \
+        "install-${fbin}: ${fbin} \$(install-dir.bin)\n" \
+        "\t\$(INSTALL) ${fbin} \$(install-dir.bin)\n"
+    }
+  }}
+  set mo ""; # makefile code
+  foreach {n opt} $lapps1 {
+    apply $addFapp mo $n $opt
+  }
+  array unset ::_seenSrc
+  define RULES_FAPPS $mo
+}}; # f-apps setup
+
+#
+# Set up the C++ build...
+#
+apply {{} {
+  if {![opt-bool c++]} {
+    return
+  }
+  set lsrc {
+    Context.cpp Db.cpp Deck.cpp Exception.cpp
+    Fossil.cpp OStream.cpp test.cpp
+  }
+  set lobj {}
+  set mo ""
+  foreach f $lsrc {
+    set fr [file tail [file rootname $f]]
+    set fc \$(DIR.cpp)/$f
+    set fo \$(DIR.bout)/plus_${fr}.o
+    lappend lobj $fo
+    wh-make-append mo "$fo: $fc \$(DEPS.common)" -nltab \
+      -space \$(CXX.plus.o) $fc -nl
+  }
+  define PLUS_TESTER_OBJ [join $lobj]
+  define RULES_PLUS_TESTER $mo
+}}; # C++ setup
+
+#
+# Set up fnc build...
+#
+apply {{} {
+  if {![get-define BUILD_CLIENT_FNC 0]} {
+    define RULES_FNC ""
+    return
+  }
+  set mo ""
+  set dFnc $::autosetup(srcdir)/client/fnc
+  set lC [glob $dFnc/*.c]
+  set lO {}
+  foreach fc $lC {
+    set ft [file tail $fc]
+    set fo \$(DIR.bout)/fnc_[file rootname $ft].o
+    lappend lO $fo
+    wh-make-append mo "$fo: \$(DIR.fnc)/$ft \$(DEPS.common)" -nltab \
+      -space \$(CC.fnc.o) $fc -nl
+  }
+  set ldf [list [get-define LDFLAGS_CURSES] [get-define LDFLAGS_LIBBSD]]
+  set cfl [list [get-define CFLAGS_CURSES] -I\$(DIR.cwd) -I\$(DIR.extsrc)]
+  # TODO: only use -I$(DIR.extsrc) if using our copy of sqlite3
+  switch -glob -- [get-define host] {
+    *-haiku {
+      lappend ldf -lbsd -lz
+      lappend cfl [get-define F_PIE]
+    }
+    default {
+      lappend ldf -lutil -lpthread
+    }
+  }
+  append mo \
+    "install: install-fnc\n" \
+    "install-fnc: \$(bin.fnc) \$(install-dir.bin)\n" \
+    "\t\$(INSTALL) \$(bin.fnc) \$(install-dir.bin)\n"
+  define FNC_SRC [join $lC]
+  define FNC_OBJ [join $lO]
+  define LDFLAGS_FNC [join $ldf]
+  define CFLAGS_FNC [join $cfl]
+  define RULES_FNC $mo
+}}; # fnc setup
+
+
+apply {{} {
+  define CLANGD_INDEX_FILE ""
+  # TODO? add --clangd-index-dir=auto
+  foreach d [glob -nocomplain ~/ram /home/ram] {
+    if {"" ne $d && [file isdirectory $d] && [file writable $d]} {
+      append d /libfossil-clangd-index.idx
+      msg-result "Requesting clangd index be placed at $d"
+      define CLANGD_INDEX_FILE $d
+      break
+    }
+  }
+  if {$::inTreeBuild} {
+    file delete -force .clangd
+    proj-dot-ins-append .clangd.in
+  }
+}}; # misc stuff
+
+proj-setup-autoreconfig AUTORECONFIG
+proj-remap-autoconf-dir-vars
+#
+# DO NOT [define] AFTER THIS POINT
+#
+
+file delete -force GNUmakefile; # avoid confusion when switching from a pre-rebuild-2025 build
+proj-dot-ins-append Makefile.in
+if {$inTreeBuild} {
+  proj-dot-ins-append doc/Doxyfile.in doc/Doxyfile
+  set bt bindings/tcl
+  if {[file isdirectory $bt]} {
+    set btconf {}
+    # Reminder to self: the sqlite3 CFLAGS/LDFLAGS aren't always useful
+    # for the tcl extension as-is because they're based on this dir.
+    lappend btconf [list define CPPFLAGS_sqlite3 [get-define CPPFLAGS_sqlite3]]
+#    lappend btconf [list define CFLAGS_sqlite3 [get-define CFLAGS_sqlite3]]
+#    lappend btconf [list define LDFLAGS_sqlite3 [get-define LDFLAGS_sqlite3]]
+    lappend btconf ""
+    proj-file-write $bt/_config.tcl [join $btconf "\n"]
+#  }
+}
+if {[opt-bool dump-defines]} {
+  # Do this before proj-dot-ins-process because it (indirectly)
+  # modifies @top_srcdir@.
+  msg-result "--dump-defines is creating file: $DUMP_DEFINES_FILE"
+  make-config-header $DUMP_DEFINES_FILE -none {RULES_*} -auto *
+}
+proj-dot-ins-process -touch -validate
+
+########################################################################
+# Generate our autconf header by hand to allow finer control
+# over the structure....
+set confH include/fossil-scm/autoconfig.h
+file mkdir [file dirname $confH]; # for out-of-tree builds
+set incGuard _NET_FOSSIL_SCM_FSL_AUTO_CONFIG_H_INCLUDED_
+if {[opt-bool amal]} {
+    set confH libfossil-config.h
+    set incGuard _NET_FOSSIL_SCM_FSL_AMALGAMATION_CONFIG_H_INCLUDED_
+}
+set out [open $confH w]
+puts $out [subst {#if !defined($incGuard)
+#define $incGuard 1
+/* Tweak the following for your system... */
+#if !defined(HAVE_GETADDRINFO)
+#  define HAVE_GETADDRINFO [get-define HAVE_GETADDRINFO 0]
+#endif
+#if !defined(HAVE_INET_NTOP)
+#  define HAVE_INET_NTOP [get-define HAVE_INET_NTOP 0]
+#endif
+#if !defined(_WIN32)
+#  if !defined(HAVE_DLFCN_H)
+#    define HAVE_DLFCN_H [get-define HAVE_DLFCN_H 0]
+#  endif
+#  if !defined(HAVE_DLOPEN)
+#    define HAVE_DLOPEN [get-define HAVE_DLOPEN 0]
+#  endif
+#  if !defined(HAVE_LIBDL)
+#    define HAVE_LIBDL [get-define HAVE_LIBDL 0]
+#  endif
+#  if !defined(HAVE_LIBLTDL)
+#    define HAVE_LIBLTDL [get-define HAVE_LIBLTDL 0]
+#  endif
+#  if !defined(HAVE_LSTAT)
+#    define HAVE_LSTAT [get-define HAVE_LSTAT 1]
+#  endif
+#  if !defined(HAVE_LTDL_H)
+#    define HAVE_LTDL_H [get-define HAVE_LTDL_H 0]
+#  endif
+#  if !defined(HAVE_LT_DLOPEN)
+#    define HAVE_LT_DLOPEN [get-define HAVE_LT_DLOPEN 0]
+#  endif
+#  if !defined(HAVE_OPENDIR)
+#    define HAVE_OPENDIR [get-define HAVE_OPENDIR 1]
+#  endif
+#  if !defined(HAVE_PIPE)
+#    define HAVE_PIPE [get-define HAVE_PIPE 1]
+#  endif
+#  if !defined(HAVE_STAT)
+#    define HAVE_STAT [get-define HAVE_STAT 1]
+#  endif
+#  if !defined(_DEFAULT_SOURCE)
+#    define _DEFAULT_SOURCE [get-define _DEFAULT_SOURCE 1]
+#  endif
+#  if !defined(_XOPEN_SOURCE)
+#    define _XOPEN_SOURCE [get-define _XOPEN_SOURCE 700]
+#  endif
+#  if !defined(HAVE_CLOCK_GETTIME)
+#    define HAVE_CLOCK_GETTIME [get-define HAVE_CLOCK_GETTIME]
+#  endif
+#else /* _WIN32: */
+#  if !defined(HAVE_DLFCN_H)
+#    define HAVE_DLFCN_H 0
+#  endif
+#  if !defined(HAVE_DLOPEN)
+#    define HAVE_DLOPEN 0
+#  endif
+#  if !defined(HAVE_LIBDL)
+#    define HAVE_LIBDL 0
+#  endif
+#  if !defined(HAVE_LIBLTDL)
+#    define HAVE_LIBLTDL 0
+#  endif
+#  if !defined(HAVE_LSTAT)
+#    define HAVE_LSTAT 0
+#  endif
+#  if !defined(HAVE_LTDL_H)
+#    define HAVE_LTDL_H 0
+#  endif
+#  if !defined(HAVE_LT_DLOPEN)
+#    define HAVE_LT_DLOPEN 0
+#  endif
+#  if !defined(HAVE_OPENDIR)
+#    define HAVE_OPENDIR 1
+#  endif
+#  if !defined(HAVE_PIPE)
+#    define HAVE_PIPE 0
+#  endif
+#  if !defined(HAVE_STAT)
+#    define HAVE_STAT 0
+#  endif
+#  if !defined(HAVE_CLOCK_GETTIME)
+#    define HAVE_CLOCK_GETTIME 0
+#  endif
+#endif /*_WIN32*/
+
+[get-define VERSION_H]
+#endif
+/* $incGuard */
+}]
+close $out
+msg-result "Generated $confH"
