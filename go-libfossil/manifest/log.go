@@ -33,13 +33,26 @@ func Log(r *repo.Repo, opts LogOpts) ([]LogEntry, error) {
 			break
 		}
 		var uuid, user, comment string
-		var mtime float64
+		var mtimeRaw any
 		err := r.DB().QueryRow(
 			"SELECT b.uuid, e.user, e.comment, e.mtime FROM blob b JOIN event e ON e.objid=b.rid WHERE b.rid=?",
 			current,
-		).Scan(&uuid, &user, &comment, &mtime)
+		).Scan(&uuid, &user, &comment, &mtimeRaw)
 		if err != nil {
 			return nil, fmt.Errorf("manifest.Log: rid=%d: %w", current, err)
+		}
+		// mtime is a julianday float. modernc returns float64;
+		// ncruces and mattn return time.Time. Handle both.
+		var mtime float64
+		switch v := mtimeRaw.(type) {
+		case float64:
+			mtime = v
+		case time.Time:
+			mtime = libfossil.TimeToJulian(v)
+		case int64:
+			mtime = float64(v)
+		default:
+			return nil, fmt.Errorf("manifest.Log: rid=%d: unexpected mtime type %T", current, mtimeRaw)
 		}
 		var parents []string
 		rows, err := r.DB().Query(

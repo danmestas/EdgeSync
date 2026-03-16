@@ -18,13 +18,20 @@ const (
 	MaxGimmeBase = 200
 )
 
+// BuggifyChecker is an optional fault injection interface.
+// Pass nil in production — implementations should be nil-safe.
+type BuggifyChecker interface {
+	Check(site string, probability float64) bool
+}
+
 // SyncOpts configures a sync session.
 type SyncOpts struct {
 	Push, Pull              bool
 	ProjectCode, ServerCode string
 	User, Password          string
 	MaxSend                 int
-	Env                     *simio.Env // nil defaults to RealEnv
+	Env                     *simio.Env        // nil defaults to RealEnv
+	Buggify                 BuggifyChecker    // nil in production
 }
 
 // SyncResult reports what happened during a sync.
@@ -46,6 +53,7 @@ type session struct {
 	filesRecvdLastRound int
 	igotSentThisRound   int
 	maxSend             int
+	phantomAge          map[string]int // UUID -> consecutive rounds gimme'd without delivery
 }
 
 func newSession(r *repo.Repo, opts SyncOpts) *session {
@@ -65,6 +73,7 @@ func newSession(r *repo.Repo, opts SyncOpts) *session {
 		remoteHas:   make(map[string]bool),
 		phantoms:    make(map[string]bool),
 		pendingSend: make(map[string]bool),
+		phantomAge:  make(map[string]int),
 	}
 }
 
@@ -99,6 +108,36 @@ func Sync(ctx context.Context, r *repo.Repo, t Transport, opts SyncOpts) (*SyncR
 		}
 	}
 	return &s.result, nil
+}
+
+// cardSummary returns a short string describing a card (for trace logging).
+func cardSummary(c xfer.Card) string {
+	switch v := c.(type) {
+	case *xfer.PullCard:
+		return fmt.Sprintf("srv=%s proj=%s", v.ServerCode[:8], v.ProjectCode[:8])
+	case *xfer.PushCard:
+		return fmt.Sprintf("srv=%s proj=%s", v.ServerCode[:8], v.ProjectCode[:8])
+	case *xfer.IGotCard:
+		return v.UUID[:16] + "..."
+	case *xfer.GimmeCard:
+		return v.UUID[:16] + "..."
+	case *xfer.FileCard:
+		return fmt.Sprintf("uuid=%s len=%d delta=%s", v.UUID[:16], len(v.Content), v.DeltaSrc)
+	case *xfer.CFileCard:
+		return fmt.Sprintf("uuid=%s len=%d delta=%s", v.UUID[:16], len(v.Content), v.DeltaSrc)
+	case *xfer.LoginCard:
+		return fmt.Sprintf("user=%s", v.User)
+	case *xfer.CookieCard:
+		return v.Value
+	case *xfer.ErrorCard:
+		return v.Message
+	case *xfer.MessageCard:
+		return v.Message
+	case *xfer.PragmaCard:
+		return v.Name
+	default:
+		return ""
+	}
 }
 
 // cardsByType is a helper that filters cards by type for testing/debugging.

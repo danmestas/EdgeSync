@@ -3,25 +3,39 @@ package db
 import (
 	"database/sql"
 	"fmt"
-
-	_ "modernc.org/sqlite"
 )
 
+// DB wraps a SQLite database connection.
 type DB struct {
-	conn *sql.DB
-	path string
+	conn   *sql.DB
+	path   string
+	driver string
 }
 
+// Open opens a SQLite database with the build-tag-selected driver and default pragmas.
 func Open(path string) (*DB, error) {
-	conn, err := sql.Open("sqlite", path)
+	return OpenWith(path, OpenConfig{})
+}
+
+// OpenWith opens a SQLite database with explicit configuration.
+func OpenWith(path string, cfg OpenConfig) (*DB, error) {
+	driver := cfg.Driver
+	if driver == "" {
+		driver = driverFromEnv()
+	}
+
+	pragmas := defaultPragmas()
+	for k, v := range cfg.Pragmas {
+		pragmas[k] = v
+	}
+
+	dsn := buildDSN(path, pragmas)
+	conn, err := sql.Open(driver, dsn)
 	if err != nil {
-		return nil, fmt.Errorf("db.Open: %w", err)
+		return nil, fmt.Errorf("db.Open(%s): %w", driver, err)
 	}
-	if _, err := conn.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("db.Open WAL: %w", err)
-	}
-	return &DB{conn: conn, path: path}, nil
+
+	return &DB{conn: conn, path: path, driver: driver}, nil
 }
 
 func (d *DB) Close() error {
@@ -30,6 +44,10 @@ func (d *DB) Close() error {
 
 func (d *DB) Path() string {
 	return d.path
+}
+
+func (d *DB) Driver() string {
+	return d.driver
 }
 
 func (d *DB) Exec(query string, args ...any) (sql.Result, error) {

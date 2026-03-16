@@ -16,6 +16,9 @@ type Config struct {
 	// Upstream is the transport to the Fossil server. Nil defaults to
 	// HTTPTransport using FossilURL. Set for simulation or testing.
 	Upstream libsync.Transport
+
+	// Buggify is an optional fault injection checker. Nil in production.
+	Buggify libsync.BuggifyChecker
 }
 
 func (c *Config) applyDefaults() {

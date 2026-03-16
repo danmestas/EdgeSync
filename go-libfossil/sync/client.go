@@ -8,18 +8,23 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/db"
 	"github.com/dmestas/edgesync/go-libfossil/delta"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/dmestas/edgesync/go-libfossil/hash"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
 )
 
 // buildRequest assembles one outbound xfer message for the given cycle.
 func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
+	// BUGGIFY: shrink send budget to stress multi-round convergence.
+	if s.opts.Buggify != nil && s.opts.Buggify.Check("sync.buildRequest.minBudget", 0.10) {
+		s.maxSend = 1024
+	}
+
 	var cards []xfer.Card
 
 	// 1. Pragma: client-version (every round)
 	cards = append(cards, &xfer.PragmaCard{
 		Name:   "client-version",
-		Values: []string{"go-libfossil/0.1"},
+		Values: []string{"22800", "20260315", "120000"},
 	})
 
 	// 2. Push/Pull cards
@@ -128,6 +133,11 @@ func (s *session) buildFileCards() ([]xfer.Card, error) {
 	// The server will gimme the ones it needs, which populates pendingSend for the next round.
 	// We do NOT proactively send unsent files — Fossil's protocol expects igot first, gimme second.
 
+	// BUGGIFY: drop the last file card to simulate partial send.
+	if s.opts.Buggify != nil && s.opts.Buggify.Check("sync.buildFileCards.skip", 0.05) && len(cards) > 0 {
+		cards = cards[:len(cards)-1]
+	}
+
 	return cards, nil
 }
 
@@ -176,6 +186,10 @@ func (s *session) buildLoginCard(cards []xfer.Card) (*xfer.LoginCard, error) {
 		}
 	}
 	payload := appendRandomComment(buf.Bytes(), s.env.Rand)
+	// BUGGIFY: corrupt the nonce payload to trigger auth failures.
+	if s.opts.Buggify != nil && s.opts.Buggify.Check("sync.buildLoginCard.badNonce", 0.02) {
+		payload = append(payload, []byte("BUGGIFY")...)
+	}
 	return computeLogin(s.opts.User, s.opts.Password, s.opts.ProjectCode, payload), nil
 }
 
@@ -227,6 +241,22 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 
 	s.result.FilesRecvd += filesRecvd
 	s.filesRecvdLastRound = filesRecvd
+
+	// Age unresolved phantoms; evict after 3 consecutive rounds without delivery.
+	// FileCard/CFileCard handlers already delete resolved phantoms from s.phantoms,
+	// so anything still in the map was not delivered this round.
+	for uuid := range s.phantoms {
+		s.phantomAge[uuid]++
+		if s.phantomAge[uuid] >= 3 {
+			delete(s.phantoms, uuid)
+			delete(s.phantomAge, uuid)
+		}
+	}
+	for uuid := range s.phantomAge {
+		if !s.phantoms[uuid] {
+			delete(s.phantomAge, uuid)
+		}
+	}
 
 	// Convergence: done if no files received, no files sent this round,
 	// phantoms empty, pendingSend empty, and unsent table empty.
@@ -280,13 +310,39 @@ func (s *session) handleFileCard(uuid, deltaSrc string, payload []byte) error {
 		fullContent = payload
 	}
 
-	var storedUUID string
+	// Compute the expected hash based on UUID length.
+	// SHA1 UUIDs are 40 hex chars, SHA3 UUIDs are 64 hex chars.
+	var computedUUID string
+	if len(uuid) > 40 {
+		computedUUID = hash.SHA3(fullContent)
+	} else {
+		computedUUID = hash.SHA1(fullContent)
+	}
+	if computedUUID != uuid {
+		return fmt.Errorf("UUID mismatch for received file: expected %s, got %s", uuid, computedUUID)
+	}
+
 	err := s.repo.WithTx(func(tx *db.Tx) error {
-		rid, u, err := blob.Store(tx, fullContent)
+		// Check if already stored.
+		if rid, ok := blob.Exists(tx, uuid); ok {
+			_, err := tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid)
+			return err
+		}
+		compressed, err := blob.Compress(fullContent)
 		if err != nil {
 			return err
 		}
-		storedUUID = u
+		result, err := tx.Exec(
+			"INSERT INTO blob(uuid, size, content, rcvid) VALUES(?, ?, ?, 1)",
+			uuid, len(fullContent), compressed,
+		)
+		if err != nil {
+			return err
+		}
+		rid, err := result.LastInsertId()
+		if err != nil {
+			return err
+		}
 		// Add to unclustered so we propagate to other remotes
 		_, err = tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid)
 		return err
@@ -295,12 +351,8 @@ func (s *session) handleFileCard(uuid, deltaSrc string, payload []byte) error {
 		return fmt.Errorf("storing file %s: %w", uuid, err)
 	}
 
-	if storedUUID != uuid {
-		return fmt.Errorf("UUID mismatch for received file: expected %s, got %s", uuid, storedUUID)
-	}
-
 	// BUGGIFY: simulate post-store failure to test retry/recovery logic.
-	if simio.Buggify(0.03) {
+	if s.opts.Buggify != nil && s.opts.Buggify.Check("sync.handleFileCard.reject", 0.03) {
 		return fmt.Errorf("buggify: simulated storage failure for %s", uuid)
 	}
 
