@@ -122,7 +122,7 @@ func (a *Agent) Tick(ctx context.Context, ev Event) Action {
 	switch ev {
 	case EventTimer:
 		// BUGGIFY: skip a timer-triggered sync to test stale-state behavior.
-		if simio.Buggify(0.05) {
+		if a.config.Buggify != nil && a.config.Buggify.Check("agent.runSync.earlyReturn", 0.05) {
 			return Action{Type: ActionNone}
 		}
 		result, err := a.runSync(ctx)
@@ -217,6 +217,7 @@ func (a *Agent) runSync(ctx context.Context) (*sync.SyncResult, error) {
 		ServerCode:  a.serverCode,
 		User:        a.config.User,
 		Password:    a.config.Password,
+		Buggify:     a.config.Buggify,
 	}
 	return sync.Sync(ctx, a.repo, a.transport, opts)
 }

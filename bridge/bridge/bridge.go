@@ -88,6 +88,14 @@ func (b *Bridge) Stop() error {
 // handleMessage is the NATS subscription callback. It decodes the request,
 // calls HandleRequest, encodes the response, and replies.
 func (b *Bridge) handleMessage(msg *nats.Msg) {
+	// BUGGIFY: return an empty reply to simulate a garbled or lost response.
+	if b.config.Buggify != nil && b.config.Buggify.Check("bridge.handleMessage.emptyReply", 0.03) {
+		emptyMsg := &xfer.Message{}
+		data, _ := emptyMsg.Encode()
+		msg.Respond(data)
+		return
+	}
+
 	req, err := xfer.Decode(msg.Data)
 	if err != nil {
 		log.Printf("bridge: decode error: %v", err)

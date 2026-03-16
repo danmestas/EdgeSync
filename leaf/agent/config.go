@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dmestas/edgesync/go-libfossil/simio"
+	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
 )
 
 // Config holds all settings for a leaf agent instance.
@@ -39,6 +40,9 @@ type Config struct {
 	// Clock controls time operations (timer, sleep). Nil defaults to real time.
 	// Set to a SimClock for deterministic simulation testing.
 	Clock simio.Clock
+
+	// Buggify is an optional fault injection checker. Nil in production.
+	Buggify libsync.BuggifyChecker
 }
 
 // applyDefaults fills in zero-valued fields with sensible defaults.
@@ -49,9 +53,8 @@ func (c *Config) applyDefaults() {
 	if c.PollInterval == 0 {
 		c.PollInterval = 5 * time.Second
 	}
-	if c.User == "" {
-		c.User = "anonymous"
-	}
+	// User left empty = no login card sent (unauthenticated "nobody" sync).
+	// Set User + Password for authenticated sync.
 	if !c.Push && !c.Pull {
 		c.Push = true
 		c.Pull = true

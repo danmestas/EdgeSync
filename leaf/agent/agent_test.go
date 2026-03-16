@@ -22,8 +22,8 @@ func TestConfigDefaults(t *testing.T) {
 	if c.PollInterval != 5*time.Second {
 		t.Errorf("PollInterval = %v, want %v", c.PollInterval, 5*time.Second)
 	}
-	if c.User != "anonymous" {
-		t.Errorf("User = %q, want %q", c.User, "anonymous")
+	if c.User != "" {
+		t.Errorf("User = %q, want empty (no auth by default)", c.User)
 	}
 	if !c.Push {
 		t.Error("Push should default to true")
