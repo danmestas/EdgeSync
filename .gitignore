@@ -1,0 +1,6 @@
+# Fossil repo files (large binary, upstream reference only)
+fossil/fossil.fossil
+libfossil/libfossil.fossil
+
+# Build artifacts
+/soak
