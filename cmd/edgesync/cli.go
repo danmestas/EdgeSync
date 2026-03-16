@@ -40,6 +40,11 @@ type RepoCmd struct {
 	Tag      RepoTagCmd      `cmd:"" help:"Tag operations"`
 	Open     RepoOpenCmd     `cmd:"" help:"Open a checkout in a directory"`
 	Status   RepoStatusCmd   `cmd:"" help:"Show working directory changes"`
+	Add      RepoAddCmd      `cmd:"" help:"Stage files for addition"`
+	Rm       RepoRmCmd       `cmd:"" help:"Stage files for removal"`
+	Rename   RepoRenameCmd   `cmd:"" help:"Rename a tracked file"`
+	Revert   RepoRevertCmd   `cmd:"" help:"Undo staging changes"`
+	Diff     RepoDiffCmd     `cmd:"" help:"Show changes vs a version"`
 }
 
 type SyncCmd struct {

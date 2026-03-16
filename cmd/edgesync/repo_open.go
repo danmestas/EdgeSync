@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/dmestas/edgesync/go-libfossil/manifest"
 	_ "modernc.org/sqlite"
 )
 
@@ -96,6 +97,27 @@ func (c *RepoOpenCmd) Run(g *Globals) error {
 		if _, err := db.Exec("INSERT INTO vvar(name,value) VALUES(?,?)", k, v); err != nil {
 			return fmt.Errorf("setting vvar %s: %w", k, err)
 		}
+	}
+
+	// Populate vfile from tip manifest.
+	if tipRid > 0 {
+		rr, err := openRepo(g)
+		if err != nil {
+			return err
+		}
+		files, err := manifest.ListFiles(rr, tipRid)
+		if err == nil {
+			for _, f := range files {
+				isExe := f.Perm == "x"
+				// Look up the blob rid for this file's UUID.
+				var fileRid int64
+				rr.DB().QueryRow("SELECT rid FROM blob WHERE uuid=?", f.UUID).Scan(&fileRid)
+				db.Exec(`INSERT INTO vfile(vid, chnged, deleted, isexe, islink, rid, mrid, pathname, mhash)
+					VALUES(?, 0, 0, ?, 0, ?, ?, ?, ?)`,
+					tipRid, isExe, fileRid, fileRid, f.Name, f.UUID)
+			}
+		}
+		rr.Close()
 	}
 
 	fmt.Printf("opened checkout in %s (repo: %s)\n", c.Dir, absRepo)
