@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dmestas/edgesync/go-libfossil/simio"
@@ -220,5 +221,61 @@ func TestCreateRepoSchema_FossilValidation(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("fossil rebuild failed: %v\n%s", err, out)
+	}
+}
+
+func TestDriverConfig(t *testing.T) {
+	name := driverName()
+	t.Logf("active driver: %s", name)
+	if name == "" {
+		t.Fatal("driverName() returned empty string")
+	}
+
+	dsn := buildDSN("/tmp/test.db", defaultPragmas())
+	t.Logf("DSN: %s", dsn)
+	if !strings.Contains(dsn, "journal_mode") {
+		t.Fatal("DSN missing journal_mode pragma")
+	}
+	if !strings.Contains(dsn, "busy_timeout") {
+		t.Fatal("DSN missing busy_timeout pragma")
+	}
+}
+
+func TestOpenWithDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer d.Close()
+
+	if d.Driver() == "" {
+		t.Fatal("Driver() returned empty string")
+	}
+	t.Logf("opened with driver: %s", d.Driver())
+
+	var mode string
+	d.QueryRow("PRAGMA journal_mode").Scan(&mode)
+	if mode != "wal" {
+		t.Fatalf("journal_mode = %q, want wal", mode)
+	}
+}
+
+func TestOpenWithCustomPragmas(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	d, err := OpenWith(path, OpenConfig{
+		Pragmas: map[string]string{
+			"cache_size": "-2000",
+		},
+	})
+	if err != nil {
+		t.Fatalf("OpenWith: %v", err)
+	}
+	defer d.Close()
+
+	var mode string
+	d.QueryRow("PRAGMA journal_mode").Scan(&mode)
+	if mode != "wal" {
+		t.Fatalf("journal_mode = %q, want wal (default should still apply)", mode)
 	}
 }
