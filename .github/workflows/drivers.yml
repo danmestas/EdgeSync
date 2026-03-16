@@ -30,4 +30,8 @@ jobs:
         env:
           CGO_ENABLED: ${{ matrix.cgo }}
           BUILD_TAGS: ${{ matrix.tags }}
-        run: go test $BUILD_TAGS ./go-libfossil/... -v -count=1
+        run: |
+          go test $BUILD_TAGS ./go-libfossil/... -v -count=1
+          go test $BUILD_TAGS ./leaf/... -v -count=1
+          go test $BUILD_TAGS ./bridge/... -v -count=1
+          go test $BUILD_TAGS ./dst/ -v -count=1
