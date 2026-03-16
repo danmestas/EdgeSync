@@ -19,7 +19,7 @@ import (
 
 // startFossilServer starts a fossil server on a free port and returns the URL
 // and a cleanup function. The server is shut down when the test ends.
-func startFossilServer(t *testing.T, repoPath string) (url string, cleanup func()) {
+func startFossilServer(t *testing.T, repoPath string) string {
 	t.Helper()
 
 	bin := testutil.FossilBinary()
@@ -58,10 +58,13 @@ func startFossilServer(t *testing.T, repoPath string) (url string, cleanup func(
 
 ready:
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-	return serverURL, func() {
+	t.Cleanup(func() {
 		cmd.Process.Kill()
 		cmd.Wait()
-	}
+		os.Remove(repoPath + "-wal")
+		os.Remove(repoPath + "-shm")
+	})
+	return serverURL
 }
 
 func TestIntegrationLeafBridgeFossil(t *testing.T) {
@@ -102,8 +105,7 @@ func TestIntegrationLeafBridgeFossil(t *testing.T) {
 	}
 
 	// 3. Start fossil server on the remote.
-	fossilURL, fossilCleanup := startFossilServer(t, remotePath)
-	defer fossilCleanup()
+	fossilURL := startFossilServer(t, remotePath)
 
 	// 4. Start embedded NATS.
 	natsURL := startEmbeddedNATS(t)

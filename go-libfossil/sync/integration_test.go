@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,7 +21,7 @@ import (
 
 // startFossilServer starts a fossil server on a free port and returns the URL
 // and a cleanup function.
-func startFossilServer(t *testing.T, repoPath string) (url string, cleanup func()) {
+func startFossilServer(t *testing.T, repoPath string) string {
 	t.Helper()
 
 	bin := testutil.FossilBinary()
@@ -59,10 +60,22 @@ func startFossilServer(t *testing.T, repoPath string) (url string, cleanup func(
 
 ready:
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-	return serverURL, func() {
+	// Register cleanup via t.Cleanup so it runs before TempDir removal (LIFO).
+	t.Cleanup(func() {
 		cmd.Process.Kill()
 		cmd.Wait()
-	}
+		// Remove WAL/SHM files that fossil processes leave behind,
+		// so t.TempDir() cleanup doesn't fail with "directory not empty".
+		dir := filepath.Dir(repoPath)
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			name := e.Name()
+			if strings.HasSuffix(name, "-wal") || strings.HasSuffix(name, "-shm") || strings.HasSuffix(name, "-journal") {
+				os.Remove(filepath.Join(dir, name))
+			}
+		}
+	})
+	return serverURL
 }
 
 // getProjectCode reads the project-code from a fossil repo.
@@ -107,7 +120,11 @@ func TestIntegrationPushToFossilServer(t *testing.T) {
 	}
 	bin := testutil.FossilBinary()
 
-	dir := t.TempDir()
+	dir, err := os.MkdirTemp("", "TestIntegrationPush*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
 
 	// 1. Create a Go-managed local repo with a checkin
 	localPath := filepath.Join(dir, "local.fossil")
@@ -152,8 +169,7 @@ func TestIntegrationPushToFossilServer(t *testing.T) {
 	}
 
 	// 4. Start fossil server on the remote
-	serverURL, serverCleanup := startFossilServer(t, remotePath)
-	defer serverCleanup()
+	serverURL := startFossilServer(t, remotePath)
 
 	// 5. Re-open local repo and push via our sync engine
 	r2, err := repo.Open(localPath)
@@ -198,7 +214,11 @@ func TestIntegrationPullFromFossilServer(t *testing.T) {
 	}
 	bin := testutil.FossilBinary()
 
-	dir := t.TempDir()
+	dir, err := os.MkdirTemp("", "TestIntegrationPull*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
 
 	// 1. Create a remote repo with fossil new
 	remotePath := filepath.Join(dir, "remote.fossil")
@@ -209,8 +229,7 @@ func TestIntegrationPullFromFossilServer(t *testing.T) {
 	}
 
 	// 2. Start fossil server on the remote
-	serverURL, cleanup := startFossilServer(t, remotePath)
-	defer cleanup()
+	serverURL := startFossilServer(t, remotePath)
 
 	// 3. Clone it to local with fossil clone (so project/server codes match)
 	localPath := filepath.Join(dir, "local.fossil")
