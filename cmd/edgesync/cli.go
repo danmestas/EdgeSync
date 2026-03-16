@@ -34,6 +34,12 @@ type RepoCmd struct {
 	Config   RepoConfigCmd   `cmd:"" help:"Repository configuration"`
 	Query    RepoQueryCmd    `cmd:"" help:"Execute SQL against repository"`
 	Verify   RepoVerifyCmd   `cmd:"" help:"Verify repository integrity"`
+	Resolve  RepoResolveCmd  `cmd:"" help:"Resolve symbolic name to UUID"`
+	Extract  RepoExtractCmd  `cmd:"" help:"Extract files from a version"`
+	Wiki     RepoWikiCmd     `cmd:"" help:"Wiki page operations"`
+	Tag      RepoTagCmd      `cmd:"" help:"Tag operations"`
+	Open     RepoOpenCmd     `cmd:"" help:"Open a checkout in a directory"`
+	Status   RepoStatusCmd   `cmd:"" help:"Show working directory changes"`
 }
 
 type SyncCmd struct {
@@ -52,8 +58,12 @@ func openRepo(g *Globals) (*repo.Repo, error) {
 	return repo.Open(g.Repo)
 }
 
+// resolveRID resolves a version string to a rid.
+// Accepts: empty/"tip" (most recent checkin), "trunk" (tagged trunk tip),
+// UUID prefix (min 4 chars), or full UUID.
 func resolveRID(r *repo.Repo, version string) (libfossil.FslID, error) {
-	if version == "" {
+	switch version {
+	case "", "tip":
 		var rid int64
 		err := r.DB().QueryRow(
 			"SELECT objid FROM event WHERE type='ci' ORDER BY mtime DESC LIMIT 1",
@@ -62,15 +72,34 @@ func resolveRID(r *repo.Repo, version string) (libfossil.FslID, error) {
 			return 0, fmt.Errorf("no checkins found")
 		}
 		return libfossil.FslID(rid), nil
+
+	case "trunk":
+		// trunk = most recent checkin tagged "trunk"
+		var rid int64
+		err := r.DB().QueryRow(`
+			SELECT tagxref.rid FROM tagxref
+			JOIN tag ON tag.tagid=tagxref.tagid
+			WHERE tag.tagname='sym-trunk'
+			  AND tagxref.tagtype>0
+			ORDER BY tagxref.mtime DESC LIMIT 1`,
+		).Scan(&rid)
+		if err != nil {
+			// Fallback to tip if no trunk tag
+			return resolveRID(r, "tip")
+		}
+		return libfossil.FslID(rid), nil
+
+	default:
+		// UUID or prefix lookup
+		var rid int64
+		err := r.DB().QueryRow(
+			"SELECT rid FROM blob WHERE uuid LIKE ?", version+"%",
+		).Scan(&rid)
+		if err != nil {
+			return 0, fmt.Errorf("artifact %q not found", version)
+		}
+		return libfossil.FslID(rid), nil
 	}
-	var rid int64
-	err := r.DB().QueryRow(
-		"SELECT rid FROM blob WHERE uuid LIKE ?", version+"%",
-	).Scan(&rid)
-	if err != nil {
-		return 0, fmt.Errorf("artifact %q not found", version)
-	}
-	return libfossil.FslID(rid), nil
 }
 
 func currentUser() string {
