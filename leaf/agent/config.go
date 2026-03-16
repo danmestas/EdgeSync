@@ -37,10 +37,6 @@ type Config struct {
 	// The full subject is "<SubjectPrefix>.<project-code>.sync".
 	SubjectPrefix string
 
-	// NoLogin skips sending a login card during sync. Use with Fossil servers
-	// that grant capabilities to the "nobody" user for unauthenticated access.
-	NoLogin bool
-
 	// Clock controls time operations (timer, sleep). Nil defaults to real time.
 	// Set to a SimClock for deterministic simulation testing.
 	Clock simio.Clock
@@ -57,9 +53,8 @@ func (c *Config) applyDefaults() {
 	if c.PollInterval == 0 {
 		c.PollInterval = 5 * time.Second
 	}
-	if c.User == "" {
-		c.User = "anonymous"
-	}
+	// User left empty = no login card sent (unauthenticated "nobody" sync).
+	// Set User + Password for authenticated sync.
 	if !c.Push && !c.Pull {
 		c.Push = true
 		c.Pull = true
