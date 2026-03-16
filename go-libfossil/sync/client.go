@@ -23,7 +23,7 @@ func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
 	// 1. Pragma: client-version (every round)
 	cards = append(cards, &xfer.PragmaCard{
 		Name:   "client-version",
-		Values: []string{"go-libfossil/0.1"},
+		Values: []string{"22800", "20260315", "120000"},
 	})
 
 	// 2. Push/Pull cards
