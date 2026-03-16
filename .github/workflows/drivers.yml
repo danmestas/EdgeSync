@@ -1,0 +1,31 @@
+name: Driver Tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        driver: [default, ncruces, mattn]
+        include:
+          - driver: default
+            tags: ""
+            cgo: "0"
+          - driver: ncruces
+            tags: "-tags ncruces"
+            cgo: "0"
+          - driver: mattn
+            tags: "-tags mattn"
+            cgo: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Run tests
+        env:
+          CGO_ENABLED: ${{ matrix.cgo }}
+          BUILD_TAGS: ${{ matrix.tags }}
+        run: go test $BUILD_TAGS ./go-libfossil/... -v -count=1
