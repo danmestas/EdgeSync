@@ -241,6 +241,22 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 	s.result.FilesRecvd += filesRecvd
 	s.filesRecvdLastRound = filesRecvd
 
+	// Age unresolved phantoms; evict after 3 consecutive rounds without delivery.
+	// FileCard/CFileCard handlers already delete resolved phantoms from s.phantoms,
+	// so anything still in the map was not delivered this round.
+	for uuid := range s.phantoms {
+		s.phantomAge[uuid]++
+		if s.phantomAge[uuid] >= 3 {
+			delete(s.phantoms, uuid)
+			delete(s.phantomAge, uuid)
+		}
+	}
+	for uuid := range s.phantomAge {
+		if !s.phantoms[uuid] {
+			delete(s.phantomAge, uuid)
+		}
+	}
+
 	// Convergence: done if no files received, no files sent this round,
 	// phantoms empty, pendingSend empty, and unsent table empty.
 	if filesRecvd > 0 || filesSent > 0 {
