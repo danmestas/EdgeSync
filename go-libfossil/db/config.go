@@ -12,6 +12,7 @@ func defaultPragmas() map[string]string {
 	return map[string]string{
 		"journal_mode": "WAL",
 		"busy_timeout": "5000",
+		"foreign_keys": "OFF", // ncruces enables FK by default; normalize to OFF for schema compat
 	}
 }
 
