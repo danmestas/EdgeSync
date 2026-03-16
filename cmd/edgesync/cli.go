@@ -29,6 +29,11 @@ type RepoCmd struct {
 	Timeline RepoTimelineCmd `cmd:"" help:"Show repository history"`
 	Cat      RepoCatCmd      `cmd:"" help:"Output artifact content"`
 	Info     RepoInfoCmd     `cmd:"" help:"Repository statistics"`
+	Hash     RepoHashCmd     `cmd:"" help:"Hash files (SHA1 or SHA3)"`
+	Delta    RepoDeltaCmd    `cmd:"" help:"Delta create/apply operations"`
+	Config   RepoConfigCmd   `cmd:"" help:"Repository configuration"`
+	Query    RepoQueryCmd    `cmd:"" help:"Execute SQL against repository"`
+	Verify   RepoVerifyCmd   `cmd:"" help:"Verify repository integrity"`
 }
 
 type SyncCmd struct {
