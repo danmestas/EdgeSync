@@ -210,12 +210,16 @@ func (a *Agent) pollLoop(ctx context.Context) {
 
 // runSync performs one sync cycle against the transport.
 func (a *Agent) runSync(ctx context.Context) (*sync.SyncResult, error) {
+	user := a.config.User
+	if a.config.NoLogin {
+		user = "" // empty User = no login card sent
+	}
 	opts := sync.SyncOpts{
 		Push:        a.config.Push,
 		Pull:        a.config.Pull,
 		ProjectCode: a.projectCode,
 		ServerCode:  a.serverCode,
-		User:        a.config.User,
+		User:        user,
 		Password:    a.config.Password,
 		Buggify:     a.config.Buggify,
 	}

@@ -27,7 +27,8 @@ type Harness struct {
 	tmpDir     string
 	fossilCmd  *exec.Cmd
 	fossilURL  string
-	fossilRepo string
+	fossilRepo  string
+	projectCode string // hex hash from fossil server repo
 	nats       *natsserver.Server
 	natsURL    string
 	proxy      *FaultProxy
@@ -149,7 +150,7 @@ func RunSimulation(cfg SimConfig) (*SimReport, error) {
 
 // SetupInfra creates the temp directory, starts a Fossil server process,
 // starts an embedded NATS server, and creates leaf repos with the
-// project-code set to "sim-project". It does NOT start agents — call
+// project-code set to h.projectCode. It does NOT start agents — call
 // StartAgents after seeding blobs.
 func (h *Harness) SetupInfra() error {
 	var err error
@@ -160,11 +161,26 @@ func (h *Harness) SetupInfra() error {
 		return fmt.Errorf("sim: tmpdir: %w", err)
 	}
 
-	// Create server Fossil repo.
+	// Create server Fossil repo and read its generated project-code.
 	h.fossilRepo = filepath.Join(h.tmpDir, "server.fossil")
 	create := exec.Command("fossil", "new", h.fossilRepo)
 	if out, err := create.CombinedOutput(); err != nil {
 		return fmt.Errorf("sim: fossil new: %s: %w", out, err)
+	}
+
+	// Read the project-code that fossil generated (a hex hash).
+	pcOut, err := exec.Command("fossil", "sql", "-R", h.fossilRepo,
+		"SELECT value FROM config WHERE name='project-code'").Output()
+	if err != nil {
+		return fmt.Errorf("sim: read project-code: %w", err)
+	}
+	h.projectCode = strings.TrimSpace(string(pcOut))
+
+	// Grant "nobody" full sync capabilities so unauthenticated sync works.
+	// This avoids the auth signature mismatch between Go's sync engine and Fossil.
+	setNobodyCaps := exec.Command("fossil", "user", "capabilities", "nobody", "cdehjkorswz", "-R", h.fossilRepo)
+	if out, err := setNobodyCaps.CombinedOutput(); err != nil {
+		return fmt.Errorf("sim: set nobody capabilities: %s: %w", out, err)
 	}
 
 	// Start fossil server on a free port.
@@ -176,6 +192,7 @@ func (h *Harness) SetupInfra() error {
 	h.fossilCmd = exec.Command("fossil", "server",
 		"--port", fmt.Sprintf("%d", port),
 		"--localhost",
+		"--localauth",
 		h.fossilRepo,
 	)
 	if err := h.fossilCmd.Start(); err != nil {
@@ -208,12 +225,12 @@ func (h *Harness) SetupInfra() error {
 	rng := simio.NewSeededRand(h.Config.Seed)
 	for i := range h.Config.NumLeaves {
 		repoPath := filepath.Join(h.tmpDir, fmt.Sprintf("leaf-%d.fossil", i))
-		r, err := repo.Create(repoPath, "simuser", rng)
+		r, err := repo.Create(repoPath, "anonymous", rng)
 		if err != nil {
 			return fmt.Errorf("sim: repo create leaf-%d: %w", i, err)
 		}
 		// Set project-code so NATS subjects match the bridge.
-		if _, err := r.DB().Exec("UPDATE config SET value='sim-project' WHERE name='project-code'"); err != nil {
+		if _, err := r.DB().Exec("UPDATE config SET value=? WHERE name='project-code'", h.projectCode); err != nil {
 			r.Close()
 			return fmt.Errorf("sim: set project-code leaf-%d: %w", i, err)
 		}
@@ -235,7 +252,7 @@ func (h *Harness) StartAgents() error {
 	h.bridge, err = bridge.New(bridge.Config{
 		NATSUrl:       h.natsURL,
 		FossilURL:     h.fossilURL,
-		ProjectCode:   "sim-project",
+		ProjectCode:   h.projectCode,
 		SubjectPrefix: "fossil",
 		Buggify:       h.buggify,
 	})
@@ -254,7 +271,7 @@ func (h *Harness) StartAgents() error {
 		a, err := agent.New(agent.Config{
 			RepoPath:      repoPath,
 			NATSUrl:       natsTarget,
-			User:          "simuser",
+			NoLogin:       true,
 			Push:          true,
 			Pull:          true,
 			PollInterval:  2 * time.Second,
@@ -341,7 +358,7 @@ func (h *Harness) restartBridge(t *testing.T) {
 	h.bridge, err = bridge.New(bridge.Config{
 		NATSUrl:       h.natsURL,
 		FossilURL:     h.fossilURL,
-		ProjectCode:   "sim-project",
+		ProjectCode:   h.projectCode,
 		SubjectPrefix: "fossil",
 		Buggify:       h.buggify,
 	})
@@ -372,7 +389,7 @@ func (h *Harness) restartLeaf(target string, t *testing.T) {
 	a, err := agent.New(agent.Config{
 		RepoPath:      h.leafPaths[idx],
 		NATSUrl:       natsTarget,
-		User:          "simuser",
+		NoLogin:       true,
 		Push:          true,
 		Pull:          true,
 		PollInterval:  2 * time.Second,

@@ -37,6 +37,10 @@ type Config struct {
 	// The full subject is "<SubjectPrefix>.<project-code>.sync".
 	SubjectPrefix string
 
+	// NoLogin skips sending a login card during sync. Use with Fossil servers
+	// that grant capabilities to the "nobody" user for unauthenticated access.
+	NoLogin bool
+
 	// Clock controls time operations (timer, sleep). Nil defaults to real time.
 	// Set to a SimClock for deterministic simulation testing.
 	Clock simio.Clock
