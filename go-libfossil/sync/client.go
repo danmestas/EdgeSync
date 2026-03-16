@@ -8,6 +8,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/db"
 	"github.com/dmestas/edgesync/go-libfossil/delta"
+	"github.com/dmestas/edgesync/go-libfossil/hash"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
 )
 
@@ -309,23 +310,45 @@ func (s *session) handleFileCard(uuid, deltaSrc string, payload []byte) error {
 		fullContent = payload
 	}
 
-	var storedUUID string
+	// Compute the expected hash based on UUID length.
+	// SHA1 UUIDs are 40 hex chars, SHA3 UUIDs are 64 hex chars.
+	var computedUUID string
+	if len(uuid) > 40 {
+		computedUUID = hash.SHA3(fullContent)
+	} else {
+		computedUUID = hash.SHA1(fullContent)
+	}
+	if computedUUID != uuid {
+		return fmt.Errorf("UUID mismatch for received file: expected %s, got %s", uuid, computedUUID)
+	}
+
 	err := s.repo.WithTx(func(tx *db.Tx) error {
-		rid, u, err := blob.Store(tx, fullContent)
+		// Check if already stored.
+		if rid, ok := blob.Exists(tx, uuid); ok {
+			_, err := tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid)
+			return err
+		}
+		compressed, err := blob.Compress(fullContent)
 		if err != nil {
 			return err
 		}
-		storedUUID = u
+		result, err := tx.Exec(
+			"INSERT INTO blob(uuid, size, content, rcvid) VALUES(?, ?, ?, 1)",
+			uuid, len(fullContent), compressed,
+		)
+		if err != nil {
+			return err
+		}
+		rid, err := result.LastInsertId()
+		if err != nil {
+			return err
+		}
 		// Add to unclustered so we propagate to other remotes
 		_, err = tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid)
 		return err
 	})
 	if err != nil {
 		return fmt.Errorf("storing file %s: %w", uuid, err)
-	}
-
-	if storedUUID != uuid {
-		return fmt.Errorf("UUID mismatch for received file: expected %s, got %s", uuid, storedUUID)
 	}
 
 	// BUGGIFY: simulate post-store failure to test retry/recovery logic.

@@ -123,6 +123,14 @@ func Load(q db.Querier, rid libfossil.FslID) ([]byte, error) {
 	if int64(len(content)) == size {
 		return content, nil
 	}
+
+	// Fossil stores compressed blobs as: [4-byte BE uncompressed size][zlib data].
+	// Our own Compress() produces raw zlib without the prefix.
+	// Detect by checking for the 4-byte prefix: if content[4:] starts with
+	// a valid zlib header (0x78), skip the prefix.
+	if len(content) > 4 && content[4] == 0x78 {
+		return Decompress(content[4:])
+	}
 	return Decompress(content)
 }
 
