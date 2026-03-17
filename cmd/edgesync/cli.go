@@ -48,6 +48,13 @@ type RepoCmd struct {
 	Merge      RepoMergeCmd        `cmd:"" help:"Merge a divergent version"`
 	Conflicts   RepoConflictsCmd    `cmd:"" help:"List/manage unresolved conflicts"`
 	MarkResolved RepoMergeResolveCmd `cmd:"" name:"mark-resolved" help:"Mark a conflict as resolved"`
+	Undo         RepoUndoCmd         `cmd:"" help:"Undo last operation"`
+	Redo         RepoRedoCmd         `cmd:"" help:"Redo undone operation"`
+	Stash        RepoStashCmd        `cmd:"" help:"Stash working changes"`
+	Bisect       RepoBisectCmd       `cmd:"" help:"Binary search for bugs"`
+	Annotate     RepoAnnotateCmd     `cmd:"" help:"Annotate file lines with version history"`
+	Blame        RepoBlameCmd        `cmd:"" help:"Alias for annotate"`
+	Branch       RepoBranchCmd       `cmd:"" help:"Branch operations"`
 }
 
 type SyncCmd struct {

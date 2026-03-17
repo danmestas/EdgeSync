@@ -263,6 +263,67 @@ func TestCheckinDeltaFossilRebuild(t *testing.T) {
 	}
 }
 
+func TestCheckinWithCustomTags(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Initial checkin (gets default trunk tags)
+	rid1, _, err := Checkin(r, CheckinOpts{
+		Files:   []File{{Name: "file.txt", Content: []byte("v1")}},
+		Comment: "initial",
+		User:    "testuser",
+		Time:    time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("first checkin: %v", err)
+	}
+
+	// Second checkin with custom tags (branch creation)
+	rid2, _, err := Checkin(r, CheckinOpts{
+		Files:   []File{{Name: "file.txt", Content: []byte("v2")}},
+		Comment: "branch commit",
+		User:    "testuser",
+		Parent:  rid1,
+		Time:    time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC),
+		Tags: []deck.TagCard{
+			{Type: deck.TagPropagating, Name: "branch", UUID: "*", Value: "feature-x"},
+			{Type: deck.TagSingleton, Name: "sym-feature-x", UUID: "*"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("second checkin: %v", err)
+	}
+
+	d, err := GetManifest(r, rid2)
+	if err != nil {
+		t.Fatalf("GetManifest: %v", err)
+	}
+	if len(d.T) != 2 {
+		t.Fatalf("expected 2 tags, got %d: %+v", len(d.T), d.T)
+	}
+
+	// Verify the propagating branch tag
+	found := false
+	for _, tag := range d.T {
+		if tag.Type == deck.TagPropagating && tag.Name == "branch" && tag.Value == "feature-x" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing propagating branch tag in %+v", d.T)
+	}
+
+	// Verify the singleton sym tag
+	found = false
+	for _, tag := range d.T {
+		if tag.Type == deck.TagSingleton && tag.Name == "sym-feature-x" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing singleton sym-feature-x tag in %+v", d.T)
+	}
+}
+
 func BenchmarkCheckin(b *testing.B) {
 	path := filepath.Join(b.TempDir(), "bench.fossil")
 	r, _ := repo.Create(path, "bench", simio.CryptoRand{})
