@@ -20,6 +20,7 @@ type CheckinOpts struct {
 	Parent  libfossil.FslID
 	Delta   bool
 	Time    time.Time
+	Tags    []deck.TagCard
 }
 
 type File struct {
@@ -65,8 +66,10 @@ func Checkin(r *repo.Repo, opts CheckinOpts) (libfossil.FslID, string, error) {
 			d.P = []string{parentUUID}
 		}
 
-		// Tags for initial checkin
-		if opts.Parent == 0 {
+		// Tags: use custom tags if provided, otherwise default trunk tags for initial checkin
+		if len(opts.Tags) > 0 {
+			d.T = opts.Tags
+		} else if opts.Parent == 0 {
 			d.T = []deck.TagCard{
 				{Type: deck.TagPropagating, Name: "branch", UUID: "*", Value: "trunk"},
 				{Type: deck.TagSingleton, Name: "sym-trunk", UUID: "*"},

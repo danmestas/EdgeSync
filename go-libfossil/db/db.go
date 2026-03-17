@@ -38,6 +38,11 @@ func OpenWith(path string, cfg OpenConfig) (*DB, error) {
 	return &DB{conn: conn, path: path, driver: driver}, nil
 }
 
+// SqlDB returns the underlying *sql.DB connection.
+func (d *DB) SqlDB() *sql.DB {
+	return d.conn
+}
+
 func (d *DB) Close() error {
 	return d.conn.Close()
 }
