@@ -4,3 +4,13 @@ libfossil/libfossil.fossil
 
 # Build artifacts
 /soak
+/edgesync
+.worktrees/
+
+# Merge test artifacts
+*.LOCAL
+*.REMOTE
+*.BASE
+*.BASELINE
+*.MERGE
+f.txt

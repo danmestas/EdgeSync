@@ -65,6 +65,11 @@ func (b *Bridge) Start() error {
 	if err != nil {
 		return fmt.Errorf("bridge: subscribe: %w", err)
 	}
+	// Flush ensures the subscription is acknowledged by the server before
+	// Start returns, preventing "no responders" races in tests/CI.
+	if err := b.conn.Flush(); err != nil {
+		return fmt.Errorf("bridge: flush after subscribe: %w", err)
+	}
 	log.Printf("bridge started: subject=%s fossil=%s", subject, b.config.FossilURL)
 	return nil
 }
