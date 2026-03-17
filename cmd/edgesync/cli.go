@@ -46,8 +46,8 @@ type RepoCmd struct {
 	Revert   RepoRevertCmd   `cmd:"" help:"Undo staging changes"`
 	Diff      RepoDiffCmd         `cmd:"" help:"Show changes vs a version"`
 	Merge      RepoMergeCmd        `cmd:"" help:"Merge a divergent version"`
-	Conflicts  RepoConflictsCmd    `cmd:"" help:"List unresolved conflicts"`
-	Unresolve  RepoMergeResolveCmd `cmd:"" name:"mark-resolved" help:"Mark a conflict as resolved"`
+	Conflicts   RepoConflictsCmd    `cmd:"" help:"List/manage unresolved conflicts"`
+	MarkResolved RepoMergeResolveCmd `cmd:"" name:"mark-resolved" help:"Mark a conflict as resolved"`
 }
 
 type SyncCmd struct {
