@@ -1,13 +1,17 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/manifest"
+	"github.com/dmestas/edgesync/go-libfossil/repo"
+	"github.com/dmestas/edgesync/go-libfossil/undo"
 )
 
 type RepoCoCmd struct {
@@ -66,5 +70,59 @@ func (c *RepoCoCmd) Run(g *Globals) error {
 	}
 
 	fmt.Printf("checked out %d files\n", len(files))
+
+	// Update checkout DB if one exists.
+	ckout, err := openCheckout(c.Dir)
+	if err == nil {
+		defer ckout.Close()
+		if err := undo.Save(ckout, c.Dir, nil); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: undo save: %v\n", err)
+		}
+		var uuid string
+		r.DB().QueryRow("SELECT uuid FROM blob WHERE rid=?", rid).Scan(&uuid)
+
+		if err := updateCheckoutDB(ckout, r, rid, uuid, files); err != nil {
+			return fmt.Errorf("updating checkout DB: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// updateCheckoutDB replaces vfile rows and updates vvar to reflect a new checked-out version.
+func updateCheckoutDB(ckout *sql.DB, r *repo.Repo, rid libfossil.FslID, uuid string, files []manifest.FileEntry) error {
+	tx, err := ckout.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Clear existing vfile rows.
+	if _, err := tx.Exec("DELETE FROM vfile"); err != nil {
+		return err
+	}
+
+	// Insert new vfile rows.
+	for _, f := range files {
+		isExe := f.Perm == "x"
+		var fileRid int64
+		r.DB().QueryRow("SELECT rid FROM blob WHERE uuid=?", f.UUID).Scan(&fileRid)
+		if _, err := tx.Exec(
+			`INSERT INTO vfile(vid, chnged, deleted, isexe, islink, rid, mrid, pathname, mhash)
+			 VALUES(?, 0, 0, ?, 0, ?, ?, ?, ?)`,
+			rid, isExe, fileRid, fileRid, f.Name, f.UUID,
+		); err != nil {
+			return err
+		}
+	}
+
+	// Update vvar checkout and checkout-hash.
+	if _, err := tx.Exec("UPDATE vvar SET value=? WHERE name='checkout'", fmt.Sprintf("%d", rid)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("UPDATE vvar SET value=? WHERE name='checkout-hash'", uuid); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
