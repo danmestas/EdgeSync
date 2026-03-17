@@ -44,7 +44,10 @@ type RepoCmd struct {
 	Rm       RepoRmCmd       `cmd:"" help:"Stage files for removal"`
 	Rename   RepoRenameCmd   `cmd:"" help:"Rename a tracked file"`
 	Revert   RepoRevertCmd   `cmd:"" help:"Undo staging changes"`
-	Diff     RepoDiffCmd     `cmd:"" help:"Show changes vs a version"`
+	Diff      RepoDiffCmd         `cmd:"" help:"Show changes vs a version"`
+	Merge      RepoMergeCmd        `cmd:"" help:"Merge a divergent version"`
+	Conflicts  RepoConflictsCmd    `cmd:"" help:"List unresolved conflicts"`
+	Unresolve  RepoMergeResolveCmd `cmd:"" name:"mark-resolved" help:"Mark a conflict as resolved"`
 }
 
 type SyncCmd struct {
