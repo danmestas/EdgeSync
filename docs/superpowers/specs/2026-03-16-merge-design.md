@@ -17,15 +17,13 @@ When a leaf node is offline and both it and another node modify the same file, s
 
 ## Design Principles
 
-**No custom conflict table.** Fossil does not store merge conflict metadata in the repo DB. We follow the same approach:
+**Idiomatic Fossil storage.** All database writes follow Fossil's conventions: INTEGER PRIMARY KEY, REFERENCES blob for rids, julianday for timestamps — the same patterns used by plink, event, tagxref, and other Fossil tables.
 
-- Conflict markers go in the working file (`<<<<<<<`/`=======`/`>>>>>>>`)
-- Sidecar files for the three versions: `file.LOCAL`, `file.BASELINE`, `file.MERGE`
-- `vfile.chnged=5` in the checkout DB flags conflicted files
-- `repo conflicts` scans vfile for `chnged=5` rather than querying a custom table
-- `fossil` CLI can open our repos and understand the conflict state natively
+**Strategy-dependent conflict storage:**
 
-This ensures full round-trip compatibility with Fossil.
+- **Most strategies** (three-way, last-writer-wins, binary) use Fossil's native conflict handling: `vfile.chnged=5` in the checkout DB, sidecar files (`.LOCAL`, `.BASELINE`, `.MERGE`), conflict markers in working files. The `fossil` CLI sees these conflicts natively.
+
+- **The conflict-fork strategy** (offline-first, keep all versions until resolved) uses a `conflict` table in the repo DB. This table follows Fossil's conventions and is only created/written when the conflict-fork strategy is active. It preserves all divergent versions as blob references so nothing is lost during extended offline periods with multiple writers. The `fossil` CLI ignores this table (Fossil skips unknown tables).
 
 ## Package Structure
 
@@ -35,6 +33,7 @@ go-libfossil/merge/
     threeway.go     ThreeWayText — Myers diff + line-level 3-way merge
     lastwriter.go   LastWriterWins — pick newer version by timestamp
     binary.go       Binary — always conflict, never auto-merge
+    fork.go         ConflictFork — offline-first, preserve all versions in conflict table
     ancestor.go     FindCommonAncestor — BFS on plink table
     detect.go       DetectForks — find divergent leaves in plink DAG
     resolve.go      Resolver — read .edgesync-merge + config, match patterns to strategies
@@ -184,6 +183,29 @@ Compare event.mtime for the two divergent checkins. Return the content from whic
 
 Always returns a conflict. Cannot auto-merge binary files. Writes sidecar files so user can pick manually.
 
+### ConflictFork (offline-first)
+
+The strategy for extended offline scenarios with multiple writers. Instead of merging immediately, preserves all divergent versions as blob references in a `conflict` table. Nothing is lost — the user resolves when convenient.
+
+The `conflict` table follows Fossil's conventions:
+
+```sql
+CREATE TABLE IF NOT EXISTS conflict(
+    cid INTEGER PRIMARY KEY,                  -- conflict ID
+    filename TEXT NOT NULL,                    -- file path
+    base_rid INTEGER REFERENCES blob,         -- common ancestor blob
+    local_rid INTEGER REFERENCES blob,        -- local version blob
+    remote_rid INTEGER REFERENCES blob,       -- remote version blob
+    mtime REAL NOT NULL                       -- julianday timestamp
+);
+```
+
+This matches Fossil's patterns: `REFERENCES blob` for rid foreign keys (like plink.pid, plink.cid), `REAL` julianday for timestamps (like event.mtime, plink.mtime), `INTEGER PRIMARY KEY` for the row ID.
+
+The table is only created when the conflict-fork strategy is first used. It is only written to by the conflict-fork strategy — other strategies never touch it.
+
+When the user resolves a conflict-fork entry, the row is deleted (not flagged — Fossil deletes resolved state rather than marking it, as seen in the phantom table pattern where resolved phantoms are removed).
+
 ### Built-in Strategy Registry
 
 ```go
@@ -191,6 +213,7 @@ var strategies = map[string]Strategy{
     "three-way":        &ThreeWayText{},
     "last-writer-wins": &LastWriterWins{},
     "binary":           &Binary{},
+    "conflict-fork":    &ConflictFork{},
 }
 ```
 
@@ -213,27 +236,38 @@ Merge a divergent version into the current checkout:
 
 ### repo conflicts
 
-Scan checkout DB for conflicted files:
+Checks both conflict sources:
+
+1. Checkout DB `vfile.chnged=5` — standard merge conflicts (three-way, binary)
+2. Repo DB `conflict` table — conflict-fork entries (if table exists)
 
 ```sql
+-- Standard conflicts (from three-way/binary strategies)
 SELECT pathname FROM vfile WHERE chnged=5 AND vid=?
+
+-- Conflict-fork entries (from conflict-fork strategy)
+SELECT filename, base_rid, local_rid, remote_rid FROM conflict
 ```
 
 Output:
 ```
-CONFLICT  config.yaml
-CONFLICT  main.go
+CONFLICT  config.yaml  (three-way, 2 conflict regions)
+FORK      data.json    (conflict-fork, 3 versions preserved)
 ```
 
-Compatible with `fossil changes` which shows the same `chnged=5` state.
+Standard conflicts are also visible via `fossil changes`.
 
 ### repo merge resolve \<file\>
 
-Mark a conflict as resolved:
+Mark a conflict as resolved. Handles both conflict types:
 
-1. Verify the file exists in vfile with `chnged=5`
-2. Update `vfile SET chnged=1` (modified, no longer conflicted)
-3. Delete sidecar files: `file.LOCAL`, `file.BASELINE`, `file.MERGE`
+**Standard conflicts** (vfile.chnged=5):
+1. Update `vfile SET chnged=1` (modified, no longer conflicted)
+2. Delete sidecar files: `file.LOCAL`, `file.BASELINE`, `file.MERGE`
+
+**Conflict-fork entries** (conflict table):
+1. Delete the row from the `conflict` table (Fossil convention: delete resolved state, like phantom table)
+2. The chosen version is already in the working directory
 
 ## Sync Integration
 
