@@ -1,4 +1,4 @@
-.PHONY: build test clean leaf bridge dst dst-full dst-hostile
+.PHONY: build test clean leaf bridge dst dst-full dst-hostile dst-drivers
 
 build: leaf bridge
 
@@ -40,6 +40,23 @@ dst-full:
 	done; \
 	if [ $$fail -eq 1 ]; then echo "=== DST FAILED ==="; exit 1; fi
 	@echo "=== DST full sweep passed ==="
+
+# DST across all 3 SQLite drivers: 4 seeds × hostile × 3 drivers
+dst-drivers:
+	@echo "=== DST driver sweep (4 seeds × hostile × 3 drivers) ==="
+	@fail=0; \
+	for driver in "default:" "ncruces:-tags=ncruces" "mattn:-tags=mattn"; do \
+		name=$${driver%%:*}; \
+		tags=$${driver#*:}; \
+		cgo=0; \
+		if [ "$$name" = "mattn" ]; then cgo=1; fi; \
+		for seed in 1 2 3 4; do \
+			echo "  driver=$$name seed=$$seed ..."; \
+			(cd dst && CGO_ENABLED=$$cgo go test $$tags -run TestDST -seed=$$seed -level=hostile -steps=10000 -timeout 60s) || fail=1; \
+		done; \
+	done; \
+	if [ $$fail -eq 1 ]; then echo "=== DST drivers FAILED ==="; exit 1; fi
+	@echo "=== DST driver sweep passed ==="
 
 # Hostile-only DST: 16 seeds, hostile level
 dst-hostile:
