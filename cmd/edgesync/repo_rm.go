@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"os"
+
+	"github.com/dmestas/edgesync/go-libfossil/undo"
 )
 
 type RepoRmCmd struct {
@@ -19,6 +22,10 @@ func (c *RepoRmCmd) Run(g *Globals) error {
 	vid, err := checkoutVid(ckout)
 	if err != nil {
 		return err
+	}
+
+	if err := undo.Save(ckout, c.Dir, nil); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: undo save: %v\n", err)
 	}
 
 	for _, name := range c.Files {
