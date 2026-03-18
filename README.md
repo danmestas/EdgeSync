@@ -1,23 +1,35 @@
 # EdgeSync
 
-Replace Fossil's HTTP sync on leaf repos with NATS messaging. The master Fossil server stays unmodified — a bridge translates between NATS and HTTP `/xfer`.
+Replace Fossil's HTTP sync with NATS messaging or direct peer-to-peer sync. Leaf agents can act as both sync clients and servers — a stock `fossil clone`/`fossil sync` can talk to them directly.
 
 ## Architecture
 
 ```
-┌──────────┐    NATS     ┌──────────┐   HTTP /xfer   ┌──────────────┐
-│   Leaf   │◄───────────►│  Bridge  │◄──────────────►│ Fossil Server│
-│  Agent   │  JetStream  │          │   (standard)   │  (unmodified)│
-└──────────┘             └──────────┘                └──────────────┘
-     │                                                      │
-     ▼                                                      ▼
-  SQLite repo                                         SQLite repo
-  (direct R/W)                                        (fossil ui works)
+                    ┌──────────────────────┐
+                    │     Leaf Agent        │
+                    │  (client + server)    │
+                    ├──────────────────────┤
+                    │ pollLoop   ServeHTTP │
+                    │ (Sync)    ServeNATS  │
+                    └───┬──────────┬───────┘
+                        │          │
+           ┌────────────┘          └────────────┐
+           ▼                                    ▼
+  ┌──────────────┐                    ┌──────────────┐
+  │  Bridge      │                    │  Other Leaf  │
+  │ NATS↔HTTP    │                    │  (or fossil) │
+  └──────┬───────┘                    └──────────────┘
+         ▼
+  ┌──────────────┐
+  │Fossil Server │
+  │ (unmodified) │
+  └──────────────┘
 ```
 
-**Leaf Agent** — Daemon on machines with Fossil repos. Reads/writes the SQLite repo DB directly. Publishes artifacts to NATS on commit, subscribes for incoming artifacts. JetStream consumer for offline catch-up.
-
-**Bridge** — Speaks NATS on one side, HTTP `/xfer` on the other. To the master Fossil server it looks like a normal Fossil client doing push/pull.
+**Three sync modes:**
+1. **Leaf → Bridge → Fossil Server** — Original mode. Bridge translates NATS to HTTP `/xfer`.
+2. **Leaf → Leaf (NATS)** — Peer-to-peer via ServeNATS. No bridge or server needed.
+3. **Leaf → Leaf (HTTP)** — Peer-to-peer via ServeHTTP. Stock `fossil clone`/`fossil sync` works.
 
 ## Quick Start
 
@@ -28,19 +40,19 @@ make build
 # Run tests (what CI runs)
 make test
 
-# Install pre-commit hook (~5s of tests before each commit)
+# Install pre-commit hook (~8s of tests before each commit)
 make setup-hooks
 ```
 
 ## Project Layout
 
 ```
-cmd/edgesync/          Unified CLI binary (49 subcommands)
+cmd/edgesync/          Unified CLI binary (50 subcommands)
 
 go-libfossil/          Core library — Go port of Fossil internals
   annotate/            Line-level blame/annotate
   bisect/              Binary search for regressions
-  blob/                Blob compression (Fossil's 4-byte prefix + zlib format)
+  blob/                Blob compression (Fossil's 4-byte prefix + zlib)
   content/             Artifact storage and expansion (delta chains)
   db/                  SQLite adapter (3 drivers via build tags)
   deck/                Manifest/control-artifact parsing
@@ -52,35 +64,33 @@ go-libfossil/          Core library — Go port of Fossil internals
   repo/                Fossil repo DB operations (create, open, verify)
   simio/               Simulation I/O abstractions (Clock, Rand, Env)
   stash/               Working-tree stash save/restore
-  sync/                Xfer sync session (push/pull rounds)
+  sync/                Sync engine: client (Sync, Clone), server (HandleSync,
+                         ServeHTTP), transport (HTTP, NATS, mock)
   tag/                 Tag read/write on artifacts
   testutil/            Shared test helpers
   undo/                Undo/redo state tracking
   xfer/                Xfer card protocol encoder/decoder
 
 leaf/                  Leaf agent module
-  agent/               Agent logic (config, NATS connection, sync loop)
+  agent/               Agent logic, NATS transport, ServeNATS, ServeP2P stub
   cmd/leaf/            Standalone leaf daemon binary
 
 bridge/                Bridge module
   bridge/              Bridge logic (NATS <-> HTTP /xfer translation)
   cmd/bridge/          Standalone bridge daemon binary
 
-dst/                   Deterministic simulation testing (single-threaded, seeded)
-sim/                   Integration simulation testing (real NATS + Fossil + fault proxy)
+dst/                   Deterministic simulation testing
+                         SimNetwork (bridge mode), PeerNetwork (leaf-to-leaf)
+sim/                   Integration simulation testing
+                         Real NATS + Fossil + fault proxy + serve tests
   cmd/soak/            Continuous soak test runner
 
 docs/                  Documentation
-  dev/specs/           Design specifications (historical)
-  dev/plans/           Implementation plans (historical)
-
-fossil/                Fossil SCM source checkout (read-only reference)
-libfossil/             Libfossil source checkout (read-only reference)
+  dev/specs/           Design specifications
+  dev/plans/           Implementation plans
 ```
 
 ## Go Modules
-
-This project uses a Go workspace (`go.work`) with multiple modules:
 
 | Module | Path | Purpose |
 |--------|------|---------|
@@ -92,36 +102,21 @@ This project uses a Go workspace (`go.work`) with multiple modules:
 
 ## SQLite Drivers
 
-The SQLite driver is configurable via build tags:
-
 ```bash
 go build ./...                            # modernc (default, pure Go)
 go build -tags ncruces ./...              # ncruces (WASM-based)
 CGO_ENABLED=1 go build -tags mattn ./...  # mattn (CGo, best performance)
 ```
 
-Or set `EDGESYNC_SQLITE_DRIVER` at runtime.
-
 ## Testing
 
 ```bash
-make test              # CI tests (~10s)
+make test              # CI tests + sim serve (~15s)
 make dst               # DST: 8 seeds, normal (~2s)
 make dst-full          # DST: 16 seeds x 3 levels (~40s)
 make sim               # Integration sim: 1 seed (requires fossil)
 make sim-full          # Integration sim: 16 seeds x 3 severities
 make drivers           # Test all 3 SQLite drivers
-```
-
-## NATS Subject Namespace
-
-```
-fossil.<project-code>.igot    "I have this artifact" (UUID)
-fossil.<project-code>.gimme   "I need this artifact" (UUID)
-fossil.<project-code>.file    Artifact payload delivery
-fossil.<project-code>.delta   Delta-compressed artifact
-fossil.<project-code>.meta    Config, tickets, wiki changes
-fossil.<project-code>.events  Commit notifications
 ```
 
 ## Dependencies

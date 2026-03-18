@@ -1,22 +1,22 @@
 # EdgeSync
 
-Fossil NATS Sync — replace Fossil's HTTP sync with NATS messaging on leaf nodes.
+Fossil sync engine — replace Fossil's HTTP sync with NATS messaging or direct peer-to-peer. Leaf agents act as both sync clients and servers.
 
 ## Architecture
 
-- **Leaf Agent** (Go): daemon that reads/writes Fossil SQLite repo DB directly, publishes/subscribes artifacts via NATS JetStream
-- **Bridge** (Go): translates between NATS messages and Fossil's HTTP /xfer card protocol. Master Fossil server is unmodified.
+- **Leaf Agent** (Go): daemon that reads/writes Fossil SQLite repo DB directly. Syncs via NATS (client) and serves via HTTP or NATS (server). Can replace both client and server roles.
+- **Bridge** (Go): translates between NATS messages and Fossil's HTTP /xfer card protocol. Optional — only needed to talk to an unmodified Fossil server.
 
-## Read-Only Directories
+## Local-Only Directories
 
-`fossil/` and `libfossil/` are upstream reference checkouts. NEVER create, edit, write, or delete any file inside these directories. They are read-only reference material for porting.
+`fossil/` and `libfossil/` are upstream C reference checkouts, gitignored (local-only). They exist on disk for porting reference but are NOT tracked in git.
 
 ## Build & Test
 
 ```bash
 make build              # Build edgesync, leaf, bridge binaries into bin/
-make test               # Run CI-level tests (~10s)
-make setup-hooks        # Install pre-commit hook (~5s of tests before each commit)
+make test               # Run CI-level tests + sim serve tests (~15s)
+make setup-hooks        # Install pre-commit hook (~8s before each commit)
 go build -buildvcs=false ./cmd/edgesync/   # Dual VCS needs -buildvcs=false
 ```
 
@@ -32,7 +32,7 @@ Five modules in a workspace:
 ## Project Structure
 
 ### Entry Points
-- `cmd/edgesync/` — Unified CLI binary (49 subcommands via kong)
+- `cmd/edgesync/` — Unified CLI binary (50 subcommands via kong)
 - `leaf/cmd/leaf/` — Standalone leaf agent daemon
 - `bridge/cmd/bridge/` — Standalone bridge daemon
 - `sim/cmd/soak/` — Continuous soak test runner
@@ -55,36 +55,46 @@ Five modules in a workspace:
 | `repo/` | Fossil repo DB operations | `Create()`, `Open()`, `Verify()` |
 | `simio/` | Simulation I/O (Clock, Rand, Env) | `SimClock`, `RealEnv()`, `CryptoRand{}` |
 | `stash/` | Working-tree stash | `Save()`, `Pop()`, `List()` |
-| `sync/` | Xfer sync session (push/pull rounds) | `Session`, `SyncOpts`, `BuggifyChecker` |
+| `sync/` | Sync engine — client + server | `Sync()`, `Clone()`, `HandleSync()`, `ServeHTTP()` |
 | `tag/` | Tag read/write on artifacts | `Add()`, `List()` |
-| `testutil/` | Shared test helpers | `TempRepo()` |
+| `testutil/` | Shared test helpers | `NewTestRepo()` |
 | `undo/` | Undo/redo state tracking | `Save()`, `Undo()`, `Redo()` |
 | `xfer/` | Xfer card protocol encoder/decoder | `Encode()`, `Decode()`, `Message` |
 
+### sync/ Package (key types)
+- **Client**: `Sync()`, `Clone()`, `SyncOpts`, `CloneOpts`, `Transport` interface
+- **Server**: `HandleSync()`, `HandleSyncWithOpts()`, `HandleFunc`, `HandleOpts`, `ServeHTTP()`
+- **Shared**: `storeReceivedFile()`, `resolveFileContent()`, `BuggifyChecker`
+- **Transports**: `HTTPTransport`, `MockTransport` (in sync/); `NATSTransport` (in leaf/agent/)
+
 ### Agent/Bridge
-- `leaf/agent/` — Agent logic: `Config` (in config.go), `New()`, `Start()`, `Stop()`, `SyncNow()`
-- `bridge/bridge/` — Bridge logic: `Config` (in config.go), `New()`, `Start()`, `Stop()`
+- `leaf/agent/` — `Config` (config.go), `New()`, `Start()`, `Stop()`, `SyncNow()`, `ServeNATS()`, `ServeP2P()` stub
+  - Config fields: `ServeHTTPAddr` (":8080" to serve HTTP), `ServeNATSEnabled` (leaf-to-leaf)
+- `bridge/bridge/` — `Config` (config.go), `New()`, `Start()`, `Stop()`
 
 ### Simulation Testing
-- `dst/` — Deterministic single-threaded sim (seeded PRNG, `SimNetwork`, `MockFossil`, event queue)
-- `sim/` — Integration sim (real NATS + TCP fault proxy + real Fossil server). Part of root module.
+- `dst/` — Deterministic single-threaded sim. `SimNetwork` (bridge mode), `PeerNetwork` (leaf-to-leaf). `MockFossil` delegates to `HandleSyncWithOpts`.
+- `sim/` — Integration sim (real NATS + TCP fault proxy + real Fossil). Serve tests verify `fossil clone`/`fossil sync` against ServeHTTP.
 - Both share `simio/` abstractions and `sync.BuggifyChecker` interface
 
 ## Key Conventions
 
-- **SQLite drivers**: Build tags select driver — `go build` (modernc), `-tags ncruces`, `-tags mattn`. Or `EDGESYNC_SQLITE_DRIVER` env var at runtime.
-- **Fossil blob format**: `[4-byte BE uncompressed size][zlib data]`. Both `Compress()` and `Decompress()` handle this prefix.
+- **SQLite drivers**: `go build` (modernc), `-tags ncruces`, `-tags mattn`. Or `EDGESYNC_SQLITE_DRIVER` env var.
+- **Fossil blob format**: `[4-byte BE uncompressed size][zlib data]`. `Compress()` and `Decompress()` handle this.
+- **xfer wire format**: Raw zlib (no prefix). `xfer.Decode` auto-detects: raw zlib → prefix+zlib → uncompressed.
 - **SHA3 UUIDs**: 64-char = SHA3-256 (Fossil 2.0+), 40-char = SHA1 (legacy)
-- **Auth**: Empty `User` in config = no login card = unauthenticated "nobody" sync
+- **Auth**: Empty `User` = no login card = unauthenticated "nobody" sync
 - **simio.CryptoRand{}**: Use for production callsites of `repo.Create` and `db.SeedConfig`
-- **Pre-commit hook**: `make setup-hooks` installs ~5s test gate before each commit
+- **Pre-commit hook**: `make setup-hooks` installs ~8s test gate
+- **HandleSync vs HandleSyncWithOpts**: Use `HandleSync` in production, `HandleSyncWithOpts` with `HandleOpts{Buggify}` for DST
 
 ## Fossil Sync Protocol
 
 - Transport: HTTP POST to `/xfer`, `application/x-fossil`, zlib-compressed
 - Wire format: newline-separated cards (`command arg1 arg2`)
-- Core cards: login, push, pull, file, cfile, igot, gimme, cookie, clone
+- Core cards: login, push, pull, file, cfile, igot, gimme, cookie, clone, clone_seqno, reqconfig, config
 - Stateless request/response rounds that repeat until convergence
+- Push/pull cards accept 1 arg (server-code only) when syncing with known remote
 
 ## Fossil Repo Schema (core tables)
 
@@ -92,14 +102,3 @@ Five modules in a workspace:
 - `delta` — delta relationships (rid -> srcid)
 - `event` — checkin manifests
 - `mlink` — file mappings per checkin
-
-## Reference Source
-
-C reference implementations live in the repo checkouts:
-- `fossil/src/delta.c` — delta algorithm
-- `fossil/src/xfer.c` — sync protocol
-- `libfossil/checkout/src/delta.c` — libfossil's delta port
-- `libfossil/checkout/src/content.c` — artifact storage/retrieval
-- `libfossil/checkout/src/xfer.c` — network sync (partial)
-- `libfossil/checkout/src/deck.c` — manifest parsing
-- `libfossil/checkout/src/db.c` — SQLite wrapper
