@@ -33,6 +33,9 @@ type Config struct {
 	// Pull enables pulling remote artifacts to local.
 	Pull bool
 
+	// UV enables syncing unversioned files (wiki, forum, attachments).
+	UV bool
+
 	// SubjectPrefix is the NATS subject prefix (default "fossil").
 	// The full subject is "<SubjectPrefix>.<project-code>.sync".
 	SubjectPrefix string

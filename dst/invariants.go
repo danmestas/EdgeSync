@@ -8,7 +8,9 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/db"
+	"github.com/dmestas/edgesync/go-libfossil/hash"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
+	"github.com/dmestas/edgesync/go-libfossil/uv"
 )
 
 // InvariantError records which invariant failed, on which node, and why.
@@ -160,6 +162,76 @@ func CheckSubsetOf(master *repo.Repo, leaves map[NodeID]*repo.Repo) error {
 	return nil
 }
 
+// --- UV invariants ---
+
+// CheckUVIntegrity verifies that every non-tombstone entry in the
+// unversioned table has a hash matching the SHA1 of its decompressed
+// content, and sz matches the content length.
+func CheckUVIntegrity(nodeID string, r *repo.Repo) error {
+	uv.EnsureSchema(r.DB())
+	entries, err := uv.List(r.DB())
+	if err != nil {
+		return fmt.Errorf("CheckUVIntegrity(%s): list: %w", nodeID, err)
+	}
+	for _, e := range entries {
+		if e.Hash == "" {
+			continue // tombstone
+		}
+		content, _, storedHash, err := uv.Read(r.DB(), e.Name)
+		if err != nil {
+			return &InvariantError{
+				Invariant: "uv-integrity",
+				NodeID:    nodeID,
+				Detail:    fmt.Sprintf("read %q: %v", e.Name, err),
+			}
+		}
+		computed := hash.SHA1(content)
+		if len(storedHash) > 40 {
+			computed = hash.SHA3(content)
+		}
+		if computed != storedHash {
+			return &InvariantError{
+				Invariant: "uv-integrity",
+				NodeID:    nodeID,
+				Detail:    fmt.Sprintf("file %q: hash mismatch stored=%s computed=%s", e.Name, storedHash, computed),
+			}
+		}
+		if len(content) != e.Size {
+			return &InvariantError{
+				Invariant: "uv-integrity",
+				NodeID:    nodeID,
+				Detail:    fmt.Sprintf("file %q: sz=%d but content len=%d", e.Name, e.Size, len(content)),
+			}
+		}
+	}
+	return nil
+}
+
+// CheckUVConvergence verifies that all repos have identical UV content hashes.
+func CheckUVConvergence(master *repo.Repo, leaves map[NodeID]*repo.Repo) error {
+	uv.EnsureSchema(master.DB())
+	masterHash, err := uv.ContentHash(master.DB())
+	if err != nil {
+		return fmt.Errorf("CheckUVConvergence: master hash: %w", err)
+	}
+
+	for id, leafRepo := range leaves {
+		uv.EnsureSchema(leafRepo.DB())
+		leafHash, err := uv.ContentHash(leafRepo.DB())
+		if err != nil {
+			return fmt.Errorf("CheckUVConvergence: leaf %s hash: %w", id, err)
+		}
+		if leafHash != masterHash {
+			return &InvariantError{
+				Invariant: "uv-convergence",
+				NodeID:    string(id),
+				Detail:    fmt.Sprintf("master=%s leaf=%s", masterHash, leafHash),
+			}
+		}
+	}
+	return nil
+}
+
 // --- Simulator-level convenience methods ---
 
 // CheckSafety runs all safety invariants on every node in the simulation.
@@ -175,6 +247,9 @@ func (s *Simulator) CheckSafety() error {
 		if err := CheckNoOrphanPhantoms(string(id), r); err != nil {
 			return err
 		}
+		if err := CheckUVIntegrity(string(id), r); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -187,6 +262,15 @@ func (s *Simulator) CheckAllConverged(master *repo.Repo) error {
 		leaves[id] = a.Repo()
 	}
 	return CheckConvergence(master, leaves)
+}
+
+// CheckAllUVConverged checks UV convergence between master and all leaves.
+func (s *Simulator) CheckAllUVConverged(master *repo.Repo) error {
+	leaves := make(map[NodeID]*repo.Repo, len(s.leaves))
+	for id, a := range s.leaves {
+		leaves[id] = a.Repo()
+	}
+	return CheckUVConvergence(master, leaves)
 }
 
 // --- Helpers ---

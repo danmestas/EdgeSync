@@ -237,6 +237,7 @@ func (a *Agent) runSync(ctx context.Context) (*sync.SyncResult, error) {
 		User:        a.config.User,
 		Password:    a.config.Password,
 		Buggify:     a.config.Buggify,
+		UV:          a.config.UV,
 	}
 	return sync.Sync(ctx, a.repo, a.transport, opts)
 }

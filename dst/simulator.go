@@ -45,6 +45,7 @@ type SimConfig struct {
 	TmpDir       string         // directory for repo files
 	Upstream     sync.Transport // mock Fossil master
 	Buggify      bool           // enable BUGGIFY fault injection
+	UV           bool           // sync unversioned files
 }
 
 // New creates a Simulator with the given configuration. It creates
@@ -106,6 +107,7 @@ func New(cfg SimConfig) (*Simulator, error) {
 		a := agent.NewFromParts(agent.Config{
 			Clock:        clock,
 			PollInterval: cfg.PollInterval,
+			UV:           cfg.UV,
 		}, r, transport, projCode, srvCode)
 
 		s.leaves[id] = a
