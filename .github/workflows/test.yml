@@ -23,3 +23,5 @@ jobs:
         run: go test ./dst/ -run 'TestScenario|TestE2E|TestMockFossil|TestSimulator|TestCheck' -count=1
       - name: sim (unit only)
         run: go test ./sim/ -run 'TestFaultProxy|TestGenerateSchedule|TestBuggify' -count=1
+      - name: sim (serve tests)
+        run: go test ./sim/ -run 'TestServeHTTP|TestLeafToLeaf' -count=1 -timeout=120s

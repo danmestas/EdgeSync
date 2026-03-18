@@ -24,6 +24,7 @@ test:
 	go test ./bridge/... -short -count=1
 	go test ./dst/ -run 'TestScenario|TestE2E|TestMockFossil|TestSimulator|TestCheck' -count=1
 	go test ./sim/ -run 'TestFaultProxy|TestGenerateSchedule|TestBuggify' -count=1
+	go test ./sim/ -run 'TestServeHTTP|TestLeafToLeaf' -count=1 -timeout=120s
 
 # --- Pre-commit hook setup ---
 

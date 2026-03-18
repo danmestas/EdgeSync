@@ -1,17 +1,6 @@
 package sync
 
-import (
-	"context"
-
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
-)
-
-// ServerHandler processes an incoming sync request and produces a response.
-type ServerHandler interface {
-	HandleSync(ctx context.Context, r *repo.Repo, request *xfer.Message) (*xfer.Message, error)
-}
+import "github.com/dmestas/edgesync/go-libfossil/simio"
 
 // CloneOpts configures a clone operation.
 type CloneOpts struct {

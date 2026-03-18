@@ -158,17 +158,27 @@ func parseGimme(args []string) (Card, error) {
 }
 
 func parsePush(args []string) (Card, error) {
-	if len(args) != 2 {
-		return nil, fmt.Errorf("xfer: push requires 2 args, got %d", len(args))
+	switch len(args) {
+	case 1:
+		// Fossil sends "push <server-code>" when syncing with a known remote.
+		return &PushCard{ServerCode: args[0]}, nil
+	case 2:
+		return &PushCard{ServerCode: args[0], ProjectCode: args[1]}, nil
+	default:
+		return nil, fmt.Errorf("xfer: push requires 1-2 args, got %d", len(args))
 	}
-	return &PushCard{ServerCode: args[0], ProjectCode: args[1]}, nil
 }
 
 func parsePull(args []string) (Card, error) {
-	if len(args) != 2 {
-		return nil, fmt.Errorf("xfer: pull requires 2 args, got %d", len(args))
+	switch len(args) {
+	case 1:
+		// Fossil sends "pull <server-code>" when syncing with a known remote.
+		return &PullCard{ServerCode: args[0]}, nil
+	case 2:
+		return &PullCard{ServerCode: args[0], ProjectCode: args[1]}, nil
+	default:
+		return nil, fmt.Errorf("xfer: pull requires 1-2 args, got %d", len(args))
 	}
-	return &PullCard{ServerCode: args[0], ProjectCode: args[1]}, nil
 }
 
 func parseCookie(args []string) (Card, error) {

@@ -43,6 +43,15 @@ type Config struct {
 
 	// Buggify is an optional fault injection checker. Nil in production.
 	Buggify libsync.BuggifyChecker
+
+	// ServeHTTPAddr is the HTTP listen address (e.g. ":8080").
+	// Empty means do not serve HTTP. When set, the leaf acts as a
+	// Fossil-compatible HTTP sync server.
+	ServeHTTPAddr string
+
+	// ServeNATSEnabled starts a NATS request/reply listener on the
+	// project sync subject. Enables leaf-to-leaf sync without a bridge.
+	ServeNATSEnabled bool
 }
 
 // applyDefaults fills in zero-valued fields with sensible defaults.
