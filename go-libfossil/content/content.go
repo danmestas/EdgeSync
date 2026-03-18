@@ -11,10 +11,18 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/simio"
 )
 
-func Expand(q db.Querier, rid libfossil.FslID) ([]byte, error) {
-	if rid <= 0 {
-		return nil, fmt.Errorf("content.Expand: invalid rid %d", rid)
+func Expand(q db.Querier, rid libfossil.FslID) (result []byte, err error) {
+	if q == nil {
+		panic("content.Expand: q must not be nil")
 	}
+	if rid <= 0 {
+		panic("content.Expand: rid must be > 0")
+	}
+	defer func() {
+		if err == nil && result == nil {
+			panic("content.Expand: postcondition violated: result is nil with no error")
+		}
+	}()
 
 	chain, err := walkDeltaChain(q, rid)
 	if err != nil {
@@ -48,8 +56,19 @@ func Expand(q db.Querier, rid libfossil.FslID) ([]byte, error) {
 	return content, nil
 }
 
-func walkDeltaChain(q db.Querier, rid libfossil.FslID) ([]libfossil.FslID, error) {
-	var chain []libfossil.FslID
+func walkDeltaChain(q db.Querier, rid libfossil.FslID) (chain []libfossil.FslID, err error) {
+	if q == nil {
+		panic("content.walkDeltaChain: q must not be nil")
+	}
+	if rid <= 0 {
+		panic("content.walkDeltaChain: rid must be > 0")
+	}
+	defer func() {
+		if err == nil && len(chain) == 0 {
+			panic("content.walkDeltaChain: postcondition violated: chain is empty with no error")
+		}
+	}()
+
 	current := rid
 	seen := make(map[libfossil.FslID]bool)
 
@@ -60,12 +79,12 @@ func walkDeltaChain(q db.Querier, rid libfossil.FslID) ([]libfossil.FslID, error
 		seen[current] = true
 		chain = append(chain, current)
 
-		var srcid int64
-		err := q.QueryRow("SELECT srcid FROM delta WHERE rid=?", current).Scan(&srcid)
+		var sourceID int64
+		err := q.QueryRow("SELECT srcid FROM delta WHERE rid=?", current).Scan(&sourceID)
 		if err != nil {
 			break
 		}
-		current = libfossil.FslID(srcid)
+		current = libfossil.FslID(sourceID)
 	}
 
 	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
@@ -75,6 +94,13 @@ func walkDeltaChain(q db.Querier, rid libfossil.FslID) ([]libfossil.FslID, error
 }
 
 func Verify(q db.Querier, rid libfossil.FslID) error {
+	if q == nil {
+		panic("content.Verify: q must not be nil")
+	}
+	if rid <= 0 {
+		panic("content.Verify: rid must be > 0")
+	}
+
 	var uuid string
 	err := q.QueryRow("SELECT uuid FROM blob WHERE rid=?", rid).Scan(&uuid)
 	if err != nil {
@@ -100,6 +126,13 @@ func Verify(q db.Querier, rid libfossil.FslID) error {
 }
 
 func IsPhantom(q db.Querier, rid libfossil.FslID) (bool, error) {
+	if q == nil {
+		panic("content.IsPhantom: q must not be nil")
+	}
+	if rid <= 0 {
+		panic("content.IsPhantom: rid must be > 0")
+	}
+
 	var count int
 	err := q.QueryRow("SELECT count(*) FROM phantom WHERE rid=?", rid).Scan(&count)
 	if err != nil {

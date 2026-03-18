@@ -31,10 +31,13 @@ func TestSimClockAdvance(t *testing.T) {
 
 func TestSimClockAdvanceToBackwards(t *testing.T) {
 	c := NewSimClockAt(time.Unix(100, 0))
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for backwards AdvanceTo")
+		}
+	}()
 	c.AdvanceTo(time.Unix(50, 0))
-	if got := c.Now(); !got.Equal(time.Unix(100, 0)) {
-		t.Fatalf("clock should not go backwards, got %v", got)
-	}
+	t.Fatal("should not reach here")
 }
 
 func TestSimClockAfterFiresOnAdvance(t *testing.T) {

@@ -27,6 +27,9 @@ func (c *ConflictFork) Merge(base, local, remote []byte) (*Result, error) {
 // EnsureConflictTable creates the conflict table if it doesn't exist.
 // Follows Fossil conventions: REFERENCES blob for rids, julianday REAL for timestamps.
 func EnsureConflictTable(r *repo.Repo) error {
+	if r == nil {
+		panic("merge.EnsureConflictTable: r must not be nil")
+	}
 	_, err := r.DB().Exec(`CREATE TABLE IF NOT EXISTS conflict(
 		cid INTEGER PRIMARY KEY,
 		filename TEXT NOT NULL,
@@ -40,6 +43,12 @@ func EnsureConflictTable(r *repo.Repo) error {
 
 // RecordConflictFork inserts a conflict-fork entry.
 func RecordConflictFork(r *repo.Repo, filename string, baseRID, localRID, remoteRID int64) error {
+	if r == nil {
+		panic("merge.RecordConflictFork: r must not be nil")
+	}
+	if filename == "" {
+		panic("merge.RecordConflictFork: filename must not be empty")
+	}
 	_, err := r.DB().Exec(
 		"INSERT INTO conflict(filename, base_rid, local_rid, remote_rid, mtime) VALUES(?, ?, ?, ?, julianday('now'))",
 		filename, baseRID, localRID, remoteRID,
@@ -49,12 +58,21 @@ func RecordConflictFork(r *repo.Repo, filename string, baseRID, localRID, remote
 
 // ResolveConflictFork deletes a resolved entry (Fossil convention: delete, don't flag).
 func ResolveConflictFork(r *repo.Repo, filename string) error {
+	if r == nil {
+		panic("merge.ResolveConflictFork: r must not be nil")
+	}
+	if filename == "" {
+		panic("merge.ResolveConflictFork: filename must not be empty")
+	}
 	_, err := r.DB().Exec("DELETE FROM conflict WHERE filename=?", filename)
 	return err
 }
 
 // ListConflictForks returns all unresolved conflict-fork entries.
 func ListConflictForks(r *repo.Repo) ([]string, error) {
+	if r == nil {
+		panic("merge.ListConflictForks: r must not be nil")
+	}
 	// Check if conflict table exists.
 	var count int
 	err := r.DB().QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='conflict'").Scan(&count)
@@ -70,7 +88,9 @@ func ListConflictForks(r *repo.Repo) ([]string, error) {
 	var names []string
 	for rows.Next() {
 		var name string
-		rows.Scan(&name)
+		if err := rows.Scan(&name); err != nil {
+			continue
+		}
 		names = append(names, name)
 	}
 	return names, rows.Err()

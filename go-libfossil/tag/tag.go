@@ -31,6 +31,12 @@ type TagOpts struct {
 // It stores the artifact as a blob, ensures the tag name exists in the tag table,
 // and inserts/replaces a row in the tagxref table.
 func AddTag(r *repo.Repo, opts TagOpts) (libfossil.FslID, error) {
+	if r == nil {
+		panic("tag.AddTag: r must not be nil")
+	}
+	if opts.TagName == "" {
+		panic("tag.AddTag: opts.TagName must not be empty")
+	}
 	if opts.Time.IsZero() {
 		opts.Time = time.Now().UTC()
 	}
@@ -100,8 +106,12 @@ func AddTag(r *repo.Repo, opts TagOpts) (libfossil.FslID, error) {
 		}
 
 		// Mark as unclustered and unsent
-		tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", controlRid)
-		tx.Exec("INSERT OR IGNORE INTO unsent(rid) VALUES(?)", controlRid)
+		if _, err := tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", controlRid); err != nil {
+			return fmt.Errorf("tag.AddTag: unclustered: %w", err)
+		}
+		if _, err := tx.Exec("INSERT OR IGNORE INTO unsent(rid) VALUES(?)", controlRid); err != nil {
+			return fmt.Errorf("tag.AddTag: unsent: %w", err)
+		}
 
 		return nil
 	})
@@ -113,6 +123,12 @@ func AddTag(r *repo.Repo, opts TagOpts) (libfossil.FslID, error) {
 
 // ensureTag returns the tagid for the given tag name, creating it if it doesn't exist.
 func ensureTag(tx *db.Tx, name string) (int64, error) {
+	if tx == nil {
+		panic("tag.ensureTag: tx must not be nil")
+	}
+	if name == "" {
+		panic("tag.ensureTag: name must not be empty")
+	}
 	var tagid int64
 	err := tx.QueryRow("SELECT tagid FROM tag WHERE tagname=?", name).Scan(&tagid)
 	if err == nil {

@@ -10,6 +10,15 @@ import (
 // FindCommonAncestor walks the plink DAG backwards from two checkin rids
 // to find their most recent common ancestor via bidirectional BFS.
 func FindCommonAncestor(r *repo.Repo, ridA, ridB libfossil.FslID) (libfossil.FslID, error) {
+	if r == nil {
+		panic("merge.FindCommonAncestor: r must not be nil")
+	}
+	if ridA <= 0 {
+		panic("merge.FindCommonAncestor: ridA must be positive")
+	}
+	if ridB <= 0 {
+		panic("merge.FindCommonAncestor: ridB must be positive")
+	}
 	if ridA == ridB {
 		return ridA, nil
 	}
@@ -75,7 +84,9 @@ func getParents(r *repo.Repo, rid libfossil.FslID) ([]libfossil.FslID, error) {
 	var parents []libfossil.FslID
 	for rows.Next() {
 		var pid int64
-		rows.Scan(&pid)
+		if err := rows.Scan(&pid); err != nil {
+			continue
+		}
 		parents = append(parents, libfossil.FslID(pid))
 	}
 	return parents, rows.Err()

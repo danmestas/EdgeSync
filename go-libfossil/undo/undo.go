@@ -21,6 +21,12 @@ import (
 // If pathnames is non-nil and non-empty, only those vfile entries are saved;
 // otherwise all vfile rows are included.
 func Save(ckout *sql.DB, dir string, pathnames []string) error {
+	if ckout == nil {
+		panic("undo.Save: ckout must not be nil")
+	}
+	if dir == "" {
+		panic("undo.Save: dir must not be empty")
+	}
 	tx, err := ckout.Begin()
 	if err != nil {
 		return fmt.Errorf("undo.Save: begin tx: %w", err)
@@ -127,12 +133,24 @@ func Save(ckout *sql.DB, dir string, pathnames []string) error {
 // Undo restores the state saved by the most recent Save call.
 // It requires undo_available == 1.
 func Undo(ckout *sql.DB, dir string) error {
+	if ckout == nil {
+		panic("undo.Undo: ckout must not be nil")
+	}
+	if dir == "" {
+		panic("undo.Undo: dir must not be empty")
+	}
 	return swapState(ckout, dir, false)
 }
 
 // Redo reverses the most recent Undo.
 // It requires undo_available == 2.
 func Redo(ckout *sql.DB, dir string) error {
+	if ckout == nil {
+		panic("undo.Redo: ckout must not be nil")
+	}
+	if dir == "" {
+		panic("undo.Redo: dir must not be empty")
+	}
 	return swapState(ckout, dir, true)
 }
 
@@ -167,7 +185,21 @@ func swapState(ckout *sql.DB, dir string, redo bool) error {
 	}
 	defer tx.Rollback()
 
-	// Process file content swaps.
+	if err := swapDiskFiles(tx, dir, label, wantFlag); err != nil {
+		return err
+	}
+	if err := swapTables(tx, label); err != nil {
+		return err
+	}
+	if err := swapCheckout(tx, label, setAvail); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// swapDiskFiles swaps file contents between disk and the undo table rows.
+func swapDiskFiles(tx *sql.Tx, dir, label string, wantFlag bool) error {
 	rows, err := tx.Query("SELECT rowid, pathname, content, existsflag FROM undo WHERE redoflag=?", wantFlag)
 	if err != nil {
 		return fmt.Errorf("undo.%s: query undo: %w", label, err)
@@ -236,8 +268,11 @@ func swapState(ckout *sql.DB, dir string, redo bool) error {
 			return fmt.Errorf("undo.%s: update undo row: %w", label, err)
 		}
 	}
+	return nil
+}
 
-	// Swap vfile <-> undo_vfile via temp table.
+// swapTables swaps vfile/vmerge with their undo counterparts via temp tables.
+func swapTables(tx *sql.Tx, label string) error {
 	for _, pair := range [][2]string{{"vfile", "undo_vfile"}, {"vmerge", "undo_vmerge"}} {
 		live, saved := pair[0], pair[1]
 		stmts := []string{
@@ -255,8 +290,11 @@ func swapState(ckout *sql.DB, dir string, redo bool) error {
 			}
 		}
 	}
+	return nil
+}
 
-	// Swap checkout <-> undo_checkout in vvar.
+// swapCheckout swaps the checkout vid in vvar and updates undo_available.
+func swapCheckout(tx *sql.Tx, label, setAvail string) error {
 	var curCheckout, undoCheckout string
 	if err := tx.QueryRow("SELECT value FROM vvar WHERE name='checkout'").Scan(&curCheckout); err != nil {
 		return fmt.Errorf("undo.%s: read checkout: %w", label, err)
@@ -275,8 +313,7 @@ func swapState(ckout *sql.DB, dir string, redo bool) error {
 	if _, err := tx.Exec("REPLACE INTO vvar(name,value) VALUES('undo_available',?)", setAvail); err != nil {
 		return fmt.Errorf("undo.%s: set undo_available: %w", label, err)
 	}
-
-	return tx.Commit()
+	return nil
 }
 
 func labelUpper(s string) string {

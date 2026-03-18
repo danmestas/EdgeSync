@@ -29,135 +29,47 @@ type File struct {
 	Perm    string
 }
 
-func Checkin(r *repo.Repo, opts CheckinOpts) (libfossil.FslID, string, error) {
+func Checkin(r *repo.Repo, opts CheckinOpts) (manifestRid libfossil.FslID, manifestUUID string, err error) {
+	if r == nil {
+		panic("manifest.Checkin: r must not be nil")
+	}
+	if len(opts.Files) == 0 {
+		panic("manifest.Checkin: opts.Files must not be empty")
+	}
+	if opts.User == "" {
+		panic("manifest.Checkin: opts.User must not be empty")
+	}
+	defer func() {
+		if err == nil && manifestRid <= 0 {
+			panic("manifest.Checkin: manifestRid must be positive on success")
+		}
+	}()
+
 	if opts.Time.IsZero() {
 		opts.Time = time.Now().UTC()
 	}
 
-	var manifestRid libfossil.FslID
-	var manifestUUID string
-
-	err := r.WithTx(func(tx *db.Tx) error {
-		// Store file blobs, build F-cards
-		fCards := make([]deck.FileCard, len(opts.Files))
-		for i, f := range opts.Files {
-			_, uuid, err := blob.Store(tx, f.Content)
-			if err != nil {
-				return fmt.Errorf("storing file %q: %w", f.Name, err)
-			}
-			fCards[i] = deck.FileCard{Name: f.Name, UUID: uuid, Perm: f.Perm}
+	err = r.WithTx(func(tx *db.Tx) error {
+		fCards, txErr := storeFileBlobs(tx, opts.Files)
+		if txErr != nil {
+			return txErr
 		}
 
-		// Build deck
-		d := &deck.Deck{
-			Type: deck.Checkin,
-			C:    opts.Comment,
-			D:    opts.Time,
-			F:    fCards,
-			U:    opts.User,
+		d, txErr := buildCheckinDeck(tx, opts, fCards)
+		if txErr != nil {
+			return txErr
 		}
 
-		// Parent
-		if opts.Parent > 0 {
-			var parentUUID string
-			if err := tx.QueryRow("SELECT uuid FROM blob WHERE rid=?", opts.Parent).Scan(&parentUUID); err != nil {
-				return fmt.Errorf("parent uuid: %w", err)
-			}
-			d.P = []string{parentUUID}
+		manifestRid, manifestUUID, txErr = insertCheckinBlob(tx, d)
+		if txErr != nil {
+			return txErr
 		}
 
-		// Tags: use custom tags if provided, otherwise default trunk tags for initial checkin
-		if len(opts.Tags) > 0 {
-			d.T = opts.Tags
-		} else if opts.Parent == 0 {
-			d.T = []deck.TagCard{
-				{Type: deck.TagPropagating, Name: "branch", UUID: "*", Value: "trunk"},
-				{Type: deck.TagSingleton, Name: "sym-trunk", UUID: "*"},
-			}
+		if txErr := insertMlinks(tx, opts, manifestRid); txErr != nil {
+			return txErr
 		}
 
-		// Delta manifest support
-		if opts.Delta && opts.Parent > 0 {
-			if err := applyDelta(tx, d, fCards, opts.Parent); err != nil {
-				return err
-			}
-		}
-
-		// R-card (always over full file set)
-		rDeck := &deck.Deck{F: fCards}
-		getContent := func(uuid string) ([]byte, error) {
-			rid, ok := blob.Exists(tx, uuid)
-			if !ok {
-				return nil, fmt.Errorf("blob not found: %s", uuid)
-			}
-			return content.Expand(tx, rid)
-		}
-		rHash, err := rDeck.ComputeR(getContent)
-		if err != nil {
-			return fmt.Errorf("R-card: %w", err)
-		}
-		d.R = rHash
-
-		// Marshal and store manifest
-		manifestBytes, err := d.Marshal()
-		if err != nil {
-			return fmt.Errorf("marshal: %w", err)
-		}
-		manifestRid, manifestUUID, err = blob.Store(tx, manifestBytes)
-		if err != nil {
-			return fmt.Errorf("store manifest: %w", err)
-		}
-
-		// filename + mlink
-		for _, f := range opts.Files {
-			fnid, err := ensureFilename(tx, f.Name)
-			if err != nil {
-				return fmt.Errorf("filename %q: %w", f.Name, err)
-			}
-			fileUUID := hash.SHA1(f.Content)
-			fileRid, _ := blob.Exists(tx, fileUUID)
-			var pmid, pid int64
-			if opts.Parent > 0 {
-				pmid = int64(opts.Parent)
-				tx.QueryRow("SELECT fid FROM mlink WHERE mid=? AND fnid=?", opts.Parent, fnid).Scan(&pid)
-			}
-			if _, err := tx.Exec(
-				"INSERT INTO mlink(mid, fid, pmid, pid, fnid) VALUES(?, ?, ?, ?, ?)",
-				manifestRid, fileRid, pmid, pid, fnid,
-			); err != nil {
-				return fmt.Errorf("mlink: %w", err)
-			}
-		}
-
-		// plink
-		if opts.Parent > 0 {
-			if _, err := tx.Exec(
-				"INSERT INTO plink(pid, cid, isprim, mtime) VALUES(?, ?, 1, ?)",
-				opts.Parent, manifestRid, libfossil.TimeToJulian(opts.Time),
-			); err != nil {
-				return fmt.Errorf("plink: %w", err)
-			}
-		}
-
-		// event
-		if _, err := tx.Exec(
-			"INSERT INTO event(type, mtime, objid, user, comment) VALUES('ci', ?, ?, ?, ?)",
-			libfossil.TimeToJulian(opts.Time), manifestRid, opts.User, opts.Comment,
-		); err != nil {
-			return fmt.Errorf("event: %w", err)
-		}
-
-		// leaf
-		tx.Exec("INSERT OR IGNORE INTO leaf(rid) VALUES(?)", manifestRid)
-		if opts.Parent > 0 {
-			tx.Exec("DELETE FROM leaf WHERE rid=?", opts.Parent)
-		}
-
-		// unclustered + unsent
-		tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", manifestRid)
-		tx.Exec("INSERT OR IGNORE INTO unsent(rid) VALUES(?)", manifestRid)
-
-		return nil
+		return markLeafAndEvent(tx, opts, manifestRid)
 	})
 	if err != nil {
 		return 0, "", fmt.Errorf("manifest.Checkin: %w", err)
@@ -165,7 +77,153 @@ func Checkin(r *repo.Repo, opts CheckinOpts) (libfossil.FslID, string, error) {
 	return manifestRid, manifestUUID, nil
 }
 
+func storeFileBlobs(tx *db.Tx, files []File) ([]deck.FileCard, error) {
+	fCards := make([]deck.FileCard, len(files))
+	for i, f := range files {
+		_, uuid, err := blob.Store(tx, f.Content)
+		if err != nil {
+			return nil, fmt.Errorf("storing file %q: %w", f.Name, err)
+		}
+		fCards[i] = deck.FileCard{Name: f.Name, UUID: uuid, Perm: f.Perm}
+	}
+	return fCards, nil
+}
+
+func buildCheckinDeck(tx *db.Tx, opts CheckinOpts, fCards []deck.FileCard) (*deck.Deck, error) {
+	d := &deck.Deck{
+		Type: deck.Checkin,
+		C:    opts.Comment,
+		D:    opts.Time,
+		F:    fCards,
+		U:    opts.User,
+	}
+
+	// Parent
+	if opts.Parent > 0 {
+		var parentUUID string
+		if err := tx.QueryRow("SELECT uuid FROM blob WHERE rid=?", opts.Parent).Scan(&parentUUID); err != nil {
+			return nil, fmt.Errorf("parent uuid: %w", err)
+		}
+		d.P = []string{parentUUID}
+	}
+
+	// Tags: use custom tags if provided, otherwise default trunk tags for initial checkin
+	if len(opts.Tags) > 0 {
+		d.T = opts.Tags
+	} else if opts.Parent == 0 {
+		d.T = []deck.TagCard{
+			{Type: deck.TagPropagating, Name: "branch", UUID: "*", Value: "trunk"},
+			{Type: deck.TagSingleton, Name: "sym-trunk", UUID: "*"},
+		}
+	}
+
+	// Delta manifest support
+	if opts.Delta && opts.Parent > 0 {
+		if err := applyDelta(tx, d, fCards, opts.Parent); err != nil {
+			return nil, err
+		}
+	}
+
+	// R-card (always over full file set)
+	rDeck := &deck.Deck{F: fCards}
+	getContent := func(uuid string) ([]byte, error) {
+		rid, ok := blob.Exists(tx, uuid)
+		if !ok {
+			return nil, fmt.Errorf("blob not found: %s", uuid)
+		}
+		return content.Expand(tx, rid)
+	}
+	rHash, err := rDeck.ComputeR(getContent)
+	if err != nil {
+		return nil, fmt.Errorf("R-card: %w", err)
+	}
+	d.R = rHash
+
+	return d, nil
+}
+
+func insertCheckinBlob(tx *db.Tx, d *deck.Deck) (libfossil.FslID, string, error) {
+	manifestBytes, err := d.Marshal()
+	if err != nil {
+		return 0, "", fmt.Errorf("marshal: %w", err)
+	}
+	rid, uuid, err := blob.Store(tx, manifestBytes)
+	if err != nil {
+		return 0, "", fmt.Errorf("store manifest: %w", err)
+	}
+	return rid, uuid, nil
+}
+
+func insertMlinks(tx *db.Tx, opts CheckinOpts, manifestRid libfossil.FslID) error {
+	for _, f := range opts.Files {
+		fnid, err := ensureFilename(tx, f.Name)
+		if err != nil {
+			return fmt.Errorf("filename %q: %w", f.Name, err)
+		}
+		fileUUID := hash.SHA1(f.Content)
+		fileRid, _ := blob.Exists(tx, fileUUID)
+		var pmid, pid int64
+		if opts.Parent > 0 {
+			pmid = int64(opts.Parent)
+			tx.QueryRow("SELECT fid FROM mlink WHERE mid=? AND fnid=?", opts.Parent, fnid).Scan(&pid)
+		}
+		if _, err := tx.Exec(
+			"INSERT INTO mlink(mid, fid, pmid, pid, fnid) VALUES(?, ?, ?, ?, ?)",
+			manifestRid, fileRid, pmid, pid, fnid,
+		); err != nil {
+			return fmt.Errorf("mlink: %w", err)
+		}
+	}
+	return nil
+}
+
+func markLeafAndEvent(tx *db.Tx, opts CheckinOpts, manifestRid libfossil.FslID) error {
+	// plink
+	if opts.Parent > 0 {
+		if _, err := tx.Exec(
+			"INSERT INTO plink(pid, cid, isprim, mtime) VALUES(?, ?, 1, ?)",
+			opts.Parent, manifestRid, libfossil.TimeToJulian(opts.Time),
+		); err != nil {
+			return fmt.Errorf("plink: %w", err)
+		}
+	}
+
+	// event
+	if _, err := tx.Exec(
+		"INSERT INTO event(type, mtime, objid, user, comment) VALUES('ci', ?, ?, ?, ?)",
+		libfossil.TimeToJulian(opts.Time), manifestRid, opts.User, opts.Comment,
+	); err != nil {
+		return fmt.Errorf("event: %w", err)
+	}
+
+	// leaf
+	if _, err := tx.Exec("INSERT OR IGNORE INTO leaf(rid) VALUES(?)", manifestRid); err != nil {
+		return fmt.Errorf("leaf insert: %w", err)
+	}
+	if opts.Parent > 0 {
+		if _, err := tx.Exec("DELETE FROM leaf WHERE rid=?", opts.Parent); err != nil {
+			return fmt.Errorf("leaf delete parent: %w", err)
+		}
+	}
+
+	// unclustered + unsent
+	if _, err := tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", manifestRid); err != nil {
+		return fmt.Errorf("unclustered: %w", err)
+	}
+	if _, err := tx.Exec("INSERT OR IGNORE INTO unsent(rid) VALUES(?)", manifestRid); err != nil {
+		return fmt.Errorf("unsent: %w", err)
+	}
+
+	return nil
+}
+
 func ensureFilename(tx *db.Tx, name string) (int64, error) {
+	if tx == nil {
+		panic("manifest.ensureFilename: tx must not be nil")
+	}
+	if name == "" {
+		panic("manifest.ensureFilename: name must not be empty")
+	}
 	var fnid int64
 	err := tx.QueryRow("SELECT fnid FROM filename WHERE name=?", name).Scan(&fnid)
 	if err == nil {
@@ -178,7 +236,18 @@ func ensureFilename(tx *db.Tx, name string) (int64, error) {
 	return result.LastInsertId()
 }
 
-func GetManifest(r *repo.Repo, rid libfossil.FslID) (*deck.Deck, error) {
+func GetManifest(r *repo.Repo, rid libfossil.FslID) (result *deck.Deck, err error) {
+	if r == nil {
+		panic("manifest.GetManifest: r must not be nil")
+	}
+	if rid <= 0 {
+		panic("manifest.GetManifest: rid must be positive")
+	}
+	defer func() {
+		if err == nil && result == nil {
+			panic("manifest.GetManifest: result must not be nil on success")
+		}
+	}()
 	data, err := content.Expand(r.DB(), rid)
 	if err != nil {
 		return nil, fmt.Errorf("manifest.GetManifest: %w", err)
