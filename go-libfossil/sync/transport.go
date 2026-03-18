@@ -21,6 +21,9 @@ type MockTransport struct {
 }
 
 func (t *MockTransport) Exchange(ctx context.Context, req *xfer.Message) (*xfer.Message, error) {
+	if req == nil {
+		panic("sync.MockTransport.Exchange: req must not be nil")
+	}
 	if t.Handler == nil {
 		return &xfer.Message{}, nil
 	}
@@ -35,6 +38,9 @@ type HTTPTransport struct {
 }
 
 func (t *HTTPTransport) Exchange(ctx context.Context, req *xfer.Message) (*xfer.Message, error) {
+	if req == nil {
+		panic("sync.HTTPTransport.Exchange: req must not be nil")
+	}
 	body, err := req.Encode()
 	if err != nil {
 		return nil, fmt.Errorf("sync.HTTPTransport encode: %w", err)

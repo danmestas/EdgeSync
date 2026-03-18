@@ -27,6 +27,9 @@ type Resolver struct {
 // LoadResolver reads the .edgesync-merge file from the repo at the given
 // version, plus the merge-strategy config key as fallback.
 func LoadResolver(r *repo.Repo, tipRid libfossil.FslID) *Resolver {
+	if r == nil {
+		panic("merge.LoadResolver: r must not be nil")
+	}
 	res := &Resolver{fallback: "three-way"}
 
 	var cfgDefault string
@@ -58,7 +61,10 @@ func LoadResolver(r *repo.Repo, tipRid libfossil.FslID) *Resolver {
 // Resolve returns the strategy name for a filename.
 func (res *Resolver) Resolve(filename string) string {
 	for _, p := range res.patterns {
-		matched, _ := filepath.Match(p.Glob, filepath.Base(filename))
+		matched, matchErr := filepath.Match(p.Glob, filepath.Base(filename))
+		if matchErr != nil {
+			continue
+		}
 		if matched {
 			return p.Strategy
 		}

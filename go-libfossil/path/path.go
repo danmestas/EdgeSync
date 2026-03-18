@@ -22,6 +22,15 @@ var ErrNoPath = errors.New("no path found")
 // using BFS. If directOnly is true, only primary parent edges (isprim=1)
 // are traversed. Nodes in the skip set are not visited.
 func Shortest(db *sql.DB, from, to libfossil.FslID, directOnly bool, skip map[libfossil.FslID]bool) ([]PathNode, error) {
+	if db == nil {
+		panic("path.Shortest: db must not be nil")
+	}
+	if from <= 0 {
+		panic("path.Shortest: from must be positive")
+	}
+	if to <= 0 {
+		panic("path.Shortest: to must be positive")
+	}
 	if from == to {
 		return []PathNode{{RID: from, Depth: 0}}, nil
 	}

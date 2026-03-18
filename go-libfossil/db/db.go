@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"os"
 )
 
 // DB wraps a SQLite database connection.
@@ -19,6 +20,9 @@ func Open(path string) (*DB, error) {
 
 // OpenWith opens a SQLite database with explicit configuration.
 func OpenWith(path string, cfg OpenConfig) (*DB, error) {
+	if path == "" {
+		panic("db.OpenWith: path must not be empty")
+	}
 	driver := cfg.Driver
 	if driver == "" {
 		driver = driverFromEnv()
@@ -40,6 +44,9 @@ func OpenWith(path string, cfg OpenConfig) (*DB, error) {
 
 // SqlDB returns the underlying *sql.DB connection.
 func (d *DB) SqlDB() *sql.DB {
+	if d == nil {
+		panic("db.SqlDB: receiver must not be nil")
+	}
 	return d.conn
 }
 
@@ -95,12 +102,22 @@ func (t *Tx) Query(query string, args ...any) (*sql.Rows, error) {
 }
 
 func (d *DB) WithTx(fn func(tx *Tx) error) error {
+	if d == nil {
+		panic("db.WithTx: receiver must not be nil")
+	}
+	if fn == nil {
+		panic("db.WithTx: fn must not be nil")
+	}
 	sqlTx, err := d.conn.Begin()
 	if err != nil {
 		return fmt.Errorf("db.WithTx begin: %w", err)
 	}
+	defer func() {
+		if rbErr := sqlTx.Rollback(); rbErr != nil && rbErr != sql.ErrTxDone {
+			fmt.Fprintf(os.Stderr, "db.WithTx: rollback failed: %v\n", rbErr)
+		}
+	}()
 	if err := fn(&Tx{tx: sqlTx}); err != nil {
-		sqlTx.Rollback()
 		return err
 	}
 	return sqlTx.Commit()

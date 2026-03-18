@@ -27,6 +27,9 @@ type reader struct {
 }
 
 func (r *reader) getInt() (uint64, error) {
+	if r == nil {
+		panic("delta.getInt: receiver must not be nil")
+	}
 	var v uint64
 	started := false
 	for r.pos < len(r.data) {
@@ -45,6 +48,9 @@ func (r *reader) getInt() (uint64, error) {
 }
 
 func (r *reader) getChar() (byte, error) {
+	if r == nil {
+		panic("delta.getChar: receiver must not be nil")
+	}
 	if r.pos >= len(r.data) {
 		return 0, fmt.Errorf("%w: unexpected end at pos %d", ErrInvalidDelta, r.pos)
 	}
@@ -53,7 +59,19 @@ func (r *reader) getChar() (byte, error) {
 	return c, nil
 }
 
-func Apply(source, delta []byte) ([]byte, error) {
+// Apply reconstructs target data from source and delta.
+// Variable naming follows fossil/src/delta.c for cross-reference:
+//   cnt = count, offset = source offset, cmd = command byte
+func Apply(source, delta []byte) (result []byte, err error) {
+	if source == nil {
+		panic("delta.Apply: source must not be nil")
+	}
+	defer func() {
+		if err == nil && result == nil {
+			panic("delta.Apply: postcondition violated: result is nil with no error")
+		}
+	}()
+
 	if len(delta) == 0 {
 		return nil, fmt.Errorf("%w: empty delta", ErrInvalidDelta)
 	}
@@ -98,6 +116,10 @@ func Apply(source, delta []byte) ([]byte, error) {
 			if term != ',' {
 				return nil, fmt.Errorf("%w: expected comma in copy command", ErrInvalidDelta)
 			}
+			// Bounds check before casting to int
+			if offset > uint64(len(source)) || cnt > uint64(len(source)) {
+				return nil, fmt.Errorf("%w: copy offset/count overflow", ErrInvalidDelta)
+			}
 			if int(offset+cnt) > len(source) {
 				return nil, fmt.Errorf("%w: copy exceeds source bounds (offset=%d, cnt=%d, srclen=%d)",
 					ErrInvalidDelta, offset, cnt, len(source))
@@ -105,6 +127,10 @@ func Apply(source, delta []byte) ([]byte, error) {
 			output = append(output, source[offset:offset+cnt]...)
 
 		case ':':
+			// Bounds check before casting to int
+			if cnt > uint64(len(r.data)) {
+				return nil, fmt.Errorf("%w: insert count overflow", ErrInvalidDelta)
+			}
 			if r.pos+int(cnt) > len(r.data) {
 				return nil, fmt.Errorf("%w: insert exceeds delta bounds", ErrInvalidDelta)
 			}
@@ -132,6 +158,9 @@ func Apply(source, delta []byte) ([]byte, error) {
 }
 
 func Checksum(data []byte) uint32 {
+	if data == nil {
+		panic("delta.Checksum: data must not be nil")
+	}
 	var sum0, sum1 uint16
 	for _, b := range data {
 		sum0 += uint16(b)
@@ -142,7 +171,27 @@ func Checksum(data []byte) uint32 {
 
 const zDigitsEnc = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz~"
 
-func Create(source, target []byte) []byte {
+type hashEntry struct {
+	offset int
+	next   int
+}
+
+// Create generates a delta that transforms source into target.
+// Variable naming follows fossil/src/delta.c for cross-reference:
+//   nHash = NHASH, ei = entry index, ml = match length, tPos = target position, sOff = source offset
+func Create(source, target []byte) (result []byte) {
+	if source == nil {
+		panic("delta.Create: source must not be nil")
+	}
+	if target == nil {
+		panic("delta.Create: target must not be nil")
+	}
+	defer func() {
+		if len(result) == 0 {
+			panic("delta.Create: postcondition violated: result is empty")
+		}
+	}()
+
 	if len(target) == 0 {
 		var buf []byte
 		buf = appendInt(buf, 0)
@@ -156,11 +205,12 @@ func Create(source, target []byte) []byte {
 		return createInsertAll(target)
 	}
 
+	heads, entries, mask := buildHashTable(source)
+	return emitMatches(source, target, heads, entries, mask)
+}
+
+func buildHashTable(source []byte) (heads []int, entries []hashEntry, mask int) {
 	const nHash = 16
-	type hashEntry struct {
-		offset int
-		next   int
-	}
 
 	tableSize := len(source) / nHash
 	if tableSize < 64 {
@@ -170,10 +220,10 @@ func Create(source, target []byte) []byte {
 		tableSize &= tableSize - 1
 	}
 	tableSize <<= 1
-	mask := tableSize - 1
+	mask = tableSize - 1
 
-	heads := make([]int, tableSize)
-	entries := make([]hashEntry, 0, len(source)/nHash)
+	heads = make([]int, tableSize)
+	entries = make([]hashEntry, 0, len(source)/nHash)
 
 	for i := 0; i+nHash <= len(source); i += nHash {
 		h := rollingHash(source[i : i+nHash])
@@ -181,6 +231,12 @@ func Create(source, target []byte) []byte {
 		entries = append(entries, hashEntry{offset: i, next: heads[idx] - 1})
 		heads[idx] = len(entries)
 	}
+
+	return heads, entries, mask
+}
+
+func emitMatches(source, target []byte, heads []int, entries []hashEntry, mask int) []byte {
+	const nHash = 16
 
 	var buf []byte
 	buf = appendInt(buf, uint64(len(target)))
@@ -241,6 +297,9 @@ func Create(source, target []byte) []byte {
 }
 
 func createInsertAll(target []byte) []byte {
+	if len(target) == 0 {
+		panic("delta.createInsertAll: target length must be > 0")
+	}
 	var buf []byte
 	buf = appendInt(buf, uint64(len(target)))
 	buf = append(buf, '\n')
@@ -267,6 +326,9 @@ func appendInt(buf []byte, v uint64) []byte {
 }
 
 func rollingHash(data []byte) uint32 {
+	if len(data) == 0 {
+		panic("delta.rollingHash: data length must be > 0")
+	}
 	var h uint32
 	for _, b := range data {
 		h = h*37 + uint32(b)
@@ -275,6 +337,12 @@ func rollingHash(data []byte) uint32 {
 }
 
 func matchLen(a, b []byte) int {
+	if a == nil {
+		panic("delta.matchLen: a must not be nil")
+	}
+	if b == nil {
+		panic("delta.matchLen: b must not be nil")
+	}
 	n := len(a)
 	if len(b) < n {
 		n = len(b)

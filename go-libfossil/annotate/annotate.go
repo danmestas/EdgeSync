@@ -38,6 +38,9 @@ type Options struct {
 // It walks the primary parent chain from StartRID, pushing line attributions
 // back to the earliest ancestor that contains the same line.
 func Annotate(r *repo.Repo, opts Options) ([]Line, error) {
+	if r == nil {
+		panic("annotate.Annotate: r must not be nil")
+	}
 	if opts.StartRID <= 0 {
 		return nil, fmt.Errorf("annotate: invalid StartRID %d", opts.StartRID)
 	}
@@ -68,9 +71,14 @@ func Annotate(r *repo.Repo, opts Options) ([]Line, error) {
 		return result, nil
 	}
 
-	// Walk parent chain.
+	walkParentChain(r, opts, lines, result)
+	return result, nil
+}
+
+// walkParentChain walks the primary parent chain from opts.StartRID, pushing
+// line attributions back to the earliest ancestor that contains the same line.
+func walkParentChain(r *repo.Repo, opts Options, currentLines []string, result []Line) {
 	currentRID := opts.StartRID
-	currentLines := lines
 	steps := 0
 
 	for {
@@ -117,12 +125,19 @@ func Annotate(r *repo.Repo, opts Options) ([]Line, error) {
 		currentLines = parentLines
 		steps++
 	}
-
-	return result, nil
 }
 
 // loadFileAt loads the content of a file at a given checkin RID.
 func loadFileAt(r *repo.Repo, rid libfossil.FslID, filePath string) ([]byte, error) {
+	if r == nil {
+		panic("annotate.loadFileAt: r must not be nil")
+	}
+	if rid <= 0 {
+		panic("annotate.loadFileAt: rid must be positive")
+	}
+	if filePath == "" {
+		panic("annotate.loadFileAt: filePath must not be empty")
+	}
 	files, err := manifest.ListFiles(r, rid)
 	if err != nil {
 		return nil, err
@@ -141,6 +156,12 @@ func loadFileAt(r *repo.Repo, rid libfossil.FslID, filePath string) ([]byte, err
 
 // versionInfoFor retrieves commit metadata for a checkin RID.
 func versionInfoFor(r *repo.Repo, rid libfossil.FslID) (VersionInfo, error) {
+	if r == nil {
+		panic("annotate.versionInfoFor: r must not be nil")
+	}
+	if rid <= 0 {
+		panic("annotate.versionInfoFor: rid must be positive")
+	}
 	var uuid, user string
 	var mtime any
 	err := r.DB().QueryRow(
@@ -164,6 +185,12 @@ func versionInfoFor(r *repo.Repo, rid libfossil.FslID) (VersionInfo, error) {
 
 // primaryParent returns the primary parent RID of a checkin, or 0 if none.
 func primaryParent(r *repo.Repo, rid libfossil.FslID) (libfossil.FslID, error) {
+	if r == nil {
+		panic("annotate.primaryParent: r must not be nil")
+	}
+	if rid <= 0 {
+		panic("annotate.primaryParent: rid must be positive")
+	}
 	var pid int64
 	err := r.DB().QueryRow("SELECT pid FROM plink WHERE cid=? AND isprim=1", rid).Scan(&pid)
 	if err != nil {

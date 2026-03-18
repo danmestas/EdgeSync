@@ -13,10 +13,21 @@ import (
 // Compress produces Fossil-compatible compressed blob content:
 // [4-byte big-endian uncompressed size][zlib-compressed data].
 // This matches Fossil's blob_compress() in src/blob.c.
-func Compress(data []byte) ([]byte, error) {
+func Compress(data []byte) (result []byte, err error) {
+	if data == nil {
+		panic("blob.Compress: data must not be nil")
+	}
+	defer func() {
+		if err == nil && len(result) == 0 {
+			panic("blob.Compress: postcondition violated: result is empty with no error")
+		}
+	}()
+
 	var buf bytes.Buffer
 	// 4-byte big-endian uncompressed size prefix.
-	binary.Write(&buf, binary.BigEndian, uint32(len(data)))
+	if err := binary.Write(&buf, binary.BigEndian, uint32(len(data))); err != nil {
+		return nil, fmt.Errorf("write size prefix: %w", err)
+	}
 	w := zlib.NewWriter(&buf)
 	if _, err := w.Write(data); err != nil {
 		return nil, fmt.Errorf("zlib compress: %w", err)
@@ -30,7 +41,16 @@ func Compress(data []byte) ([]byte, error) {
 // Decompress handles Fossil's compressed blob format:
 // [4-byte big-endian uncompressed size][zlib-compressed data].
 // The 4-byte prefix is skipped before decompressing.
-func Decompress(data []byte) ([]byte, error) {
+func Decompress(data []byte) (result []byte, err error) {
+	if data == nil {
+		panic("blob.Decompress: data must not be nil")
+	}
+	defer func() {
+		if err == nil && result == nil {
+			panic("blob.Decompress: postcondition violated: result is nil with no error")
+		}
+	}()
+
 	if len(data) < 5 {
 		return nil, fmt.Errorf("zlib decompress: data too short (%d bytes)", len(data))
 	}

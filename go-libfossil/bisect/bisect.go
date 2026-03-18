@@ -41,11 +41,17 @@ type ListEntry struct {
 
 // NewSession creates a new bisect session backed by the given checkout DB.
 func NewSession(db *sql.DB) *Session {
+	if db == nil {
+		panic("bisect.NewSession: db must not be nil")
+	}
 	return &Session{db: db}
 }
 
 // MarkGood records rid as a known-good commit.
 func (s *Session) MarkGood(rid libfossil.FslID) error {
+	if rid <= 0 {
+		panic("bisect.MarkGood: rid must be positive")
+	}
 	if _, err := s.db.Exec("REPLACE INTO vvar(name,value) VALUES('bisect-good',?)", strconv.FormatInt(int64(rid), 10)); err != nil {
 		return fmt.Errorf("bisect: mark good: %w", err)
 	}
@@ -54,6 +60,9 @@ func (s *Session) MarkGood(rid libfossil.FslID) error {
 
 // MarkBad records rid as a known-bad commit.
 func (s *Session) MarkBad(rid libfossil.FslID) error {
+	if rid <= 0 {
+		panic("bisect.MarkBad: rid must be positive")
+	}
 	if _, err := s.db.Exec("REPLACE INTO vvar(name,value) VALUES('bisect-bad',?)", strconv.FormatInt(int64(rid), 10)); err != nil {
 		return fmt.Errorf("bisect: mark bad: %w", err)
 	}
@@ -62,6 +71,9 @@ func (s *Session) MarkBad(rid libfossil.FslID) error {
 
 // Skip marks rid as skipped (neither good nor bad).
 func (s *Session) Skip(rid libfossil.FslID) error {
+	if rid <= 0 {
+		panic("bisect.Skip: rid must be positive")
+	}
 	return s.appendLogEntry(fmt.Sprintf("s%d", rid))
 }
 
@@ -194,7 +206,9 @@ func (s *Session) List(currentRID libfossil.FslID) ([]ListEntry, error) {
 
 // Reset clears all bisect state from the vvar table.
 func (s *Session) Reset() {
-	s.db.Exec("DELETE FROM vvar WHERE name IN ('bisect-good','bisect-bad','bisect-log')")
+	if _, err := s.db.Exec("DELETE FROM vvar WHERE name IN ('bisect-good','bisect-bad','bisect-log')"); err != nil {
+		panic(fmt.Sprintf("bisect.Reset: failed to clear bisect state: %v", err))
+	}
 }
 
 // --- internal helpers ---
