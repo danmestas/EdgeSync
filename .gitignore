@@ -1,6 +1,8 @@
-# Fossil repo files (large binary, upstream reference only)
-fossil/fossil.fossil
-libfossil/libfossil.fossil
+# Fossil SQLite databases (binary, should never be in git)
+*.fossil
+.fslckout
+fossil/.fslckout
+libfossil/checkout/.fslckout
 
 # Build artifacts
 /bin/
