@@ -3,7 +3,8 @@ package uv
 // Status compares a local unversioned file against a remote one and returns
 // an action code. Exact port of Fossil's unversioned_status().
 //
-// localHash="" means no local row (returns 0).
+// localMtime==0 means no local row (returns 0).
+// localHash="" with localMtime>0 means tombstone (participates in mtime comparison).
 // "-" means deletion marker in either position.
 //
 // Return codes:
@@ -15,7 +16,7 @@ package uv
 //	4 = same hash, remote mtime newer (push mtime only)
 //	5 = different hash, local newer or tiebreaker (push)
 func Status(localMtime int64, localHash string, remoteMtime int64, remoteHash string) int {
-	if localHash == "" {
+	if localMtime == 0 {
 		return 0
 	}
 

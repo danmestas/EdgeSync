@@ -74,15 +74,18 @@ func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
 
 	// UV: pragma uv-hash on first round
 	if s.opts.UV && !s.uvHashSent {
-		uv.EnsureSchema(s.repo.DB())
-		h, err := uv.ContentHash(s.repo.DB())
-		if err == nil {
-			cards = append(cards, &xfer.PragmaCard{
-				Name:   "uv-hash",
-				Values: []string{h},
-			})
-			s.uvHashSent = true
+		if err := uv.EnsureSchema(s.repo.DB()); err != nil {
+			return nil, fmt.Errorf("buildRequest: uv.EnsureSchema: %w", err)
 		}
+		uvHash, err := uv.ContentHash(s.repo.DB())
+		if err != nil {
+			return nil, fmt.Errorf("buildRequest: uv.ContentHash: %w", err)
+		}
+		cards = append(cards, &xfer.PragmaCard{
+			Name:   "uv-hash",
+			Values: []string{uvHash},
+		})
+		s.uvHashSent = true
 	}
 
 	// UV: gimme cards for requested UV files
@@ -216,6 +219,11 @@ func (s *session) buildGimmeCards() []xfer.Card {
 
 // buildUVFileCards produces uvfile cards from uvToSend.
 func (s *session) buildUVFileCards() ([]xfer.Card, error) {
+	// BUGGIFY: shrink UV send budget to stress multi-round UV convergence.
+	if s.opts.Buggify != nil && s.opts.Buggify.Check("sync.buildUVFileCards.minBudget", 0.10) {
+		return nil, nil // skip all UV sends this round
+	}
+
 	var cards []xfer.Card
 	budget := s.maxSend
 
@@ -585,10 +593,19 @@ func (s *session) handleUVFileCard(c *xfer.UVFileCard) error {
 		return fmt.Errorf("handleUVFileCard: ensure schema: %w", err)
 	}
 
+	// BUGGIFY: reject a valid uvfile to test retry/re-request.
+	if s.opts.Buggify != nil && s.opts.Buggify.Check("sync.handleUVFileCard.reject", 0.05) {
+		return nil
+	}
+
 	// Validate hash if content present.
 	if c.Flags&xfer.UVFlagNoPayload == 0 {
 		if c.Content == nil {
 			panic("session.handleUVFileCard: flags indicate payload but Content is nil")
+		}
+		// BUGGIFY: flip a byte to test hash validation catches corruption.
+		if s.opts.Buggify != nil && len(c.Content) > 0 && s.opts.Buggify.Check("sync.handleUVFileCard.corrupt", 0.02) {
+			c.Content[0] ^= 0xFF
 		}
 		computed := hash.ContentHash(c.Content, c.Hash)
 		if computed != c.Hash {

@@ -24,6 +24,12 @@ func TestStatus(t *testing.T) {
 		{"same-mtime-local-hash-greater", 100, "bbb", 100, "aaa", 5},
 		{"local-deletion-newer", 200, "-", 100, "abc123", 5},
 		{"same-mtime-local-deletion-tiebreaker", 100, "-", 100, "abc123", 5},
+		// Tombstone cases: localHash="" with localMtime>0 means tombstone.
+		{"tombstone-newer-than-remote", 200, "", 100, "abc123", 5},
+		{"tombstone-older-than-remote", 100, "", 200, "abc123", 1},
+		{"tombstone-same-mtime-as-remote", 100, "", 100, "abc123", 1},
+		{"tombstone-vs-tombstone-same-mtime", 100, "", 100, "", 3},
+		{"tombstone-vs-tombstone-local-newer", 200, "", 100, "", 4},
 	}
 
 	for _, tt := range tests {

@@ -90,16 +90,18 @@ func newSession(r *repo.Repo, opts SyncOpts) *session {
 
 	// Pre-populate uvToSend with all local non-tombstone UV files.
 	if opts.UV {
-		uv.EnsureSchema(r.DB())
+		if err := uv.EnsureSchema(r.DB()); err != nil {
+			panic(fmt.Sprintf("sync.newSession: uv.EnsureSchema: %v", err))
+		}
 		entries, err := uv.List(r.DB())
-		if err == nil {
-			s.uvToSend = make(map[string]bool)
-			s.uvGimmes = make(map[string]bool)
-			for _, e := range entries {
-				if e.Hash != "" {
-					s.uvToSend[e.Name] = true
-				}
-			}
+		if err != nil {
+			panic(fmt.Sprintf("sync.newSession: uv.List: %v", err))
+		}
+		s.uvToSend = make(map[string]bool)
+		s.uvGimmes = make(map[string]bool)
+		for _, e := range entries {
+			// Include both live files and tombstones so deletions propagate.
+			s.uvToSend[e.Name] = true
 		}
 	}
 
