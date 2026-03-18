@@ -23,6 +23,6 @@ f.txt
 
 # Agent/skill tool files
 .agents/
-.claude/skills/
+.claude/
 skills-lock.json
 .DS_Store
