@@ -1,0 +1,286 @@
+package sync
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"os"
+
+	"github.com/dmestas/edgesync/go-libfossil/blob"
+	"github.com/dmestas/edgesync/go-libfossil/repo"
+	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/dmestas/edgesync/go-libfossil/xfer"
+)
+
+// cloneSession holds the mutable state of a running clone.
+type cloneSession struct {
+	repo        *repo.Repo
+	env         *simio.Env
+	opts        CloneOpts
+	result      CloneResult
+	phantoms    map[string]bool
+	seqno       int
+	projectCode string
+	serverCode  string
+}
+
+// Clone performs a full repository clone from a remote Fossil server.
+// It creates a new repository at path, runs the clone protocol until
+// convergence, and returns the opened repo and a result summary.
+// On error, the partially-created repo file is removed.
+func Clone(ctx context.Context, path string, t Transport, opts CloneOpts) (r *repo.Repo, result *CloneResult, err error) {
+	if path == "" {
+		panic("sync.Clone: path must not be empty")
+	}
+	if t == nil {
+		panic("sync.Clone: t must not be nil")
+	}
+
+	// Path must not already exist.
+	if _, statErr := os.Stat(path); statErr == nil {
+		return nil, nil, fmt.Errorf("sync.Clone: file already exists: %s", path)
+	}
+
+	env := opts.Env
+	if env == nil {
+		env = simio.RealEnv()
+	}
+
+	user := opts.User
+	if user == "" {
+		user = "setup"
+	}
+
+	// Create the repository.
+	r, err = repo.Create(path, user, env.Rand)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sync.Clone: create repo: %w", err)
+	}
+
+	// Cleanup on error: close repo and remove the file.
+	defer func() {
+		if err != nil {
+			r.Close()
+			os.Remove(path)
+			r = nil
+		}
+	}()
+
+	// Clear project-code — the server will provide its own.
+	if _, execErr := r.DB().Exec("DELETE FROM config WHERE name='project-code'"); execErr != nil {
+		err = fmt.Errorf("sync.Clone: clear project-code: %w", execErr)
+		return
+	}
+
+	cs := &cloneSession{
+		repo:     r,
+		env:      env,
+		opts:     opts,
+		seqno:    1,
+		phantoms: make(map[string]bool),
+	}
+
+	cloneResult, cloneErr := cs.run(ctx, t)
+	if cloneErr != nil {
+		err = cloneErr
+		return
+	}
+
+	return r, cloneResult, nil
+}
+
+// run executes the clone loop.
+func (cs *cloneSession) run(ctx context.Context, t Transport) (*CloneResult, error) {
+	prevPhantomCount := -1
+
+	for cycle := 0; ; cycle++ {
+		select {
+		case <-ctx.Done():
+			return &cs.result, ctx.Err()
+		default:
+		}
+		if cycle >= MaxRounds {
+			return &cs.result, fmt.Errorf("sync.Clone: exceeded %d rounds", MaxRounds)
+		}
+
+		req, err := cs.buildRequest(cycle)
+		if err != nil {
+			return &cs.result, fmt.Errorf("sync.Clone: buildRequest round %d: %w", cycle, err)
+		}
+
+		resp, err := t.Exchange(ctx, req)
+		if err != nil {
+			return &cs.result, fmt.Errorf("sync.Clone: exchange round %d: %w", cycle, err)
+		}
+
+		done, err := cs.processResponse(resp)
+		if err != nil {
+			return &cs.result, fmt.Errorf("sync.Clone: process round %d: %w", cycle, err)
+		}
+
+		cs.result.Rounds = cycle + 1
+
+		// Convergence: need at least 2 rounds.
+		// Continue while seqno > 0 or phantoms remain with progress.
+		if cycle >= 1 && done {
+			if cs.seqno <= 0 && len(cs.phantoms) == 0 {
+				break
+			}
+			// If phantoms remain but no progress, stop.
+			phantomCount := len(cs.phantoms)
+			if cs.seqno <= 0 && phantomCount > 0 && phantomCount >= prevPhantomCount {
+				break
+			}
+			prevPhantomCount = phantomCount
+			if cs.seqno <= 0 {
+				// Only phantoms remain, keep going if making progress.
+				continue
+			}
+		}
+		if cycle >= 1 {
+			prevPhantomCount = len(cs.phantoms)
+		}
+	}
+
+	cs.result.ProjectCode = cs.projectCode
+	cs.result.ServerCode = cs.serverCode
+	return &cs.result, nil
+}
+
+// buildRequest assembles one outbound xfer message for a clone round.
+func (cs *cloneSession) buildRequest(cycle int) (*xfer.Message, error) {
+	var cards []xfer.Card
+
+	// Pragma: client-version (every round)
+	cards = append(cards, &xfer.PragmaCard{
+		Name:   "client-version",
+		Values: []string{"22800", "20260315", "120000"},
+	})
+
+	// Clone card with version and current seqno.
+	version := cs.opts.Version
+	if version <= 0 {
+		version = 3
+	}
+	cards = append(cards, &xfer.CloneCard{
+		Version: version,
+		SeqNo:   cs.seqno,
+	})
+
+	// Gimme cards for phantoms — only when seqno <= 1 (main transfer done).
+	if cs.seqno <= 1 {
+		for uuid := range cs.phantoms {
+			cards = append(cards, &xfer.GimmeCard{UUID: uuid})
+		}
+	}
+
+	// Login card: skip round 0. On round 1+, only if User is set AND projectCode received.
+	if cycle > 0 && cs.opts.User != "" && cs.projectCode != "" {
+		loginCard, err := cs.buildLoginCard(cards)
+		if err != nil {
+			return nil, fmt.Errorf("clone buildLoginCard: %w", err)
+		}
+		cards = append([]xfer.Card{loginCard}, cards...)
+	}
+
+	return &xfer.Message{Cards: cards}, nil
+}
+
+// buildLoginCard encodes the non-login cards, appends a random comment,
+// then computes the login card.
+func (cs *cloneSession) buildLoginCard(cards []xfer.Card) (*xfer.LoginCard, error) {
+	var buf bytes.Buffer
+	for _, c := range cards {
+		if err := xfer.EncodeCard(&buf, c); err != nil {
+			return nil, err
+		}
+	}
+	payload := appendRandomComment(buf.Bytes(), cs.env.Rand)
+	return computeLogin(cs.opts.User, cs.opts.Password, cs.projectCode, payload), nil
+}
+
+// processResponse handles all cards in a server response for a clone round.
+// Returns true when the round produced no new file content.
+func (cs *cloneSession) processResponse(msg *xfer.Message) (bool, error) {
+	if msg == nil {
+		panic("sync.Clone.processResponse: msg must not be nil")
+	}
+
+	filesRecvd := 0
+
+	for _, card := range msg.Cards {
+		switch c := card.(type) {
+		case *xfer.PushCard:
+			// Server sends push card with project-code and server-code.
+			if c.ProjectCode != "" && cs.projectCode == "" {
+				cs.projectCode = c.ProjectCode
+				if _, err := cs.repo.DB().Exec(
+					"REPLACE INTO config(name, value) VALUES('project-code', ?)",
+					c.ProjectCode,
+				); err != nil {
+					return false, fmt.Errorf("sync.Clone: store project-code: %w", err)
+				}
+			}
+			if c.ServerCode != "" && cs.serverCode == "" {
+				cs.serverCode = c.ServerCode
+				if _, err := cs.repo.DB().Exec(
+					"REPLACE INTO config(name, value) VALUES('server-code', ?)",
+					c.ServerCode,
+				); err != nil {
+					return false, fmt.Errorf("sync.Clone: store server-code: %w", err)
+				}
+			}
+
+		case *xfer.FileCard:
+			if err := cs.handleFile(c.UUID, c.DeltaSrc, c.Content); err != nil {
+				return false, err
+			}
+			filesRecvd++
+
+		case *xfer.CFileCard:
+			if err := cs.handleFile(c.UUID, c.DeltaSrc, c.Content); err != nil {
+				return false, err
+			}
+			filesRecvd++
+
+		case *xfer.CloneSeqNoCard:
+			cs.seqno = c.SeqNo
+
+		case *xfer.ErrorCard:
+			return false, fmt.Errorf("sync.Clone: server error: %s", c.Message)
+
+		case *xfer.CookieCard:
+			// Ignored during clone.
+		}
+	}
+
+	cs.result.BlobsRecvd += filesRecvd
+	return filesRecvd == 0, nil
+}
+
+// handleFile stores a received file, creating a phantom on delta source miss.
+func (cs *cloneSession) handleFile(uuid, deltaSrc string, payload []byte) error {
+	err := storeReceivedFile(cs.repo, uuid, deltaSrc, payload)
+	if err == nil {
+		delete(cs.phantoms, uuid)
+		return nil
+	}
+
+	if errors.Is(err, ErrDeltaSourceMissing) {
+		// Delta source not yet received — store phantom for the target,
+		// and track the delta source as a phantom to request later.
+		if _, phantomErr := blob.StorePhantom(cs.repo.DB(), uuid); phantomErr != nil {
+			return fmt.Errorf("sync.Clone: store phantom for %s: %w", uuid, phantomErr)
+		}
+		cs.phantoms[uuid] = true
+		if deltaSrc != "" {
+			if _, exists := blob.Exists(cs.repo.DB(), deltaSrc); !exists {
+				cs.phantoms[deltaSrc] = true
+			}
+		}
+		return nil
+	}
+
+	return fmt.Errorf("sync.Clone: handleFile %s: %w", uuid, err)
+}
