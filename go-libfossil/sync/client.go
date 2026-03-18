@@ -229,6 +229,19 @@ func (s *session) buildUVFileCards() ([]xfer.Card, error) {
 			continue
 		}
 
+		// Tombstone: send deletion marker.
+		if fileHash == "" {
+			cards = append(cards, &xfer.UVFileCard{
+				Name:  name,
+				MTime: mtime,
+				Hash:  "-",
+				Size:  0,
+				Flags: 1,
+			})
+			delete(s.uvToSend, name)
+			continue
+		}
+
 		if fullContent && content != nil {
 			cards = append(cards, &xfer.UVFileCard{
 				Name:    name,
@@ -517,6 +530,7 @@ func (s *session) handleUVIGotCard(c *xfer.UVIGotCard) {
 
 	switch {
 	case status == 0 || status == 1:
+		delete(s.uvToSend, c.Name)
 		if c.Hash != "-" {
 			s.uvGimmes[c.Name] = true
 			s.repo.DB().Exec("DELETE FROM unversioned WHERE name=?", c.Name)
