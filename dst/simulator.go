@@ -12,40 +12,57 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
 	"github.com/dmestas/edgesync/go-libfossil/sync"
+	"github.com/dmestas/edgesync/go-libfossil/uv"
 	"github.com/dmestas/edgesync/leaf/agent"
 )
+
+// SeededBuggify implements sync.BuggifyChecker with a deterministic PRNG.
+type SeededBuggify struct {
+	rng *rand.Rand
+}
+
+// Check returns true with the given probability, using the seeded PRNG.
+func (b *SeededBuggify) Check(_ string, probability float64) bool {
+	return b.rng.Float64() < probability
+}
 
 // Simulator drives a deterministic simulation of multiple leaf agents
 // syncing through a bridge to an upstream transport (mock Fossil master).
 type Simulator struct {
-	Seed    int64
-	rng     *rand.Rand
-	clock   *simio.SimClock
-	network *SimNetwork
-	events  EventQueue
-	leaves  map[NodeID]*agent.Agent
-	bridge  *bridge.Bridge
+	Seed       int64
+	rng        *rand.Rand
+	clock      *simio.SimClock
+	network    *SimNetwork
+	events     EventQueue
+	leaves     map[NodeID]*agent.Agent
+	bridge     *bridge.Bridge
+	masterRepo *repo.Repo // optional: set via SetMasterRepo for UV events targeting "master"
 
 	// Config
-	pollInterval time.Duration
-	leafIDs      []NodeID // ordered for deterministic iteration
-	buggify      bool
+	pollInterval        time.Duration
+	leafIDs             []NodeID // ordered for deterministic iteration
+	buggify             bool
+	safetyCheckInterval int
 
 	// Stats
-	Steps         int
-	TotalSyncs    int
-	TotalErrors   int
+	Steps           int
+	TotalSyncs      int
+	TotalErrors     int
+	TotalUVSent     int
+	TotalUVRecvd    int
+	TotalUVGimmes   int
 }
 
 // SimConfig configures a simulation run.
 type SimConfig struct {
-	Seed         int64
-	NumLeaves    int
-	PollInterval time.Duration
-	TmpDir       string         // directory for repo files
-	Upstream     sync.Transport // mock Fossil master
-	Buggify      bool           // enable BUGGIFY fault injection
-	UV           bool           // sync unversioned files
+	Seed                int64
+	NumLeaves           int
+	PollInterval        time.Duration
+	TmpDir              string         // directory for repo files
+	Upstream            sync.Transport // mock Fossil master
+	Buggify             bool           // enable BUGGIFY fault injection
+	UV                  bool           // sync unversioned files
+	SafetyCheckInterval int            // run CheckSafety() every N steps; 0 = disabled
 }
 
 // New creates a Simulator with the given configuration. It creates
@@ -73,17 +90,22 @@ func New(cfg SimConfig) (*Simulator, error) {
 
 	if cfg.Buggify {
 		simio.EnableBuggify(rng.Int63())
+		// Wire buggify to MockFossil so server-side handler BUGGIFY fires.
+		if mf, ok := cfg.Upstream.(*MockFossil); ok {
+			mf.SetBuggify(&SeededBuggify{rng: rand.New(rand.NewSource(rng.Int63()))})
+		}
 	}
 
 	s := &Simulator{
-		Seed:         cfg.Seed,
-		rng:          rng,
-		clock:        clock,
-		network:      network,
-		bridge:       b,
-		leaves:       make(map[NodeID]*agent.Agent),
-		pollInterval: cfg.PollInterval,
-		buggify:      cfg.Buggify,
+		Seed:                cfg.Seed,
+		rng:                 rng,
+		clock:               clock,
+		network:             network,
+		bridge:              b,
+		leaves:              make(map[NodeID]*agent.Agent),
+		pollInterval:        cfg.PollInterval,
+		buggify:             cfg.Buggify,
+		safetyCheckInterval: cfg.SafetyCheckInterval,
 	}
 	heap.Init(&s.events)
 
@@ -145,12 +167,40 @@ func (s *Simulator) LeafIDs() []NodeID {
 	return s.leafIDs
 }
 
+// SetMasterRepo registers the master repo for UV events targeting "master".
+func (s *Simulator) SetMasterRepo(r *repo.Repo) {
+	s.masterRepo = r
+}
+
 // ScheduleSyncNow injects a SyncNow event for the given leaf at the current time.
 func (s *Simulator) ScheduleSyncNow(id NodeID) {
 	s.events.PushEvent(&Event{
 		Time:   s.clock.Now(),
 		Type:   EvSyncNow,
 		NodeID: id,
+	})
+}
+
+// ScheduleUVWrite injects a UV write event for the given node at the specified time.
+func (s *Simulator) ScheduleUVWrite(id NodeID, at time.Time, name string, data []byte, mtime int64) {
+	s.events.PushEvent(&Event{
+		Time:    at,
+		Type:    EvUVWrite,
+		NodeID:  id,
+		UVName:  name,
+		UVData:  data,
+		UVMTime: mtime,
+	})
+}
+
+// ScheduleUVDelete injects a UV delete event for the given node at the specified time.
+func (s *Simulator) ScheduleUVDelete(id NodeID, at time.Time, name string, mtime int64) {
+	s.events.PushEvent(&Event{
+		Time:    at,
+		Type:    EvUVDelete,
+		NodeID:  id,
+		UVName:  name,
+		UVMTime: mtime,
 	})
 }
 
@@ -162,6 +212,16 @@ func (s *Simulator) Step() (bool, error) {
 
 	ev := s.events.PopEvent()
 	s.clock.AdvanceTo(ev.Time)
+
+	s.Steps++
+
+	// Handle UV mutation events directly (no agent involved).
+	switch ev.Type {
+	case EvUVWrite:
+		return s.handleUVWrite(ev)
+	case EvUVDelete:
+		return s.handleUVDelete(ev)
+	}
 
 	leaf, ok := s.leaves[ev.NodeID]
 	if !ok {
@@ -181,11 +241,15 @@ func (s *Simulator) Step() (bool, error) {
 	ctx := context.Background()
 	act := leaf.Tick(ctx, agentEv)
 
-	s.Steps++
 	if act.Type == agent.ActionSynced {
 		s.TotalSyncs++
 		if act.Err != nil {
 			s.TotalErrors++
+		}
+		if act.Result != nil {
+			s.TotalUVSent += act.Result.UVFilesSent
+			s.TotalUVRecvd += act.Result.UVFilesRecvd
+			s.TotalUVGimmes += act.Result.UVGimmesSent
 		}
 	}
 
@@ -198,6 +262,51 @@ func (s *Simulator) Step() (bool, error) {
 		})
 	}
 
+	// Per-step safety check if configured.
+	if s.safetyCheckInterval > 0 && s.Steps%s.safetyCheckInterval == 0 {
+		if err := s.CheckSafety(); err != nil {
+			return false, fmt.Errorf("step %d: %w", s.Steps, err)
+		}
+	}
+
+	return true, nil
+}
+
+func (s *Simulator) resolveNodeRepo(id NodeID) (*repo.Repo, error) {
+	if id == "master" {
+		if s.masterRepo == nil {
+			return nil, fmt.Errorf("dst: master repo not set (call SetMasterRepo)")
+		}
+		return s.masterRepo, nil
+	}
+	leaf, ok := s.leaves[id]
+	if !ok {
+		return nil, fmt.Errorf("dst: unknown node %s", id)
+	}
+	return leaf.Repo(), nil
+}
+
+func (s *Simulator) handleUVWrite(ev *Event) (bool, error) {
+	r, err := s.resolveNodeRepo(ev.NodeID)
+	if err != nil {
+		return true, fmt.Errorf("UV write %q: %w", ev.UVName, err)
+	}
+	uv.EnsureSchema(r.DB())
+	if err := uv.Write(r.DB(), ev.UVName, ev.UVData, ev.UVMTime); err != nil {
+		return false, fmt.Errorf("dst: UV write %q on %s: %w", ev.UVName, ev.NodeID, err)
+	}
+	return true, nil
+}
+
+func (s *Simulator) handleUVDelete(ev *Event) (bool, error) {
+	r, err := s.resolveNodeRepo(ev.NodeID)
+	if err != nil {
+		return true, fmt.Errorf("UV delete %q: %w", ev.UVName, err)
+	}
+	uv.EnsureSchema(r.DB())
+	if err := uv.Delete(r.DB(), ev.UVName, ev.UVMTime); err != nil {
+		return false, fmt.Errorf("dst: UV delete %q on %s: %w", ev.UVName, ev.NodeID, err)
+	}
 	return true, nil
 }
 
@@ -234,13 +343,14 @@ func (s *Simulator) RunUntil(deadline time.Time) error {
 }
 
 // Close cleans up all leaf agent repos and disables buggify.
+// Iterates leafIDs (not map) for deterministic error reporting.
 func (s *Simulator) Close() error {
 	if s.buggify {
 		simio.DisableBuggify()
 	}
 	var firstErr error
-	for _, a := range s.leaves {
-		if err := a.Repo().Close(); err != nil && firstErr == nil {
+	for _, id := range s.leafIDs {
+		if err := s.leaves[id].Repo().Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

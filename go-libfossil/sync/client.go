@@ -93,6 +93,7 @@ func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
 		for name := range s.uvGimmes {
 			cards = append(cards, &xfer.UVGimmeCard{Name: name})
 			s.nUvGimmeSent++
+			s.result.UVGimmesSent++
 			delete(s.uvGimmes, name)
 		}
 	}
@@ -103,6 +104,7 @@ func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
 		if err != nil {
 			return nil, fmt.Errorf("buildRequest uvfile: %w", err)
 		}
+		s.result.UVFilesSent += len(uvCards)
 		cards = append(cards, uvCards...)
 	}
 
@@ -358,6 +360,7 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 					return false, err
 				}
 				s.nUvFileRcvd++
+				s.result.UVFilesRecvd++
 			}
 
 		case *xfer.UVGimmeCard:

@@ -39,6 +39,8 @@ type SyncOpts struct {
 // SyncResult reports what happened during a sync.
 type SyncResult struct {
 	Rounds, FilesSent, FilesRecvd int
+	UVFilesSent, UVFilesRecvd     int
+	UVGimmesSent                  int
 	Errors                        []string
 }
 

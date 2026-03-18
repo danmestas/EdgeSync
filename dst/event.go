@@ -12,15 +12,20 @@ type NodeID string
 type EventType int
 
 const (
-	EvTimer   EventType = iota // leaf poll timer fired
-	EvSyncNow                  // manual sync trigger for a leaf
+	EvTimer     EventType = iota // leaf poll timer fired
+	EvSyncNow                    // manual sync trigger for a leaf
+	EvUVWrite                    // write a UV file to a node's repo
+	EvUVDelete                   // delete a UV file from a node's repo
 )
 
 // Event is a scheduled occurrence in the simulation.
 type Event struct {
-	Time   time.Time
-	Type   EventType
-	NodeID NodeID
+	Time    time.Time
+	Type    EventType
+	NodeID  NodeID
+	UVName  string // for EvUVWrite/EvUVDelete: file name
+	UVData  []byte // for EvUVWrite: file content
+	UVMTime int64  // for EvUVWrite/EvUVDelete: mtime
 }
 
 // EventQueue is a min-heap of events ordered by time.

@@ -1018,6 +1018,116 @@ func TestUVAdversarial(t *testing.T) {
 	}
 }
 
+func TestUVDynamicWorkload(t *testing.T) {
+	// Tests dynamic UV mutations injected mid-simulation via ScheduleUVWrite/Delete.
+	// Master and leaves get new UV files at different times, testing catalog
+	// convergence when content changes between sync sessions.
+	seed := seedFor(22)
+
+	masterRepo := createMasterRepo(t)
+	uv.EnsureSchema(masterRepo.DB())
+	uv.Write(masterRepo.DB(), "base.txt", []byte("initial"), 100)
+
+	mf := NewMockFossil(masterRepo)
+
+	sim, err := New(SimConfig{
+		Seed:                seed,
+		NumLeaves:           2,
+		PollInterval:        5 * time.Second,
+		TmpDir:              t.TempDir(),
+		Upstream:            mf,
+		UV:                  true,
+		SafetyCheckInterval: 25,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sim.Close()
+	sim.SetMasterRepo(masterRepo)
+
+	// Schedule dynamic UV mutations on master between sync rounds.
+	now := sim.Clock().Now()
+	sim.ScheduleUVWrite("master", now.Add(12*time.Second),
+		"dynamic/a.txt", []byte("added mid-sim"), 200)
+	sim.ScheduleUVWrite("master", now.Add(25*time.Second),
+		"dynamic/b.txt", []byte("second file"), 300)
+	sim.ScheduleUVDelete("master", now.Add(40*time.Second),
+		"base.txt", 400)
+
+	// Also schedule a leaf UV write to test bidirectional dynamic workload.
+	sim.ScheduleUVWrite(sim.LeafIDs()[0], now.Add(18*time.Second),
+		"leaf-only.txt", []byte("from leaf"), 250)
+
+	steps := stepsFor(400)
+	if err := sim.Run(steps); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	t.Logf("seed=%d steps=%d syncs=%d uv_sent=%d uv_recv=%d uv_gimmes=%d",
+		seed, sim.Steps, sim.TotalSyncs, sim.TotalUVSent, sim.TotalUVRecvd, sim.TotalUVGimmes)
+
+	if err := sim.CheckSafety(); err != nil {
+		t.Fatalf("Safety: %v", err)
+	}
+
+	if err := sim.CheckAllUVConverged(masterRepo); err != nil {
+		t.Fatalf("UV Convergence: %v", err)
+	}
+
+	// Verify specific state: base.txt should be tombstoned, dynamic files present.
+	_, _, h, _ := uv.Read(masterRepo.DB(), "base.txt")
+	if h != "" {
+		t.Errorf("base.txt should be tombstoned, got hash=%q", h)
+	}
+	c, _, _, _ := uv.Read(masterRepo.DB(), "dynamic/a.txt")
+	if string(c) != "added mid-sim" {
+		t.Errorf("dynamic/a.txt: got %q", c)
+	}
+}
+
+func TestUVResponseTruncation(t *testing.T) {
+	// Tests UV sync convergence under response truncation (partial delivery).
+	seed := seedFor(23)
+
+	masterRepo := createMasterRepo(t)
+	uv.EnsureSchema(masterRepo.DB())
+	for i := range 10 {
+		uv.Write(masterRepo.DB(), fmt.Sprintf("trunc/f%d.txt", i),
+			[]byte(fmt.Sprintf("content-%d", i)), int64(100+i))
+	}
+
+	mf := NewMockFossil(masterRepo)
+
+	sim, err := New(SimConfig{
+		Seed:         seed,
+		NumLeaves:    2,
+		PollInterval: 5 * time.Second,
+		TmpDir:       t.TempDir(),
+		Upstream:     mf,
+		UV:           true,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sim.Close()
+	sim.Network().SetTruncateRate(0.20)
+
+	steps := stepsFor(500)
+	if err := sim.Run(steps); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	t.Logf("[truncation] seed=%d steps=%d syncs=%d errors=%d uv_recv=%d",
+		seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors, sim.TotalUVRecvd)
+
+	// Safety must hold even under truncation.
+	for _, id := range sim.LeafIDs() {
+		if err := CheckUVIntegrity(string(id), sim.Leaf(id).Repo()); err != nil {
+			t.Fatalf("UV integrity %s: %v", id, err)
+		}
+	}
+}
+
 func TestUVLeafDeletion(t *testing.T) {
 	// Tests leaf→server deletion propagation via uvigot/uvfile exchange.
 	seed := seedFor(21)
