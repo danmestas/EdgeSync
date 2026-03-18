@@ -319,6 +319,129 @@ converged:
 	t.Logf("PASS: leaf-to-leaf via NATS — %d blobs converged, all invariants pass", len(seededUUIDs))
 }
 
+// TestLeafToLeafHTTP sets up two leaf repos. Leaf-0 serves HTTP.
+// Leaf-1 syncs via HTTPTransport against leaf-0. Verifies convergence
+// and that both repos are readable by real fossil.
+func TestLeafToLeafHTTP(t *testing.T) {
+	if !hasFossil() {
+		t.Skip("fossil binary not found in PATH")
+	}
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	// Shared project code.
+	projCode := "deadbeef0123456789abcdef0123456789abcdef"
+
+	// 1. Create leaf-0 (server) with blobs.
+	path0 := filepath.Join(dir, "leaf-0.fossil")
+	r0, err := repo.Create(path0, "testuser", simio.CryptoRand{})
+	if err != nil {
+		t.Fatalf("create leaf-0: %v", err)
+	}
+	r0.DB().Exec("UPDATE config SET value=? WHERE name='project-code'", projCode)
+
+	rng := rand.New(rand.NewSource(55))
+	seededUUIDs, err := SeedLeaf(r0, rng, 7, 4096)
+	if err != nil {
+		r0.Close()
+		t.Fatalf("SeedLeaf: %v", err)
+	}
+	t.Logf("Seeded %d blobs into leaf-0", len(seededUUIDs))
+	r0.Close()
+
+	// 2. Create leaf-1 (client) — empty, same project code.
+	path1 := filepath.Join(dir, "leaf-1.fossil")
+	r1, err := repo.Create(path1, "testuser", simio.CryptoRand{})
+	if err != nil {
+		t.Fatalf("create leaf-1: %v", err)
+	}
+	r1.DB().Exec("UPDATE config SET value=? WHERE name='project-code'", projCode)
+
+	var srvCode string
+	r1.DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&srvCode)
+	r1.Close()
+
+	// 3. Start leaf-0 as HTTP server.
+	r0, err = repo.Open(path0)
+	if err != nil {
+		t.Fatalf("reopen leaf-0: %v", err)
+	}
+	defer r0.Close()
+
+	addr := freeAddr(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go sync.ServeHTTP(ctx, addr, r0, sync.HandleSync)
+	waitForAddr(t, addr, 5*time.Second)
+
+	// 4. Leaf-1 syncs from leaf-0 via HTTP (multiple rounds until convergence).
+	r1, err = repo.Open(path1)
+	if err != nil {
+		t.Fatalf("reopen leaf-1: %v", err)
+	}
+	defer r1.Close()
+
+	transport := &sync.HTTPTransport{URL: fmt.Sprintf("http://%s", addr)}
+	for round := 0; round < 10; round++ {
+		result, err := sync.Sync(ctx, r1, transport, sync.SyncOpts{
+			Push:        true,
+			Pull:        true,
+			ProjectCode: projCode,
+			ServerCode:  srvCode,
+		})
+		if err != nil {
+			t.Fatalf("sync round %d: %v", round, err)
+		}
+		t.Logf("round %d: sent=%d recv=%d", round, result.FilesSent, result.FilesRecvd)
+		if result.FilesSent == 0 && result.FilesRecvd == 0 {
+			break
+		}
+	}
+
+	// 5. Close repos, run invariants.
+	r0.Close()
+	r1.Close()
+
+	var repos []*repo.Repo
+	var labels []string
+	for i, path := range []string{path0, path1} {
+		r, err := repo.Open(path)
+		if err != nil {
+			t.Fatalf("reopen %d: %v", i, err)
+		}
+		defer r.Close()
+		repos = append(repos, r)
+		labels = append(labels, fmt.Sprintf("leaf-%d", i))
+	}
+
+	blobConv := CheckBlobConvergence(repos, labels)
+	contentInt := CheckContentIntegrity(repos, labels)
+
+	t.Logf("Invariants: convergence=%v integrity=%v", blobConv.Passed, contentInt.Passed)
+
+	if !blobConv.Passed {
+		t.Errorf("blob convergence FAILED: %s", blobConv.Details)
+	}
+	if !contentInt.Passed {
+		t.Errorf("content integrity FAILED: %s", contentInt.Details)
+	}
+
+	// 6. Verify real fossil can read both repos.
+	for i, path := range []string{path0, path1} {
+		rebuildCmd := exec.Command("fossil", "rebuild", path)
+		out, err := rebuildCmd.CombinedOutput()
+		if err != nil {
+			t.Errorf("fossil rebuild leaf-%d failed: %v\n%s", i, err, out)
+		}
+	}
+
+	t.Logf("PASS: leaf-to-leaf HTTP — %d blobs converged, both repos pass fossil rebuild", len(seededUUIDs))
+}
+
 // --- helpers ---
 
 func freeAddr(t *testing.T) string {
