@@ -18,6 +18,9 @@ type Message struct {
 // Uses Fossil's compression format: 4-byte big-endian uncompressed size prefix
 // followed by standard zlib data.
 func (m *Message) Encode() ([]byte, error) {
+	if m == nil {
+		panic("xfer.Message.Encode: m must not be nil")
+	}
 	raw, err := m.EncodeUncompressed()
 	if err != nil {
 		return nil, err
