@@ -219,14 +219,14 @@ func (s *session) buildUVFileCards() ([]xfer.Card, error) {
 	var cards []xfer.Card
 	budget := s.maxSend
 
-	for name, fullContent := range s.uvToSend {
+	for name, sendFullContent := range s.uvToSend {
 		if budget <= 0 {
 			break
 		}
 
 		content, mtime, fileHash, err := uv.Read(s.repo.DB(), name)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("buildUVFileCards: read %q: %w", name, err)
 		}
 
 		// Tombstone: send deletion marker.
@@ -236,13 +236,13 @@ func (s *session) buildUVFileCards() ([]xfer.Card, error) {
 				MTime: mtime,
 				Hash:  "-",
 				Size:  0,
-				Flags: 1,
+				Flags: xfer.UVFlagDeletion,
 			})
 			delete(s.uvToSend, name)
 			continue
 		}
 
-		if fullContent && content != nil {
+		if sendFullContent && content != nil {
 			cards = append(cards, &xfer.UVFileCard{
 				Name:    name,
 				MTime:   mtime,
@@ -258,7 +258,7 @@ func (s *session) buildUVFileCards() ([]xfer.Card, error) {
 				MTime: mtime,
 				Hash:  fileHash,
 				Size:  len(content),
-				Flags: 4,
+				Flags: xfer.UVFlagContentOmitted,
 			})
 		}
 		delete(s.uvToSend, name)
@@ -339,7 +339,9 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 
 		case *xfer.UVIGotCard:
 			if s.opts.UV {
-				s.handleUVIGotCard(c)
+				if err := s.handleUVIGotCard(c); err != nil {
+					return false, err
+				}
 			}
 
 		case *xfer.UVFileCard:
@@ -518,12 +520,17 @@ func (s *session) handleFileCard(uuid, deltaSrc string, payload []byte) error {
 }
 
 // handleUVIGotCard processes a uvigot card from the server.
-func (s *session) handleUVIGotCard(c *xfer.UVIGotCard) {
-	uv.EnsureSchema(s.repo.DB())
+func (s *session) handleUVIGotCard(c *xfer.UVIGotCard) error {
+	if c == nil {
+		panic("session.handleUVIGotCard: c must not be nil")
+	}
+	if err := uv.EnsureSchema(s.repo.DB()); err != nil {
+		return fmt.Errorf("handleUVIGotCard: ensure schema: %w", err)
+	}
 
 	_, localMtime, localHash, err := uv.Read(s.repo.DB(), c.Name)
 	if err != nil {
-		return
+		return fmt.Errorf("handleUVIGotCard: read %q: %w", c.Name, err)
 	}
 
 	status := uv.Status(localMtime, localHash, c.MTime, c.Hash)
@@ -533,14 +540,24 @@ func (s *session) handleUVIGotCard(c *xfer.UVIGotCard) {
 		delete(s.uvToSend, c.Name)
 		if c.Hash != "-" {
 			s.uvGimmes[c.Name] = true
-			s.repo.DB().Exec("DELETE FROM unversioned WHERE name=?", c.Name)
-			uv.InvalidateHash(s.repo.DB())
+			if _, err := s.repo.DB().Exec("DELETE FROM unversioned WHERE name=?", c.Name); err != nil {
+				return fmt.Errorf("handleUVIGotCard: delete %q: %w", c.Name, err)
+			}
+			if err := uv.InvalidateHash(s.repo.DB()); err != nil {
+				return fmt.Errorf("handleUVIGotCard: invalidate hash: %w", err)
+			}
 		} else if status == 1 {
-			uv.Delete(s.repo.DB(), c.Name, c.MTime)
+			if err := uv.Delete(s.repo.DB(), c.Name, c.MTime); err != nil {
+				return fmt.Errorf("handleUVIGotCard: apply deletion %q: %w", c.Name, err)
+			}
 		}
 	case status == 2:
-		s.repo.DB().Exec("UPDATE unversioned SET mtime=? WHERE name=?", c.MTime, c.Name)
-		uv.InvalidateHash(s.repo.DB())
+		if _, err := s.repo.DB().Exec("UPDATE unversioned SET mtime=? WHERE name=?", c.MTime, c.Name); err != nil {
+			return fmt.Errorf("handleUVIGotCard: update mtime %q: %w", c.Name, err)
+		}
+		if err := uv.InvalidateHash(s.repo.DB()); err != nil {
+			return fmt.Errorf("handleUVIGotCard: invalidate hash: %w", err)
+		}
 	case status == 3:
 		delete(s.uvToSend, c.Name)
 	case status == 4:
@@ -556,18 +573,24 @@ func (s *session) handleUVIGotCard(c *xfer.UVIGotCard) {
 			s.uvToSend[c.Name] = true
 		}
 	}
+	return nil
 }
 
 // handleUVFileCard processes a uvfile card from the server.
 func (s *session) handleUVFileCard(c *xfer.UVFileCard) error {
-	uv.EnsureSchema(s.repo.DB())
+	if c == nil {
+		panic("session.handleUVFileCard: c must not be nil")
+	}
+	if err := uv.EnsureSchema(s.repo.DB()); err != nil {
+		return fmt.Errorf("handleUVFileCard: ensure schema: %w", err)
+	}
 
 	// Validate hash if content present.
-	if c.Flags&0x0005 == 0 && c.Content != nil {
-		computed := hash.SHA1(c.Content)
-		if len(c.Hash) > 40 {
-			computed = hash.SHA3(c.Content)
+	if c.Flags&xfer.UVFlagNoPayload == 0 {
+		if c.Content == nil {
+			panic("session.handleUVFileCard: flags indicate payload but Content is nil")
 		}
+		computed := hash.ContentHash(c.Content, c.Hash)
 		if computed != c.Hash {
 			return fmt.Errorf("uvfile %s: hash mismatch", c.Name)
 		}
@@ -576,7 +599,7 @@ func (s *session) handleUVFileCard(c *xfer.UVFileCard) error {
 	// Double-check status.
 	_, localMtime, localHash, err := uv.Read(s.repo.DB(), c.Name)
 	if err != nil {
-		return err
+		return fmt.Errorf("handleUVFileCard: read %q: %w", c.Name, err)
 	}
 	status := uv.Status(localMtime, localHash, c.MTime, c.Hash)
 	if status >= 2 {

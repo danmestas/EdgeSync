@@ -53,13 +53,12 @@ func Write(d *db.DB, name string, content []byte, mtime int64) error {
 
 	// Detect repo hash policy. Default to SHA1; use SHA3 if project-code is 64-char.
 	var projCode string
-	d.QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projCode)
-	var h string
+	_ = d.QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projCode)
+	referenceHash := "0000000000000000000000000000000000000000" // 40-char = SHA1
 	if len(projCode) > 40 {
-		h = hash.SHA3(content)
-	} else {
-		h = hash.SHA1(content)
+		referenceHash = projCode
 	}
+	contentHash := hash.ContentHash(content, referenceHash)
 	sz := len(content)
 
 	// Compress and check 80% threshold.
@@ -81,7 +80,7 @@ func Write(d *db.DB, name string, content []byte, mtime int64) error {
 	_, err := d.Exec(
 		`REPLACE INTO unversioned(name, rcvid, mtime, hash, sz, encoding, content)
 		 VALUES(?, 1, ?, ?, ?, ?, ?)`,
-		name, mtime, h, sz, encoding, stored,
+		name, mtime, contentHash, sz, encoding, stored,
 	)
 	if err != nil {
 		return fmt.Errorf("uv.Write: %w", err)
@@ -99,7 +98,9 @@ func Delete(d *db.DB, name string, mtime int64) error {
 
 	// Check if row exists; if not, insert tombstone.
 	var exists int
-	d.QueryRow("SELECT count(*) FROM unversioned WHERE name=?", name).Scan(&exists)
+	if err := d.QueryRow("SELECT count(*) FROM unversioned WHERE name=?", name).Scan(&exists); err != nil {
+		return fmt.Errorf("uv.Delete: check existence: %w", err)
+	}
 	if exists == 0 {
 		_, err := d.Exec(
 			`INSERT INTO unversioned(name, rcvid, mtime, hash, sz, encoding, content)
@@ -232,11 +233,13 @@ func ContentHash(d *db.DB) (string, error) {
 
 	result := hex.EncodeToString(h.Sum(nil))
 
-	// Cache.
-	d.Exec(
+	// Cache. Non-fatal: if this fails we just recompute next time.
+	if _, err := d.Exec(
 		"INSERT OR REPLACE INTO config(name, value, mtime) VALUES('uv-hash', ?, strftime('%s','now'))",
 		result,
-	)
+	); err != nil {
+		return result, fmt.Errorf("uv.ContentHash: cache write: %w", err)
+	}
 
 	return result, nil
 }

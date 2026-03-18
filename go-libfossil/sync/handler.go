@@ -98,7 +98,11 @@ func (h *handler) handleControlCard(card xfer.Card) {
 		_ = c // Accept all logins. Future: verify credentials.
 	case *xfer.PragmaCard:
 		if c.Name == "uv-hash" && len(c.Values) >= 1 {
-			h.handlePragmaUVHash(c.Values[0])
+			if err := h.handlePragmaUVHash(c.Values[0]); err != nil {
+				h.resp = append(h.resp, &xfer.ErrorCard{
+					Message: fmt.Sprintf("uv-hash: %v", err),
+				})
+			}
 		}
 		// Acknowledge client-version, ignore other unknown pragmas.
 	case *xfer.PushCard:

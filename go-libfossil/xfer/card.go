@@ -137,6 +137,13 @@ type PrivateCard struct{}
 
 func (c *PrivateCard) Type() CardType { return CardPrivate }
 
+// UV file flag constants.
+const (
+	UVFlagDeletion       = 0x0001 // File is a deletion tombstone.
+	UVFlagContentOmitted = 0x0004 // Content not included in this card.
+	UVFlagNoPayload      = UVFlagDeletion | UVFlagContentOmitted // Mask: no payload expected.
+)
+
 // UVFileCard represents an "uvfile" card for unversioned file content.
 type UVFileCard struct {
 	Name    string

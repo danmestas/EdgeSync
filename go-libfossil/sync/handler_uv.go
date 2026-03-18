@@ -8,18 +8,20 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
 )
 
-func (h *handler) handlePragmaUVHash(clientHash string) {
+func (h *handler) handlePragmaUVHash(clientHash string) error {
 	if h.uvCatalogSent {
-		return
+		return nil
 	}
-	uv.EnsureSchema(h.repo.DB())
+	if err := uv.EnsureSchema(h.repo.DB()); err != nil {
+		return fmt.Errorf("handler.handlePragmaUVHash: ensure schema: %w", err)
+	}
 
 	localHash, err := uv.ContentHash(h.repo.DB())
 	if err != nil {
-		return // non-fatal
+		return fmt.Errorf("handler.handlePragmaUVHash: content hash: %w", err)
 	}
 	if localHash == clientHash {
-		return // already in sync
+		return nil // already in sync
 	}
 
 	h.uvCatalogSent = true
@@ -27,7 +29,7 @@ func (h *handler) handlePragmaUVHash(clientHash string) {
 
 	entries, err := uv.List(h.repo.DB())
 	if err != nil {
-		return
+		return fmt.Errorf("handler.handlePragmaUVHash: list: %w", err)
 	}
 	for _, e := range entries {
 		hashVal := e.Hash
@@ -41,15 +43,17 @@ func (h *handler) handlePragmaUVHash(clientHash string) {
 			Size:  e.Size,
 		})
 	}
+	return nil
 }
 
 func (h *handler) handleUVIGot(c *xfer.UVIGotCard) error {
 	if c == nil {
 		panic("handler.handleUVIGot: c must not be nil")
 	}
-	uv.EnsureSchema(h.repo.DB())
+	if err := uv.EnsureSchema(h.repo.DB()); err != nil {
+		return fmt.Errorf("handler.handleUVIGot: ensure schema: %w", err)
+	}
 
-	// Look up local file.
 	_, localMtime, localHash, err := uv.Read(h.repo.DB(), c.Name)
 	if err != nil {
 		return fmt.Errorf("handler.handleUVIGot: read %q: %w", c.Name, err)
@@ -61,10 +65,16 @@ func (h *handler) handleUVIGot(c *xfer.UVIGotCard) error {
 	case status == 0 || status == 1:
 		h.resp = append(h.resp, &xfer.UVGimmeCard{Name: c.Name})
 	case status == 2:
-		h.repo.DB().Exec("UPDATE unversioned SET mtime=? WHERE name=?", c.MTime, c.Name)
-		uv.InvalidateHash(h.repo.DB())
+		if _, err := h.repo.DB().Exec("UPDATE unversioned SET mtime=? WHERE name=?", c.MTime, c.Name); err != nil {
+			return fmt.Errorf("handler.handleUVIGot: update mtime %q: %w", c.Name, err)
+		}
+		if err := uv.InvalidateHash(h.repo.DB()); err != nil {
+			return fmt.Errorf("handler.handleUVIGot: invalidate hash: %w", err)
+		}
 	case status == 4 || status == 5:
-		h.sendUVFile(c.Name)
+		if err := h.sendUVFile(c.Name); err != nil {
+			return fmt.Errorf("handler.handleUVIGot: send %q: %w", c.Name, err)
+		}
 	}
 	return nil
 }
@@ -76,14 +86,16 @@ func (h *handler) handleUVGimme(c *xfer.UVGimmeCard) error {
 	if h.buggify != nil && h.buggify.Check("handler.handleUVGimme.skip", 0.05) {
 		return nil
 	}
-	h.sendUVFile(c.Name)
-	return nil
+	return h.sendUVFile(c.Name)
 }
 
-func (h *handler) sendUVFile(name string) {
+func (h *handler) sendUVFile(name string) error {
+	if name == "" {
+		panic("handler.sendUVFile: name must not be empty")
+	}
 	content, mtime, fileHash, err := uv.Read(h.repo.DB(), name)
 	if err != nil {
-		return
+		return fmt.Errorf("handler.sendUVFile: read %q: %w", name, err)
 	}
 
 	if fileHash == "" {
@@ -92,9 +104,9 @@ func (h *handler) sendUVFile(name string) {
 			MTime: mtime,
 			Hash:  "-",
 			Size:  0,
-			Flags: 1,
+			Flags: xfer.UVFlagDeletion,
 		})
-		return
+		return nil
 	}
 
 	h.resp = append(h.resp, &xfer.UVFileCard{
@@ -105,6 +117,7 @@ func (h *handler) sendUVFile(name string) {
 		Flags:   0,
 		Content: content,
 	})
+	return nil
 }
 
 func (h *handler) handleUVFile(c *xfer.UVFileCard) error {
@@ -122,14 +135,16 @@ func (h *handler) handleUVFile(c *xfer.UVFileCard) error {
 		return nil
 	}
 
-	uv.EnsureSchema(h.repo.DB())
+	if err := uv.EnsureSchema(h.repo.DB()); err != nil {
+		return fmt.Errorf("handler.handleUVFile: ensure schema: %w", err)
+	}
 
 	// Validate hash if content present.
-	if c.Flags&0x0005 == 0 && c.Content != nil {
-		computed := hash.SHA1(c.Content)
-		if len(c.Hash) > 40 {
-			computed = hash.SHA3(c.Content)
+	if c.Flags&xfer.UVFlagNoPayload == 0 {
+		if c.Content == nil {
+			panic("handler.handleUVFile: flags indicate payload but Content is nil")
 		}
+		computed := hash.ContentHash(c.Content, c.Hash)
 		if computed != c.Hash {
 			h.resp = append(h.resp, &xfer.ErrorCard{
 				Message: fmt.Sprintf("uvfile %s: hash mismatch", c.Name),

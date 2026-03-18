@@ -185,10 +185,7 @@ func CheckUVIntegrity(nodeID string, r *repo.Repo) error {
 				Detail:    fmt.Sprintf("read %q: %v", e.Name, err),
 			}
 		}
-		computed := hash.SHA1(content)
-		if len(storedHash) > 40 {
-			computed = hash.SHA3(content)
-		}
+		computed := hash.ContentHash(content, storedHash)
 		if computed != storedHash {
 			return &InvariantError{
 				Invariant: "uv-integrity",
