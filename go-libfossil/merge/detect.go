@@ -8,6 +8,9 @@ import (
 // DetectForks finds divergent branches by querying the leaf table
 // (maintained by Fossil/manifest.Checkin) for checkins with no children.
 func DetectForks(r *repo.Repo) ([]Fork, error) {
+	if r == nil {
+		panic("merge.DetectForks: r must not be nil")
+	}
 	rows, err := r.DB().Query(`
 		SELECT l.rid FROM leaf l
 		JOIN event e ON e.objid=l.rid
@@ -21,7 +24,9 @@ func DetectForks(r *repo.Repo) ([]Fork, error) {
 	var leaves []libfossil.FslID
 	for rows.Next() {
 		var rid int64
-		rows.Scan(&rid)
+		if err := rows.Scan(&rid); err != nil {
+			continue
+		}
 		leaves = append(leaves, libfossil.FslID(rid))
 	}
 	if err := rows.Err(); err != nil {

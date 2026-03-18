@@ -14,6 +14,15 @@ type ThreeWayText struct{}
 func (t *ThreeWayText) Name() string { return "three-way" }
 
 func (t *ThreeWayText) Merge(base, local, remote []byte) (*Result, error) {
+	if base == nil {
+		panic("merge.ThreeWayText.Merge: base must not be nil")
+	}
+	if local == nil {
+		panic("merge.ThreeWayText.Merge: local must not be nil")
+	}
+	if remote == nil {
+		panic("merge.ThreeWayText.Merge: remote must not be nil")
+	}
 	// Fast paths.
 	if bytes.Equal(local, remote) {
 		return &Result{Content: local, Clean: true}, nil
@@ -125,6 +134,41 @@ func longestCommonSubseq(a, b []string) []lcsMatch {
 	return matches
 }
 
+// handleOverlappingHunks processes a pair of overlapping hunks.
+// If they have the same content, returns the lines with no conflict.
+// Otherwise, returns conflict markers with both versions.
+func handleOverlappingHunks(base []string, lh, rh *hunk, bi int) (lines []string, conflict *Conflict) {
+	if sameHunkContent(lh, rh) {
+		return lh.lines, nil
+	}
+	// Conflict.
+	c := Conflict{
+		StartLine: bi + 1,
+		Local:     []byte(strings.Join(lh.lines, "")),
+		Remote:    []byte(strings.Join(rh.lines, "")),
+	}
+	// Find the base region covered by both hunks.
+	start := min(lh.baseStart, rh.baseStart)
+	end := max(lh.baseEnd, rh.baseEnd)
+	if start < end {
+		c.Base = []byte(strings.Join(base[start:end], ""))
+	}
+	c.EndLine = bi + max(lh.baseEnd, rh.baseEnd) - bi
+
+	result := []string{"<<<<<<< LOCAL\n"}
+	result = append(result, lh.lines...)
+	if len(lh.lines) > 0 && !strings.HasSuffix(lh.lines[len(lh.lines)-1], "\n") {
+		result = append(result, "\n")
+	}
+	result = append(result, "=======\n")
+	result = append(result, rh.lines...)
+	if len(rh.lines) > 0 && !strings.HasSuffix(rh.lines[len(rh.lines)-1], "\n") {
+		result = append(result, "\n")
+	}
+	result = append(result, ">>>>>>> REMOTE\n")
+	return result, &c
+}
+
 // merge3 combines two sets of hunks against a common base.
 func merge3(base, local, remote []string, localHunks, remoteHunks []hunk) ([]string, []Conflict) {
 	var result []string
@@ -167,37 +211,10 @@ func merge3(base, local, remote []string, localHunks, remoteHunks []hunk) ([]str
 
 		// Determine if hunks overlap.
 		if lh != nil && rh != nil && hunksOverlap(lh, rh) {
-			// Both sides changed an overlapping region.
-			if sameHunkContent(lh, rh) {
-				// Same change — take one copy.
-				result = append(result, lh.lines...)
-			} else {
-				// Conflict.
-				conflict := Conflict{
-					StartLine: bi + 1,
-					Local:     []byte(strings.Join(lh.lines, "")),
-					Remote:    []byte(strings.Join(rh.lines, "")),
-				}
-				// Find the base region covered by both hunks.
-				start := min(lh.baseStart, rh.baseStart)
-				end := max(lh.baseEnd, rh.baseEnd)
-				if start < end {
-					conflict.Base = []byte(strings.Join(base[start:end], ""))
-				}
-				conflict.EndLine = bi + max(lh.baseEnd, rh.baseEnd) - bi
-
-				result = append(result, "<<<<<<< LOCAL\n")
-				result = append(result, lh.lines...)
-				if len(lh.lines) > 0 && !strings.HasSuffix(lh.lines[len(lh.lines)-1], "\n") {
-					result = append(result, "\n")
-				}
-				result = append(result, "=======\n")
-				result = append(result, rh.lines...)
-				if len(rh.lines) > 0 && !strings.HasSuffix(rh.lines[len(rh.lines)-1], "\n") {
-					result = append(result, "\n")
-				}
-				result = append(result, ">>>>>>> REMOTE\n")
-				conflicts = append(conflicts, conflict)
+			lines, c := handleOverlappingHunks(base, lh, rh, bi)
+			result = append(result, lines...)
+			if c != nil {
+				conflicts = append(conflicts, *c)
 			}
 			bi = max(lh.baseEnd, rh.baseEnd)
 			li++
