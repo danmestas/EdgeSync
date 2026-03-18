@@ -142,12 +142,31 @@ func (a *Agent) Repo() *repo.Repo {
 	return a.repo
 }
 
-// Start launches the background poll loop. Call Stop to shut it down.
+// Start launches the background poll loop and any configured server
+// listeners. Call Stop to shut everything down.
 func (a *Agent) Start() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
 	a.done = make(chan struct{})
 	go a.pollLoop(ctx)
+
+	// Server listeners
+	if a.config.ServeHTTPAddr != "" {
+		go func() {
+			if err := sync.ServeHTTP(ctx, a.config.ServeHTTPAddr, a.repo, sync.HandleSync); err != nil {
+				log.Printf("agent: serve-http stopped: %v", err)
+			}
+		}()
+	}
+	if a.config.ServeNATSEnabled && a.conn != nil {
+		go func() {
+			subject := a.config.SubjectPrefix + "." + a.projectCode + ".sync"
+			if err := ServeNATS(ctx, a.conn, subject, a.repo, sync.HandleSync); err != nil {
+				log.Printf("agent: serve-nats stopped: %v", err)
+			}
+		}()
+	}
+
 	return nil
 }
 
