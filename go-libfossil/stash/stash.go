@@ -4,6 +4,7 @@ package stash
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,6 +26,9 @@ type Entry struct {
 
 // EnsureTables creates the stash and stashfile tables if they don't exist.
 func EnsureTables(ckout *sql.DB) error {
+	if ckout == nil {
+		panic("stash.EnsureTables: ckout must not be nil")
+	}
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS stash(
 			stashid INTEGER PRIMARY KEY,
@@ -79,6 +83,15 @@ func nextStashID(tx *sql.Tx) (int64, error) {
 
 // Save stashes all changed files in the checkout, then reverts the working directory.
 func Save(ckout *sql.DB, repoDB *sql.DB, dir string, comment string) error {
+	if ckout == nil {
+		panic("stash.Save: ckout must not be nil")
+	}
+	if repoDB == nil {
+		panic("stash.Save: repoDB must not be nil")
+	}
+	if dir == "" {
+		panic("stash.Save: dir must not be empty")
+	}
 	if err := EnsureTables(ckout); err != nil {
 		return err
 	}
@@ -108,39 +121,57 @@ func Save(ckout *sql.DB, repoDB *sql.DB, dir string, comment string) error {
 		return fmt.Errorf("stash.Save: insert stash: %w", err)
 	}
 
-	// Query vfile for changed files: chnged=1 OR deleted=1 OR rid=0 (added).
+	files, err := snapshotChangedFiles(tx)
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("stash.Save: no changes to stash")
+	}
+
+	if err := storeAndRevertFiles(tx, repoDB, dir, stashID, files); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// changedFile describes a single changed file from the vfile table.
+type changedFile struct {
+	pathname string
+	rid      int64
+	chnged   int
+	deleted  int
+	isExec   bool
+	isLink   bool
+}
+
+// snapshotChangedFiles queries vfile for changed, deleted, or added files.
+func snapshotChangedFiles(tx *sql.Tx) ([]changedFile, error) {
 	rows, err := tx.Query(`SELECT pathname, rid, chnged, deleted, isexe, islink
 		FROM vfile WHERE chnged=1 OR deleted=1 OR rid=0`)
 	if err != nil {
-		return fmt.Errorf("stash.Save: query vfile: %w", err)
+		return nil, fmt.Errorf("stash.Save: query vfile: %w", err)
 	}
 
-	type changedFile struct {
-		pathname string
-		rid      int64
-		chnged   int
-		deleted  int
-		isExec   bool
-		isLink   bool
-	}
 	var files []changedFile
 	for rows.Next() {
 		var f changedFile
 		if err := rows.Scan(&f.pathname, &f.rid, &f.chnged, &f.deleted, &f.isExec, &f.isLink); err != nil {
 			rows.Close()
-			return fmt.Errorf("stash.Save: scan vfile: %w", err)
+			return nil, fmt.Errorf("stash.Save: scan vfile: %w", err)
 		}
 		files = append(files, f)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("stash.Save: rows iteration: %w", err)
+		return nil, fmt.Errorf("stash.Save: rows iteration: %w", err)
 	}
+	return files, nil
+}
 
-	if len(files) == 0 {
-		return fmt.Errorf("stash.Save: no changes to stash")
-	}
-
+// storeAndRevertFiles computes deltas, stores stashfile rows, and reverts the working directory.
+func storeAndRevertFiles(tx *sql.Tx, repoDB *sql.DB, dir string, stashID int64, files []changedFile) error {
 	ins, err := tx.Prepare(`INSERT INTO stashfile(stashid, isAdded, isRemoved, isExec, isLink, hash, origname, newname, delta)
 		VALUES(?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
@@ -202,7 +233,9 @@ func Save(ckout *sql.DB, repoDB *sql.DB, dir string, comment string) error {
 		// Revert working file.
 		if isAdded {
 			// Remove added file.
-			os.Remove(fullPath)
+			if err := os.Remove(fullPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("stash.Save: remove added %s: %w", f.pathname, err)
+			}
 			// Remove from vfile.
 			if _, err := tx.Exec("DELETE FROM vfile WHERE pathname=?", f.pathname); err != nil {
 				return fmt.Errorf("stash.Save: delete vfile %s: %w", f.pathname, err)
@@ -236,12 +269,23 @@ func Save(ckout *sql.DB, repoDB *sql.DB, dir string, comment string) error {
 			}
 		}
 	}
-
-	return tx.Commit()
+	return nil
 }
 
 // Apply restores stashed files to the working directory without removing the stash entry.
 func Apply(ckout *sql.DB, repoDB *sql.DB, dir string, stashID int64) error {
+	if ckout == nil {
+		panic("stash.Apply: ckout must not be nil")
+	}
+	if repoDB == nil {
+		panic("stash.Apply: repoDB must not be nil")
+	}
+	if dir == "" {
+		panic("stash.Apply: dir must not be empty")
+	}
+	if stashID <= 0 {
+		panic("stash.Apply: stashID must be positive")
+	}
 	rows, err := ckout.Query(`SELECT isAdded, isRemoved, hash, newname, delta
 		FROM stashfile WHERE stashid=?`, stashID)
 	if err != nil {
@@ -309,6 +353,15 @@ func Apply(ckout *sql.DB, repoDB *sql.DB, dir string, stashID int64) error {
 
 // Pop applies the most recent stash entry and removes it.
 func Pop(ckout *sql.DB, repoDB *sql.DB, dir string) error {
+	if ckout == nil {
+		panic("stash.Pop: ckout must not be nil")
+	}
+	if repoDB == nil {
+		panic("stash.Pop: repoDB must not be nil")
+	}
+	if dir == "" {
+		panic("stash.Pop: dir must not be empty")
+	}
 	var stashID int64
 	err := ckout.QueryRow("SELECT stashid FROM stash ORDER BY stashid DESC LIMIT 1").Scan(&stashID)
 	if err != nil {
@@ -326,6 +379,9 @@ func Pop(ckout *sql.DB, repoDB *sql.DB, dir string) error {
 
 // List returns all stash entries ordered by ID descending (most recent first).
 func List(ckout *sql.DB) ([]Entry, error) {
+	if ckout == nil {
+		panic("stash.List: ckout must not be nil")
+	}
 	if err := EnsureTables(ckout); err != nil {
 		return nil, err
 	}
@@ -354,6 +410,12 @@ func List(ckout *sql.DB) ([]Entry, error) {
 
 // Drop removes a specific stash entry and its files.
 func Drop(ckout *sql.DB, stashID int64) error {
+	if ckout == nil {
+		panic("stash.Drop: ckout must not be nil")
+	}
+	if stashID <= 0 {
+		panic("stash.Drop: stashID must be positive")
+	}
 	tx, err := ckout.Begin()
 	if err != nil {
 		return fmt.Errorf("stash.Drop: begin tx: %w", err)
@@ -367,7 +429,10 @@ func Drop(ckout *sql.DB, stashID int64) error {
 	if err != nil {
 		return fmt.Errorf("stash.Drop: delete stash: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, raErr := res.RowsAffected()
+	if raErr != nil {
+		return fmt.Errorf("stash.Drop: rows affected: %w", raErr)
+	}
 	if n == 0 {
 		return fmt.Errorf("stash.Drop: stash %d not found", stashID)
 	}
@@ -376,6 +441,9 @@ func Drop(ckout *sql.DB, stashID int64) error {
 
 // Clear removes all stash entries.
 func Clear(ckout *sql.DB) error {
+	if ckout == nil {
+		panic("stash.Clear: ckout must not be nil")
+	}
 	tx, err := ckout.Begin()
 	if err != nil {
 		return fmt.Errorf("stash.Clear: begin tx: %w", err)

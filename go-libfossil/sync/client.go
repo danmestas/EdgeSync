@@ -196,6 +196,9 @@ func (s *session) buildLoginCard(cards []xfer.Card) (*xfer.LoginCard, error) {
 // processResponse handles all cards in a server response.
 // It returns true when the sync has converged (nothing more to do).
 func (s *session) processResponse(msg *xfer.Message) (bool, error) {
+	if msg == nil {
+		panic("sync.processResponse: msg must not be nil")
+	}
 	filesRecvd := 0
 	filesSent := 0 // files the server asked us to send this round
 
@@ -271,7 +274,9 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 	// clear the unsent table — those artifacts have been announced
 	// and the server either has them or doesn't want them.
 	if s.igotSentThisRound > 0 && filesSent == 0 {
-		s.repo.DB().Exec("DELETE FROM unsent")
+		if _, err := s.repo.DB().Exec("DELETE FROM unsent"); err != nil {
+			return false, fmt.Errorf("sync: delete unsent: %w", err)
+		}
 	}
 
 	// Check unsent table
@@ -289,6 +294,15 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 
 // handleFileCard stores a received file (or delta-file) into the repo.
 func (s *session) handleFileCard(uuid, deltaSrc string, payload []byte) error {
+	if uuid == "" {
+		panic("sync.handleFileCard: uuid must not be empty")
+	}
+	if payload == nil {
+		panic("sync.handleFileCard: payload must not be nil")
+	}
+	if !hash.IsValidHash(uuid) {
+		return fmt.Errorf("sync: invalid UUID format: %s", uuid)
+	}
 	var fullContent []byte
 
 	if deltaSrc != "" {

@@ -16,6 +16,12 @@ type Repo struct {
 }
 
 func Create(path string, user string, rng simio.Rand) (*Repo, error) {
+	if path == "" {
+		panic("repo.Create: path must not be empty")
+	}
+	if rng == nil {
+		panic("repo.Create: rng must not be nil")
+	}
 	if _, err := os.Stat(path); err == nil {
 		return nil, fmt.Errorf("repo.Create: file already exists: %s", path)
 	}
@@ -27,19 +33,25 @@ func Create(path string, user string, rng simio.Rand) (*Repo, error) {
 
 	if err := db.CreateRepoSchema(d); err != nil {
 		d.Close()
-		os.Remove(path)
+		if rmErr := os.Remove(path); rmErr != nil {
+			return nil, fmt.Errorf("repo.Create: %w (cleanup failed: %v)", err, rmErr)
+		}
 		return nil, fmt.Errorf("repo.Create schema: %w", err)
 	}
 
 	if err := db.SeedUser(d, user); err != nil {
 		d.Close()
-		os.Remove(path)
+		if rmErr := os.Remove(path); rmErr != nil {
+			return nil, fmt.Errorf("repo.Create: %w (cleanup failed: %v)", err, rmErr)
+		}
 		return nil, fmt.Errorf("repo.Create seed user: %w", err)
 	}
 
 	if err := db.SeedConfig(d, rng); err != nil {
 		d.Close()
-		os.Remove(path)
+		if rmErr := os.Remove(path); rmErr != nil {
+			return nil, fmt.Errorf("repo.Create: %w (cleanup failed: %v)", err, rmErr)
+		}
 		return nil, fmt.Errorf("repo.Create seed config: %w", err)
 	}
 
@@ -47,6 +59,9 @@ func Create(path string, user string, rng simio.Rand) (*Repo, error) {
 }
 
 func Open(path string) (*Repo, error) {
+	if path == "" {
+		panic("repo.Open: path must not be empty")
+	}
 	if _, err := os.Stat(path); err != nil {
 		return nil, fmt.Errorf("repo.Open: %w", err)
 	}
@@ -87,6 +102,9 @@ func (r *Repo) WithTx(fn func(tx *db.Tx) error) error {
 }
 
 func (r *Repo) Verify() error {
+	if r == nil {
+		panic("repo.Verify: receiver must not be nil")
+	}
 	rows, err := r.db.Query("SELECT rid FROM blob WHERE size >= 0")
 	if err != nil {
 		return fmt.Errorf("repo.Verify query: %w", err)

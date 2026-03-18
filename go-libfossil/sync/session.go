@@ -57,6 +57,9 @@ type session struct {
 }
 
 func newSession(r *repo.Repo, opts SyncOpts) *session {
+	if r == nil {
+		panic("sync.newSession: r must not be nil")
+	}
 	ms := opts.MaxSend
 	if ms <= 0 {
 		ms = DefaultMaxSend
@@ -79,7 +82,18 @@ func newSession(r *repo.Repo, opts SyncOpts) *session {
 
 // Sync runs the client sync loop against the given transport.
 // It returns once the protocol has converged or a fatal error occurs.
-func Sync(ctx context.Context, r *repo.Repo, t Transport, opts SyncOpts) (*SyncResult, error) {
+func Sync(ctx context.Context, r *repo.Repo, t Transport, opts SyncOpts) (result *SyncResult, err error) {
+	if r == nil {
+		panic("sync.Sync: r must not be nil")
+	}
+	if t == nil {
+		panic("sync.Sync: t must not be nil")
+	}
+	defer func() {
+		if err == nil && result == nil {
+			panic("sync.Sync: result must not be nil on success")
+		}
+	}()
 	s := newSession(r, opts)
 	for cycle := 0; ; cycle++ {
 		select {

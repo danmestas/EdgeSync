@@ -38,6 +38,9 @@ func (c *SimClock) Now() time.Time {
 // has been advanced past the deadline. The channel is never selected
 // until Advance/AdvanceTo is called.
 func (c *SimClock) After(d time.Duration) <-chan time.Time {
+	if d < 0 {
+		panic("simclock.After: duration must not be negative")
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	ch := make(chan time.Time, 1)
@@ -69,7 +72,7 @@ func (c *SimClock) AdvanceTo(t time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if t.Before(c.now) {
-		return
+		panic("simclock.AdvanceTo: cannot move time backwards")
 	}
 	c.now = t
 	remaining := c.waiters[:0]

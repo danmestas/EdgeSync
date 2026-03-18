@@ -2,7 +2,6 @@ package sync
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
@@ -24,7 +23,7 @@ type CloneOpts struct {
 }
 
 // Clone performs a full repository clone from a remote.
-// NOT IMPLEMENTED — returns error.
+// NOT IMPLEMENTED — panics.
 func Clone(ctx context.Context, r *repo.Repo, t Transport, opts CloneOpts) error {
-	return fmt.Errorf("sync.Clone: not yet implemented")
+	panic("sync.Clone: not implemented — planned for Phase G")
 }

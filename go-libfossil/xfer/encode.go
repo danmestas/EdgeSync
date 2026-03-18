@@ -10,6 +10,12 @@ import (
 
 // EncodeCard writes the wire-format representation of a Card to w.
 func EncodeCard(w *bytes.Buffer, c Card) error {
+	if w == nil {
+		panic("xfer.EncodeCard: w must not be nil")
+	}
+	if c == nil {
+		panic("xfer.EncodeCard: c must not be nil")
+	}
 	switch v := c.(type) {
 	case *IGotCard:
 		return encodeIGot(w, v)
