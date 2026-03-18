@@ -1,8 +1,11 @@
+# Fossil reference checkouts (local only, read-only reference for porting)
+fossil/
+libfossil/
+.fossil-settings/
+
 # Fossil SQLite databases (binary, should never be in git)
 *.fossil
 .fslckout
-fossil/.fslckout
-libfossil/checkout/.fslckout
 
 # Build artifacts
 /bin/
