@@ -9,10 +9,14 @@ import (
 )
 
 func Parse(data []byte) (*Deck, error) {
+	if data == nil {
+		panic("deck.Parse: data must not be nil")
+	}
 	if err := VerifyZ(data); err != nil {
 		return nil, fmt.Errorf("deck.Parse: %w", err)
 	}
 
+	// body is safe: VerifyZ above guarantees len(data) >= 35.
 	body := data[:len(data)-35]
 	d := &Deck{}
 	var lastCard byte
@@ -37,7 +41,10 @@ func Parse(data []byte) (*Deck, error) {
 				return nil, fmt.Errorf("deck.Parse: bad W size: %w", err)
 			}
 			content := make([]byte, size)
-			n, _ := reader.Read(content)
+			n, readErr := reader.Read(content)
+			if readErr != nil && n != size {
+				return nil, fmt.Errorf("deck.Parse: W content read: %w", readErr)
+			}
 			if n != size {
 				return nil, fmt.Errorf("deck.Parse: W content: got %d, want %d", n, size)
 			}
@@ -79,110 +86,160 @@ func readLine(r *bytes.Reader) (string, error) {
 }
 
 func parseCard(d *Deck, card byte, args string) error {
+	if d == nil {
+		panic("deck.parseCard: d must not be nil")
+	}
 	switch card {
 	case 'A':
-		parts := strings.SplitN(args, " ", 3)
-		if len(parts) < 2 {
-			return fmt.Errorf("A-card needs 2+ fields")
-		}
-		ac := &AttachmentCard{Filename: FossilDecode(parts[0]), Target: parts[1]}
-		if len(parts) == 3 {
-			ac.Source = parts[2]
-		}
-		d.A = ac
+		return parseACard(d, args)
+	case 'D':
+		return parseDCard(d, args)
+	case 'E':
+		return parseECard(d, args)
+	case 'F':
+		return parseFCard(d, args)
+	case 'J':
+		return parseJCard(d, args)
+	case 'Q':
+		return parseQCard(d, args)
+	case 'T':
+		return parseTCard(d, args)
+	// Simple cards stay inline:
 	case 'B':
 		d.B = strings.TrimSpace(args)
+		return nil
 	case 'C':
 		d.C = FossilDecode(args)
-	case 'D':
-		t, err := parseTimestamp(args)
-		if err != nil {
-			return fmt.Errorf("D-card: %w", err)
-		}
-		d.D = t
-	case 'E':
-		parts := strings.SplitN(args, " ", 2)
-		if len(parts) != 2 {
-			return fmt.Errorf("E-card needs datetime and uuid")
-		}
-		t, err := parseTimestamp(parts[0])
-		if err != nil {
-			return fmt.Errorf("E-card: %w", err)
-		}
-		d.E = &EventCard{Date: t, UUID: parts[1]}
-	case 'F':
-		parts := strings.Fields(args)
-		if len(parts) == 0 {
-			return fmt.Errorf("empty F-card")
-		}
-		fc := FileCard{Name: FossilDecode(parts[0])}
-		if len(parts) >= 2 {
-			fc.UUID = parts[1]
-		}
-		if len(parts) >= 3 {
-			fc.Perm = parts[2]
-		}
-		if len(parts) >= 4 {
-			fc.OldName = FossilDecode(parts[3])
-		}
-		d.F = append(d.F, fc)
+		return nil
 	case 'G':
 		d.G = strings.TrimSpace(args)
+		return nil
 	case 'H':
 		d.H = FossilDecode(args)
+		return nil
 	case 'I':
 		d.I = strings.TrimSpace(args)
-	case 'J':
-		parts := strings.SplitN(args, " ", 2)
-		jf := TicketField{Name: FossilDecode(parts[0])}
-		if len(parts) == 2 {
-			jf.Value = parts[1]
-		}
-		d.J = append(d.J, jf)
+		return nil
 	case 'K':
 		d.K = strings.TrimSpace(args)
+		return nil
 	case 'L':
 		d.L = FossilDecode(args)
+		return nil
 	case 'M':
 		d.M = append(d.M, strings.TrimSpace(args))
+		return nil
 	case 'N':
 		d.N = strings.TrimSpace(args)
+		return nil
 	case 'P':
 		d.P = strings.Fields(args)
-	case 'Q':
-		if len(args) < 2 {
-			return fmt.Errorf("Q-card too short")
-		}
-		cp := CherryPick{IsBackout: args[0] == '-'}
-		rest := args[1:]
-		parts := strings.SplitN(rest, " ", 2)
-		cp.Target = parts[0]
-		if len(parts) == 2 {
-			cp.Baseline = parts[1]
-		}
-		d.Q = append(d.Q, cp)
+		return nil
 	case 'R':
 		d.R = strings.TrimSpace(args)
-	case 'T':
-		if len(args) < 2 {
-			return fmt.Errorf("T-card too short")
-		}
-		tc := TagCard{Type: TagType(args[0])}
-		parts := strings.SplitN(args[1:], " ", 3)
-		if len(parts) < 2 {
-			return fmt.Errorf("T-card needs name and uuid")
-		}
-		tc.Name = parts[0]
-		tc.UUID = parts[1]
-		if len(parts) == 3 {
-			tc.Value = parts[2]
-		}
-		d.T = append(d.T, tc)
+		return nil
 	case 'U':
 		d.U = FossilDecode(args)
+		return nil
 	default:
 		return fmt.Errorf("unknown card '%c'", card)
 	}
+}
+
+func parseACard(d *Deck, args string) error {
+	parts := strings.SplitN(args, " ", 3)
+	if len(parts) < 2 {
+		return fmt.Errorf("A-card needs 2+ fields")
+	}
+	ac := &AttachmentCard{Filename: FossilDecode(parts[0]), Target: parts[1]}
+	if len(parts) == 3 {
+		ac.Source = parts[2]
+	}
+	d.A = ac
+	return nil
+}
+
+func parseDCard(d *Deck, args string) error {
+	t, err := parseTimestamp(args)
+	if err != nil {
+		return fmt.Errorf("D-card: %w", err)
+	}
+	d.D = t
+	return nil
+}
+
+func parseECard(d *Deck, args string) error {
+	parts := strings.SplitN(args, " ", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("E-card needs datetime and uuid")
+	}
+	t, err := parseTimestamp(parts[0])
+	if err != nil {
+		return fmt.Errorf("E-card: %w", err)
+	}
+	d.E = &EventCard{Date: t, UUID: parts[1]}
+	return nil
+}
+
+func parseFCard(d *Deck, args string) error {
+	parts := strings.Fields(args)
+	if len(parts) == 0 {
+		return fmt.Errorf("empty F-card")
+	}
+	fc := FileCard{Name: FossilDecode(parts[0])}
+	if len(parts) >= 2 {
+		fc.UUID = parts[1]
+	}
+	if len(parts) >= 3 {
+		fc.Perm = parts[2]
+	}
+	if len(parts) >= 4 {
+		fc.OldName = FossilDecode(parts[3])
+	}
+	d.F = append(d.F, fc)
+	return nil
+}
+
+func parseJCard(d *Deck, args string) error {
+	parts := strings.SplitN(args, " ", 2)
+	jf := TicketField{Name: FossilDecode(parts[0])}
+	if len(parts) == 2 {
+		jf.Value = parts[1]
+	}
+	d.J = append(d.J, jf)
+	return nil
+}
+
+func parseQCard(d *Deck, args string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("Q-card too short")
+	}
+	cp := CherryPick{IsBackout: args[0] == '-'}
+	rest := args[1:]
+	parts := strings.SplitN(rest, " ", 2)
+	cp.Target = parts[0]
+	if len(parts) == 2 {
+		cp.Baseline = parts[1]
+	}
+	d.Q = append(d.Q, cp)
+	return nil
+}
+
+func parseTCard(d *Deck, args string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("T-card too short")
+	}
+	tc := TagCard{Type: TagType(args[0])}
+	parts := strings.SplitN(args[1:], " ", 3)
+	if len(parts) < 2 {
+		return fmt.Errorf("T-card needs name and uuid")
+	}
+	tc.Name = parts[0]
+	tc.UUID = parts[1]
+	if len(parts) == 3 {
+		tc.Value = parts[2]
+	}
+	d.T = append(d.T, tc)
 	return nil
 }
 
