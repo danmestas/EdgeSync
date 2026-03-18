@@ -51,7 +51,7 @@ func TestApply_ChecksumMismatch(t *testing.T) {
 }
 
 func TestApply_InvalidDelta(t *testing.T) {
-	_, err := Apply(nil, []byte{})
+	_, err := Apply([]byte{}, []byte{})
 	if err == nil {
 		t.Fatal("expected error on empty delta")
 	}
@@ -64,9 +64,9 @@ func TestChecksum(t *testing.T) {
 	if c1 != c2 {
 		t.Fatalf("Checksum not deterministic: %d != %d", c1, c2)
 	}
-	c0 := Checksum(nil)
+	c0 := Checksum([]byte{})
 	if c0 != 0 {
-		t.Fatalf("Checksum(nil) = %d, want 0", c0)
+		t.Fatalf("Checksum(empty) = %d, want 0", c0)
 	}
 }
 
