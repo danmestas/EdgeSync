@@ -288,11 +288,18 @@ func TestDecode_IGotBadArgCount(t *testing.T) {
 	}
 }
 
-func TestDecode_PushBadArgCount(t *testing.T) {
+func TestDecode_PushOneArg(t *testing.T) {
 	r := bufio.NewReader(strings.NewReader("push only-one\n"))
-	_, err := DecodeCard(r)
-	if err == nil {
-		t.Error("expected error for push with 1 arg")
+	card, err := DecodeCard(r)
+	if err != nil {
+		t.Fatalf("push with 1 arg should succeed: %v", err)
+	}
+	push := card.(*PushCard)
+	if push.ServerCode != "only-one" {
+		t.Errorf("ServerCode = %q, want %q", push.ServerCode, "only-one")
+	}
+	if push.ProjectCode != "" {
+		t.Errorf("ProjectCode should be empty, got %q", push.ProjectCode)
 	}
 }
 

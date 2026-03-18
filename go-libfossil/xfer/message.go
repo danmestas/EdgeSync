@@ -51,24 +51,36 @@ func (m *Message) EncodeUncompressed() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Decode decodes an xfer message. It first tries zlib-compressed format
-// (4-byte BE size prefix + zlib data, used by normal sync), then falls
-// back to uncompressed (used by clone protocol v3, which sends
-// Content-Type: application/x-fossil-uncompressed).
+// Decode decodes an xfer message. It tries three formats in order:
+// 1. Raw zlib (Fossil HTTP sync wire format)
+// 2. 4-byte BE size prefix + zlib (Fossil blob compression format)
+// 3. Uncompressed card data (clone protocol v3)
 func Decode(data []byte) (*Message, error) {
-	if len(data) < 4 {
-		return nil, fmt.Errorf("xfer: message too short (%d bytes)", len(data))
+	if len(data) == 0 {
+		return &Message{}, nil
 	}
-	// Try zlib first: skip 4-byte size prefix, attempt zlib decompression.
-	zlibData := data[4:]
-	zr, err := zlib.NewReader(bytes.NewReader(zlibData))
-	if err == nil {
+
+	// Try raw zlib first (Fossil HTTP /xfer wire format).
+	if zr, err := zlib.NewReader(bytes.NewReader(data)); err == nil {
 		raw, readErr := io.ReadAll(zr)
 		zr.Close()
 		if readErr == nil {
 			return DecodeUncompressed(raw)
 		}
 	}
+
+	// Try 4-byte size prefix + zlib (blob compression format).
+	if len(data) >= 4 {
+		zlibData := data[4:]
+		if zr, err := zlib.NewReader(bytes.NewReader(zlibData)); err == nil {
+			raw, readErr := io.ReadAll(zr)
+			zr.Close()
+			if readErr == nil {
+				return DecodeUncompressed(raw)
+			}
+		}
+	}
+
 	// Fallback: treat entire payload as uncompressed card data.
 	return DecodeUncompressed(data)
 }
