@@ -52,13 +52,14 @@ func HandleSyncWithOpts(ctx context.Context, r *repo.Repo, req *xfer.Message, op
 
 // handler holds per-request state while processing cards.
 type handler struct {
-	repo      *repo.Repo
-	buggify   BuggifyChecker
-	resp      []xfer.Card
-	pushOK    bool // client sent a valid push card
-	pullOK    bool // client sent a valid pull card
-	cloneMode bool // client sent a clone card
-	cloneSeq  int  // clone_seqno cursor from client
+	repo          *repo.Repo
+	buggify       BuggifyChecker
+	resp          []xfer.Card
+	pushOK        bool // client sent a valid push card
+	pullOK        bool // client sent a valid pull card
+	cloneMode     bool // client sent a clone card
+	cloneSeq      int  // clone_seqno cursor from client
+	uvCatalogSent bool // true after sending UV catalog
 }
 
 func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, error) {
@@ -96,7 +97,10 @@ func (h *handler) handleControlCard(card xfer.Card) {
 	case *xfer.LoginCard:
 		_ = c // Accept all logins. Future: verify credentials.
 	case *xfer.PragmaCard:
-		_ = c // Acknowledge client-version, ignore unknown pragmas.
+		if c.Name == "uv-hash" && len(c.Values) >= 1 {
+			h.handlePragmaUVHash(c.Values[0])
+		}
+		// Acknowledge client-version, ignore other unknown pragmas.
 	case *xfer.PushCard:
 		h.pushOK = true
 	case *xfer.PullCard:
@@ -120,6 +124,12 @@ func (h *handler) handleDataCard(card xfer.Card) error {
 		return h.handleFile(c.UUID, c.DeltaSrc, c.Content)
 	case *xfer.ReqConfigCard:
 		return h.handleReqConfig(c)
+	case *xfer.UVIGotCard:
+		return h.handleUVIGot(c)
+	case *xfer.UVGimmeCard:
+		return h.handleUVGimme(c)
+	case *xfer.UVFileCard:
+		return h.handleUVFile(c)
 	}
 	return nil
 }
