@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dmestas/edgesync/go-libfossil/blob"
+	"github.com/dmestas/edgesync/go-libfossil/delta"
 	"github.com/dmestas/edgesync/go-libfossil/hash"
 	"github.com/dmestas/edgesync/go-libfossil/sync"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
@@ -259,4 +260,79 @@ func TestCloneCancelledContext(t *testing.T) {
 	if _, statErr := os.Stat(repoPath); !os.IsNotExist(statErr) {
 		t.Errorf("repo file should be deleted after cancellation, but still exists")
 	}
+}
+
+// TestCloneWithPhantoms verifies that delta files with missing sources
+// create phantoms and are resolved via gimme on subsequent rounds.
+func TestCloneWithPhantoms(t *testing.T) {
+	// Base blob that the delta depends on.
+	baseContent := []byte("this is the base content for delta testing")
+	baseUUID := hash.SHA1(baseContent)
+
+	// Target content and its delta against base.
+	targetContent := []byte("this is the modified content for delta testing")
+	targetUUID := hash.SHA1(targetContent)
+	deltaBytes := delta.Create(baseContent, targetContent)
+
+	gimmesSeen := make(map[string]bool)
+
+	transport := &mockCloneTransport{
+		handler: func(round int, req *xfer.Message) *xfer.Message {
+			// Track gimme cards sent by the client.
+			for _, c := range req.Cards {
+				if g, ok := c.(*xfer.GimmeCard); ok {
+					gimmesSeen[g.UUID] = true
+				}
+			}
+
+			switch round {
+			case 0:
+				// Round 0: send delta file BEFORE its base — triggers phantom.
+				return &xfer.Message{Cards: []xfer.Card{
+					&xfer.PushCard{ServerCode: "s1", ProjectCode: "p1"},
+					&xfer.CFileCard{UUID: targetUUID, DeltaSrc: baseUUID, Content: deltaBytes},
+					&xfer.CloneSeqNoCard{SeqNo: 0},
+				}}
+			case 1:
+				// Round 1: seqno=0 so client switches to pull+gimme.
+				// Deliver the base blob that was requested via gimme.
+				return &xfer.Message{Cards: []xfer.Card{
+					&xfer.FileCard{UUID: baseUUID, Content: baseContent},
+					// Also re-send the delta now that base exists.
+					&xfer.CFileCard{UUID: targetUUID, DeltaSrc: baseUUID, Content: deltaBytes},
+					&xfer.CloneSeqNoCard{SeqNo: 0},
+				}}
+			default:
+				return &xfer.Message{Cards: []xfer.Card{
+					&xfer.CloneSeqNoCard{SeqNo: 0},
+				}}
+			}
+		},
+	}
+
+	tmpDir := t.TempDir()
+	repoPath := filepath.Join(tmpDir, "phantom.fossil")
+
+	r, result, err := sync.Clone(context.Background(), repoPath, transport, sync.CloneOpts{})
+	if err != nil {
+		t.Fatalf("Clone failed: %v", err)
+	}
+	defer r.Close()
+
+	// Verify base blob exists.
+	if _, ok := blob.Exists(r.DB(), baseUUID); !ok {
+		t.Error("base blob not found after clone")
+	}
+
+	// Verify target blob exists (delta resolved).
+	if _, ok := blob.Exists(r.DB(), targetUUID); !ok {
+		t.Error("target blob not found after clone (delta should be resolved)")
+	}
+
+	// Verify gimme was sent for the missing delta source.
+	if !gimmesSeen[baseUUID] && !gimmesSeen[targetUUID] {
+		t.Error("expected gimme card for phantom UUID, but none was sent")
+	}
+
+	t.Logf("Clone with phantoms: rounds=%d blobs=%d", result.Rounds, result.BlobsRecvd)
 }
