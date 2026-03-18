@@ -5,10 +5,6 @@ import (
 	"fmt"
 
 	"github.com/dmestas/edgesync/go-libfossil/blob"
-	"github.com/dmestas/edgesync/go-libfossil/content"
-	"github.com/dmestas/edgesync/go-libfossil/db"
-	"github.com/dmestas/edgesync/go-libfossil/delta"
-	"github.com/dmestas/edgesync/go-libfossil/hash"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
 )
 
@@ -143,15 +139,7 @@ func (s *session) buildFileCards() ([]xfer.Card, error) {
 
 // loadFileCard loads a blob by UUID and returns a FileCard plus its payload size.
 func (s *session) loadFileCard(uuid string) (*xfer.FileCard, int, error) {
-	rid, ok := blob.Exists(s.repo.DB(), uuid)
-	if !ok {
-		return nil, 0, fmt.Errorf("blob %s not found", uuid)
-	}
-	data, err := content.Expand(s.repo.DB(), rid)
-	if err != nil {
-		return nil, 0, err
-	}
-	return &xfer.FileCard{UUID: uuid, Content: data}, len(data), nil
+	return LoadBlob(s.repo.DB(), uuid)
 }
 
 // buildGimmeCards produces gimme cards from the phantoms set.
@@ -294,81 +282,12 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 
 // handleFileCard stores a received file (or delta-file) into the repo.
 func (s *session) handleFileCard(uuid, deltaSrc string, payload []byte) error {
-	if uuid == "" {
-		panic("sync.handleFileCard: uuid must not be empty")
-	}
-	if payload == nil {
-		panic("sync.handleFileCard: payload must not be nil")
-	}
-	if !hash.IsValidHash(uuid) {
-		return fmt.Errorf("sync: invalid UUID format: %s", uuid)
-	}
-	var fullContent []byte
-
-	if deltaSrc != "" {
-		// Delta: load base via content.Expand, apply delta
-		srcRid, ok := blob.Exists(s.repo.DB(), deltaSrc)
-		if !ok {
-			return fmt.Errorf("delta source %s not found", deltaSrc)
-		}
-		baseContent, err := content.Expand(s.repo.DB(), srcRid)
-		if err != nil {
-			return fmt.Errorf("expanding delta source %s: %w", deltaSrc, err)
-		}
-		applied, err := delta.Apply(baseContent, payload)
-		if err != nil {
-			return fmt.Errorf("applying delta for %s: %w", uuid, err)
-		}
-		fullContent = applied
-	} else {
-		fullContent = payload
-	}
-
-	// Compute the expected hash based on UUID length.
-	// SHA1 UUIDs are 40 hex chars, SHA3 UUIDs are 64 hex chars.
-	var computedUUID string
-	if len(uuid) > 40 {
-		computedUUID = hash.SHA3(fullContent)
-	} else {
-		computedUUID = hash.SHA1(fullContent)
-	}
-	if computedUUID != uuid {
-		return fmt.Errorf("UUID mismatch for received file: expected %s, got %s", uuid, computedUUID)
-	}
-
-	err := s.repo.WithTx(func(tx *db.Tx) error {
-		// Check if already stored.
-		if rid, ok := blob.Exists(tx, uuid); ok {
-			_, err := tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid)
-			return err
-		}
-		compressed, err := blob.Compress(fullContent)
-		if err != nil {
-			return err
-		}
-		result, err := tx.Exec(
-			"INSERT INTO blob(uuid, size, content, rcvid) VALUES(?, ?, ?, 1)",
-			uuid, len(fullContent), compressed,
-		)
-		if err != nil {
-			return err
-		}
-		rid, err := result.LastInsertId()
-		if err != nil {
-			return err
-		}
-		// Add to unclustered so we propagate to other remotes
-		_, err = tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid)
+	if err := StoreBlob(s.repo.DB(), uuid, deltaSrc, payload); err != nil {
 		return err
-	})
-	if err != nil {
-		return fmt.Errorf("storing file %s: %w", uuid, err)
 	}
-
 	// BUGGIFY: simulate post-store failure to test retry/recovery logic.
 	if s.opts.Buggify != nil && s.opts.Buggify.Check("sync.handleFileCard.reject", 0.03) {
 		return fmt.Errorf("buggify: simulated storage failure for %s", uuid)
 	}
-
 	return nil
 }
