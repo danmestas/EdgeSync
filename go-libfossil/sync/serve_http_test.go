@@ -26,7 +26,7 @@ func TestServeHTTPRoundTrip(t *testing.T) {
 	r := setupSyncTestRepo(t)
 	data := []byte("http test blob")
 	uuid := hash.SHA1(data)
-	StoreBlob(r.DB(), uuid, "", data)
+	storeReceivedFile(r, uuid, "", data)
 
 	addr := freePort(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -114,7 +114,7 @@ func TestServeHTTPClone(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		data := []byte(fmt.Sprintf("clone http %d", i))
 		uuid := hash.SHA1(data)
-		StoreBlob(r.DB(), uuid, "", data)
+		storeReceivedFile(r, uuid, "", data)
 		stored[uuid] = true
 	}
 

@@ -51,25 +51,26 @@ func (m *Message) EncodeUncompressed() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Decode zlib-decompresses the input and decodes all cards.
-// Handles Fossil's compression format: 4-byte big-endian uncompressed size prefix
-// followed by standard zlib data.
+// Decode decodes an xfer message. It first tries zlib-compressed format
+// (4-byte BE size prefix + zlib data, used by normal sync), then falls
+// back to uncompressed (used by clone protocol v3, which sends
+// Content-Type: application/x-fossil-uncompressed).
 func Decode(data []byte) (*Message, error) {
 	if len(data) < 4 {
 		return nil, fmt.Errorf("xfer: message too short (%d bytes)", len(data))
 	}
-	// Skip 4-byte big-endian uncompressed size prefix (Fossil's blob_compress format)
+	// Try zlib first: skip 4-byte size prefix, attempt zlib decompression.
 	zlibData := data[4:]
 	zr, err := zlib.NewReader(bytes.NewReader(zlibData))
-	if err != nil {
-		return nil, fmt.Errorf("xfer: message zlib init: %w", err)
+	if err == nil {
+		raw, readErr := io.ReadAll(zr)
+		zr.Close()
+		if readErr == nil {
+			return DecodeUncompressed(raw)
+		}
 	}
-	defer zr.Close()
-	raw, err := io.ReadAll(zr)
-	if err != nil {
-		return nil, fmt.Errorf("xfer: message zlib decompress: %w", err)
-	}
-	return DecodeUncompressed(raw)
+	// Fallback: treat entire payload as uncompressed card data.
+	return DecodeUncompressed(data)
 }
 
 // DecodeUncompressed decodes cards from uncompressed data.

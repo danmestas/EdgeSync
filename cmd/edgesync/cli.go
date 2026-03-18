@@ -23,6 +23,7 @@ type Globals struct {
 
 type RepoCmd struct {
 	New      RepoNewCmd      `cmd:"" help:"Create a new repository"`
+	Clone    RepoCloneCmd    `cmd:"" help:"Clone a remote repository"`
 	Ci       RepoCiCmd       `cmd:"" help:"Checkin file changes"`
 	Co       RepoCoCmd       `cmd:"" help:"Checkout a version"`
 	Ls       RepoLsCmd       `cmd:"" help:"List files in a version"`

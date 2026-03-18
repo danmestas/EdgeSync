@@ -1,22 +1,20 @@
 package sync
 
-import (
-	"context"
-
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-)
+import "github.com/dmestas/edgesync/go-libfossil/simio"
 
 // CloneOpts configures a clone operation.
 type CloneOpts struct {
-	ProjectCode string
-	ServerCode  string
-	User        string
-	Password    string
-	Version     int
+	User     string     // Credentials for clone auth (also default admin user)
+	Password string
+	Version  int        // Protocol version (default 3)
+	Env      *simio.Env // nil defaults to RealEnv
 }
 
-// Clone performs a full repository clone from a remote.
-// NOT IMPLEMENTED — panics.
-func Clone(ctx context.Context, r *repo.Repo, t Transport, opts CloneOpts) error {
-	panic("sync.Clone: not implemented — planned for Phase G")
+// CloneResult reports what happened during a clone.
+type CloneResult struct {
+	Rounds      int
+	BlobsRecvd  int
+	ProjectCode string
+	ServerCode  string
+	Messages    []string // Informational messages from server
 }

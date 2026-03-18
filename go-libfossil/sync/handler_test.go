@@ -7,6 +7,7 @@ import (
 
 	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/hash"
+	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
 )
 
@@ -21,11 +22,20 @@ func findCards[T xfer.Card](msg *xfer.Message) []T {
 	return out
 }
 
+// storeTestBlob stores a blob and returns its UUID.
+func storeTestBlob(t *testing.T, r *repo.Repo, data []byte) string {
+	t.Helper()
+	uuid := hash.SHA1(data)
+	if err := storeReceivedFile(r, uuid, "", data); err != nil {
+		t.Fatalf("storeReceivedFile: %v", err)
+	}
+	return uuid
+}
+
+
 func TestHandlePull(t *testing.T) {
 	r := setupSyncTestRepo(t)
-	data := []byte("pull me")
-	uuid := hash.SHA1(data)
-	StoreBlob(r.DB(), uuid, "", data)
+	uuid := storeTestBlob(t, r, []byte("pull me"))
 
 	req := &xfer.Message{Cards: []xfer.Card{
 		&xfer.PullCard{ServerCode: "test", ProjectCode: "test"},
@@ -92,8 +102,7 @@ func TestHandleIGotWithoutPull(t *testing.T) {
 func TestHandleGimme(t *testing.T) {
 	r := setupSyncTestRepo(t)
 	data := []byte("gimme this")
-	uuid := hash.SHA1(data)
-	StoreBlob(r.DB(), uuid, "", data)
+	uuid := storeTestBlob(t, r, data)
 
 	req := &xfer.Message{Cards: []xfer.Card{
 		&xfer.PullCard{ServerCode: "test", ProjectCode: "test"},
@@ -180,10 +189,9 @@ func TestHandleFileWithoutPush(t *testing.T) {
 func TestHandleClone(t *testing.T) {
 	r := setupSyncTestRepo(t)
 	stored := map[string]bool{}
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		data := []byte(fmt.Sprintf("clone test %d", i))
-		uuid := hash.SHA1(data)
-		StoreBlob(r.DB(), uuid, "", data)
+		uuid := storeTestBlob(t, r, data)
 		stored[uuid] = true
 	}
 
@@ -208,8 +216,7 @@ func TestHandleClonePagination(t *testing.T) {
 	r := setupSyncTestRepo(t)
 	for i := range DefaultCloneBatchSize + 5 {
 		data := []byte(fmt.Sprintf("page blob %d", i))
-		uuid := hash.SHA1(data)
-		StoreBlob(r.DB(), uuid, "", data)
+		storeTestBlob(t, r, data)
 	}
 
 	// Page 1
@@ -243,7 +250,6 @@ func TestHandleClonePagination(t *testing.T) {
 		t.Fatalf("page 2: got %d files, want >= 5", len(files2))
 	}
 
-	// Page 2 should have no seqno (all blobs sent)
 	seqnos2 := findCards[*xfer.CloneSeqNoCard](resp2)
 	if len(seqnos2) > 0 {
 		t.Fatal("page 2: should not have clone_seqno (all blobs served)")

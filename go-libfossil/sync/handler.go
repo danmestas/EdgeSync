@@ -5,9 +5,15 @@ import (
 	"fmt"
 
 	"github.com/dmestas/edgesync/go-libfossil/blob"
+	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
+
+	libfossil "github.com/dmestas/edgesync/go-libfossil"
 )
+
+// DefaultCloneBatchSize is the number of blobs sent per clone round.
+const DefaultCloneBatchSize = 200
 
 // HandleFunc is the server-side sync handler signature.
 // Transport listeners call this with decoded requests and write back the response.
@@ -70,11 +76,9 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 func (h *handler) handleControlCard(card xfer.Card) {
 	switch c := card.(type) {
 	case *xfer.LoginCard:
-		// Accept all logins. Future: verify credentials.
-		_ = c
+		_ = c // Accept all logins. Future: verify credentials.
 	case *xfer.PragmaCard:
-		// Acknowledge client-version, ignore unknown pragmas.
-		_ = c
+		_ = c // Acknowledge client-version, ignore unknown pragmas.
 	case *xfer.PushCard:
 		h.pushOK = true
 	case *xfer.PullCard:
@@ -114,22 +118,26 @@ func (h *handler) handleIGot(c *xfer.IGotCard) error {
 }
 
 func (h *handler) handleGimme(c *xfer.GimmeCard) error {
-	card, _, err := LoadBlob(h.repo.DB(), c.UUID)
-	if err != nil {
+	rid, ok := blob.Exists(h.repo.DB(), c.UUID)
+	if !ok {
 		return nil // blob not found — not fatal, skip
 	}
-	h.resp = append(h.resp, card)
+	data, err := content.Expand(h.repo.DB(), rid)
+	if err != nil {
+		return nil // expansion failed — skip
+	}
+	h.resp = append(h.resp, &xfer.FileCard{UUID: c.UUID, Content: data})
 	return nil
 }
 
-func (h *handler) handleFile(uuid, deltaSrc string, content []byte) error {
+func (h *handler) handleFile(uuid, deltaSrc string, payload []byte) error {
 	if !h.pushOK {
 		h.resp = append(h.resp, &xfer.ErrorCard{
 			Message: fmt.Sprintf("file %s rejected: no push card", uuid),
 		})
 		return nil
 	}
-	if err := StoreBlob(h.repo.DB(), uuid, deltaSrc, content); err != nil {
+	if err := storeReceivedFile(h.repo, uuid, deltaSrc, payload); err != nil {
 		h.resp = append(h.resp, &xfer.ErrorCard{
 			Message: fmt.Sprintf("storing %s: %v", uuid, err),
 		})
@@ -153,28 +161,51 @@ func (h *handler) handleReqConfig(c *xfer.ReqConfigCard) error {
 }
 
 func (h *handler) emitIGots() error {
-	uuids, err := ListBlobUUIDs(h.repo.DB())
+	rows, err := h.repo.DB().Query("SELECT uuid FROM blob WHERE size >= 0")
 	if err != nil {
 		return fmt.Errorf("handler: listing blobs: %w", err)
 	}
-	for _, uuid := range uuids {
+	defer rows.Close()
+	for rows.Next() {
+		var uuid string
+		if err := rows.Scan(&uuid); err != nil {
+			return err
+		}
 		h.resp = append(h.resp, &xfer.IGotCard{UUID: uuid})
 	}
-	return nil
+	return rows.Err()
 }
 
 func (h *handler) emitCloneBatch() error {
-	cards, lastRID, more, err := ListBlobsFromRID(
-		h.repo.DB(), h.cloneSeq, DefaultCloneBatchSize,
+	rows, err := h.repo.DB().Query(
+		"SELECT rid, uuid FROM blob WHERE rid > ? AND size >= 0 ORDER BY rid LIMIT ?",
+		h.cloneSeq, DefaultCloneBatchSize+1,
 	)
 	if err != nil {
 		return fmt.Errorf("handler: clone batch: %w", err)
 	}
-	for i := range cards {
-		h.resp = append(h.resp, &cards[i])
+	defer rows.Close()
+
+	count := 0
+	var lastRID int
+	for rows.Next() {
+		var rid int
+		var uuid string
+		if err := rows.Scan(&rid, &uuid); err != nil {
+			return err
+		}
+		if count >= DefaultCloneBatchSize {
+			// More blobs remain — emit seqno for continuation.
+			h.resp = append(h.resp, &xfer.CloneSeqNoCard{SeqNo: lastRID})
+			return nil
+		}
+		data, err := content.Expand(h.repo.DB(), libfossil.FslID(rid))
+		if err != nil {
+			return fmt.Errorf("handler: expanding rid %d: %w", rid, err)
+		}
+		h.resp = append(h.resp, &xfer.FileCard{UUID: uuid, Content: data})
+		lastRID = rid
+		count++
 	}
-	if more {
-		h.resp = append(h.resp, &xfer.CloneSeqNoCard{SeqNo: lastRID})
-	}
-	return nil
+	return rows.Err()
 }
