@@ -1,0 +1,29 @@
+#!/bin/sh
+# EdgeSync pre-commit hook
+# Runs fast tests (~5s) before every commit.
+# Full DST/sim sweep available via: make dst-full / make sim-full
+#
+# Install: git config core.hooksPath .githooks
+# Skip:    git commit --no-verify (emergency only)
+
+set -e
+
+echo "=== pre-commit: unit tests ==="
+go test ./go-libfossil/... -short -count=1 -timeout=30s > /dev/null 2>&1
+echo "  go-libfossil: OK"
+
+go test ./leaf/agent/ -short -count=1 -timeout=30s > /dev/null 2>&1
+echo "  leaf/agent: OK"
+
+go test ./bridge/bridge/ -short -count=1 -timeout=30s > /dev/null 2>&1
+echo "  bridge/bridge: OK"
+
+echo "=== pre-commit: DST quick (1 seed) ==="
+go test ./dst/ -run TestDST -count=1 -timeout=30s > /dev/null 2>&1
+echo "  dst: OK"
+
+echo "=== pre-commit: sim unit tests ==="
+go test ./sim/ -run "TestFaultProxy|TestGenerateSchedule|TestBuggify" -count=1 -timeout=30s > /dev/null 2>&1
+echo "  sim: OK"
+
+echo "=== pre-commit: all passed (~5s) ==="
