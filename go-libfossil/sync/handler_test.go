@@ -279,6 +279,114 @@ func TestHandleReqConfig(t *testing.T) {
 	}
 }
 
+func TestHandlePushFileStoreFails(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	// File with valid push but bad hash → storeReceivedFile returns error → ErrorCard
+	badUUID := "cccccccccccccccccccccccccccccccccccccccc"
+	req := &xfer.Message{Cards: []xfer.Card{
+		&xfer.PushCard{ServerCode: "test", ProjectCode: "test"},
+		&xfer.FileCard{UUID: badUUID, Content: []byte("wrong hash content")},
+	}}
+	resp, err := HandleSync(context.Background(), r, req)
+	if err != nil {
+		t.Fatalf("HandleSync: %v", err)
+	}
+	errs := findCards[*xfer.ErrorCard](resp)
+	if len(errs) == 0 {
+		t.Fatal("expected error card for bad hash")
+	}
+}
+
+func TestHandleCFileCard(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	data := []byte("cfile content")
+	uuid := hash.SHA1(data)
+
+	req := &xfer.Message{Cards: []xfer.Card{
+		&xfer.PushCard{ServerCode: "test", ProjectCode: "test"},
+		&xfer.CFileCard{UUID: uuid, Content: data, USize: len(data)},
+	}}
+	resp, err := HandleSync(context.Background(), r, req)
+	if err != nil {
+		t.Fatalf("HandleSync: %v", err)
+	}
+	errs := findCards[*xfer.ErrorCard](resp)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected error: %s", errs[0].Message)
+	}
+	_, ok := blob.Exists(r.DB(), uuid)
+	if !ok {
+		t.Fatal("cfile blob not stored")
+	}
+}
+
+func TestHandleLoginAndPragma(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	storeTestBlob(t, r, []byte("login pragma test"))
+
+	// Login + pragma should be accepted without error
+	req := &xfer.Message{Cards: []xfer.Card{
+		&xfer.LoginCard{User: "test", Nonce: "abc", Signature: "def"},
+		&xfer.PragmaCard{Name: "client-version", Values: []string{"22800"}},
+		&xfer.PragmaCard{Name: "unknown-pragma", Values: []string{"ignored"}},
+		&xfer.PullCard{ServerCode: "test", ProjectCode: "test"},
+	}}
+	resp, err := HandleSync(context.Background(), r, req)
+	if err != nil {
+		t.Fatalf("HandleSync: %v", err)
+	}
+	errs := findCards[*xfer.ErrorCard](resp)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected error: %s", errs[0].Message)
+	}
+	igots := findCards[*xfer.IGotCard](resp)
+	if len(igots) == 0 {
+		t.Fatal("expected igot cards after login+pragma+pull")
+	}
+}
+
+func TestHandleCloneSeqNo(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	// Store blobs, then clone with a seqno that skips them
+	for i := range 3 {
+		data := []byte(fmt.Sprintf("seqno test %d", i))
+		storeTestBlob(t, r, data)
+	}
+
+	// Get all blobs to find the max rid
+	req1 := &xfer.Message{Cards: []xfer.Card{&xfer.CloneCard{Version: 1}}}
+	resp1, _ := HandleSync(context.Background(), r, req1)
+	files1 := findCards[*xfer.FileCard](resp1)
+
+	// Now clone with seqno past all blobs — should get nothing
+	req2 := &xfer.Message{Cards: []xfer.Card{
+		&xfer.CloneCard{Version: 1},
+		&xfer.CloneSeqNoCard{SeqNo: 9999},
+	}}
+	resp2, err := HandleSync(context.Background(), r, req2)
+	if err != nil {
+		t.Fatalf("HandleSync: %v", err)
+	}
+	files2 := findCards[*xfer.FileCard](resp2)
+	if len(files2) > 0 {
+		t.Fatalf("expected no files with high seqno, got %d", len(files2))
+	}
+
+	_ = files1 // used for context
+}
+
+func TestHandleEmptyRequest(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	req := &xfer.Message{Cards: nil}
+	resp, err := HandleSync(context.Background(), r, req)
+	if err != nil {
+		t.Fatalf("HandleSync: %v", err)
+	}
+	if len(resp.Cards) != 0 {
+		t.Fatalf("expected empty response for empty request, got %d cards", len(resp.Cards))
+	}
+}
+
 func TestHandleReqConfigMissing(t *testing.T) {
 	r := setupSyncTestRepo(t)
 

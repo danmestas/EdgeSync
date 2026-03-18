@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/dmestas/edgesync/go-libfossil/hash"
+	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
 )
 
@@ -105,6 +108,115 @@ func TestServeHTTPPushPull(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("pushed blob not available via pull")
+	}
+}
+
+func TestServeHTTPGetProbe(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	addr := freePort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go ServeHTTP(ctx, addr, r, HandleSync)
+	time.Sleep(100 * time.Millisecond)
+
+	// GET should return HTML, not an error.
+	resp, err := http.Get(fmt.Sprintf("http://%s/", addr))
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("GET status: %d", resp.StatusCode)
+	}
+	ct := resp.Header.Get("Content-Type")
+	if ct != "text/html" {
+		t.Fatalf("GET content-type: %s", ct)
+	}
+}
+
+func TestServeHTTPEmptyPost(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	addr := freePort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go ServeHTTP(ctx, addr, r, HandleSync)
+	time.Sleep(100 * time.Millisecond)
+
+	// Empty POST should return an empty xfer response, not 400.
+	resp, err := http.Post(fmt.Sprintf("http://%s/", addr), "application/x-fossil", nil)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("empty POST status: %d", resp.StatusCode)
+	}
+}
+
+func TestServeHTTPBadPayload(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	addr := freePort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go ServeHTTP(ctx, addr, r, HandleSync)
+	time.Sleep(100 * time.Millisecond)
+
+	// Send binary garbage that isn't valid zlib or card data.
+	// The Decode fallback to uncompressed will try to parse cards,
+	// which may succeed on some text. Use NUL bytes to force failure.
+	garbage := make([]byte, 50)
+	for i := range garbage {
+		garbage[i] = 0xFF
+	}
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s/", addr),
+		"application/x-fossil",
+		strings.NewReader(string(garbage)),
+	)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	// Decode fallback to uncompressed may produce empty cards or error.
+	// Either 200 (empty response) or 400 (decode error) is acceptable
+	// since the data has no valid cards.
+	if resp.StatusCode != 200 && resp.StatusCode != 400 {
+		t.Fatalf("bad payload status: %d, want 200 or 400", resp.StatusCode)
+	}
+}
+
+func TestServeHTTPHandlerError(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	addr := freePort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handler that always returns an error → server sends 500.
+	failHandler := func(_ context.Context, _ *repo.Repo, _ *xfer.Message) (*xfer.Message, error) {
+		return nil, fmt.Errorf("intentional handler failure")
+	}
+
+	go ServeHTTP(ctx, addr, r, failHandler)
+	time.Sleep(100 * time.Millisecond)
+
+	// Use raw HTTP to check the 500 status directly.
+	body, _ := (&xfer.Message{Cards: []xfer.Card{
+		&xfer.PullCard{ServerCode: "test", ProjectCode: "test"},
+	}}).Encode()
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s/", addr),
+		"application/x-fossil",
+		strings.NewReader(string(body)),
+	)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 500 {
+		t.Fatalf("handler error status: %d, want 500", resp.StatusCode)
 	}
 }
 
