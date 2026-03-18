@@ -9,8 +9,20 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/hash"
 )
 
-func Store(q db.Querier, content []byte) (libfossil.FslID, string, error) {
-	uuid := hash.SHA1(content)
+func Store(q db.Querier, content []byte) (rid libfossil.FslID, uuid string, err error) {
+	if q == nil {
+		panic("blob.Store: q must not be nil")
+	}
+	if len(content) == 0 {
+		panic("blob.Store: content length must be > 0")
+	}
+	defer func() {
+		if err == nil && rid <= 0 {
+			panic("blob.Store: postcondition violated: rid <= 0 with no error")
+		}
+	}()
+
+	uuid = hash.SHA1(content)
 
 	if rid, ok := Exists(q, uuid); ok {
 		return rid, uuid, nil
@@ -29,16 +41,32 @@ func Store(q db.Querier, content []byte) (libfossil.FslID, string, error) {
 		return 0, "", fmt.Errorf("blob.Store insert: %w", err)
 	}
 
-	rid, err := result.LastInsertId()
+	ridInt, err := result.LastInsertId()
 	if err != nil {
 		return 0, "", fmt.Errorf("blob.Store lastid: %w", err)
 	}
 
-	return libfossil.FslID(rid), uuid, nil
+	rid = libfossil.FslID(ridInt)
+	return rid, uuid, nil
 }
 
-func StoreDelta(q db.Querier, content []byte, srcRid libfossil.FslID) (libfossil.FslID, string, error) {
-	uuid := hash.SHA1(content)
+func StoreDelta(q db.Querier, content []byte, srcRid libfossil.FslID) (rid libfossil.FslID, uuid string, err error) {
+	if q == nil {
+		panic("blob.StoreDelta: q must not be nil")
+	}
+	if len(content) == 0 {
+		panic("blob.StoreDelta: content length must be > 0")
+	}
+	if srcRid <= 0 {
+		panic("blob.StoreDelta: srcRid must be > 0")
+	}
+	defer func() {
+		if err == nil && rid <= 0 {
+			panic("blob.StoreDelta: postcondition violated: rid <= 0 with no error")
+		}
+	}()
+
+	uuid = hash.SHA1(content)
 
 	if rid, ok := Exists(q, uuid); ok {
 		return rid, uuid, nil
@@ -63,20 +91,33 @@ func StoreDelta(q db.Querier, content []byte, srcRid libfossil.FslID) (libfossil
 		return 0, "", fmt.Errorf("blob.StoreDelta insert blob: %w", err)
 	}
 
-	rid, err := result.LastInsertId()
+	ridInt, err := result.LastInsertId()
 	if err != nil {
 		return 0, "", fmt.Errorf("blob.StoreDelta lastid: %w", err)
 	}
 
+	rid = libfossil.FslID(ridInt)
 	_, err = q.Exec("INSERT INTO delta(rid, srcid) VALUES(?, ?)", rid, srcRid)
 	if err != nil {
 		return 0, "", fmt.Errorf("blob.StoreDelta insert delta: %w", err)
 	}
 
-	return libfossil.FslID(rid), uuid, nil
+	return rid, uuid, nil
 }
 
-func StorePhantom(q db.Querier, uuid string) (libfossil.FslID, error) {
+func StorePhantom(q db.Querier, uuid string) (rid libfossil.FslID, err error) {
+	if q == nil {
+		panic("blob.StorePhantom: q must not be nil")
+	}
+	if uuid == "" {
+		panic("blob.StorePhantom: uuid must not be empty")
+	}
+	defer func() {
+		if err == nil && rid <= 0 {
+			panic("blob.StorePhantom: postcondition violated: rid <= 0 with no error")
+		}
+	}()
+
 	if rid, ok := Exists(q, uuid); ok {
 		return rid, nil
 	}
@@ -89,23 +130,36 @@ func StorePhantom(q db.Querier, uuid string) (libfossil.FslID, error) {
 		return 0, fmt.Errorf("blob.StorePhantom: %w", err)
 	}
 
-	rid, err := result.LastInsertId()
+	ridInt, err := result.LastInsertId()
 	if err != nil {
 		return 0, fmt.Errorf("blob.StorePhantom lastid: %w", err)
 	}
 
+	rid = libfossil.FslID(ridInt)
 	_, err = q.Exec("INSERT INTO phantom(rid) VALUES(?)", rid)
 	if err != nil {
 		return 0, fmt.Errorf("blob.StorePhantom phantom table: %w", err)
 	}
 
-	return libfossil.FslID(rid), nil
+	return rid, nil
 }
 
-func Load(q db.Querier, rid libfossil.FslID) ([]byte, error) {
+func Load(q db.Querier, rid libfossil.FslID) (result []byte, err error) {
+	if q == nil {
+		panic("blob.Load: q must not be nil")
+	}
+	if rid <= 0 {
+		panic("blob.Load: rid must be > 0")
+	}
+	defer func() {
+		if err == nil && result == nil {
+			panic("blob.Load: postcondition violated: result is nil with no error")
+		}
+	}()
+
 	var content []byte
 	var size int64
-	err := q.QueryRow("SELECT content, size FROM blob WHERE rid=?", rid).Scan(&content, &size)
+	err = q.QueryRow("SELECT content, size FROM blob WHERE rid=?", rid).Scan(&content, &size)
 	if err != nil {
 		return nil, fmt.Errorf("blob.Load query: %w", err)
 	}
@@ -128,6 +182,12 @@ func Load(q db.Querier, rid libfossil.FslID) ([]byte, error) {
 }
 
 func Exists(q db.Querier, uuid string) (libfossil.FslID, bool) {
+	if q == nil {
+		panic("blob.Exists: q must not be nil")
+	}
+	if uuid == "" {
+		panic("blob.Exists: uuid must not be empty")
+	}
 	var rid int64
 	err := q.QueryRow("SELECT rid FROM blob WHERE uuid=?", uuid).Scan(&rid)
 	if err != nil {

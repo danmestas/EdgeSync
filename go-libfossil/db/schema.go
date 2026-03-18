@@ -183,6 +183,9 @@ INSERT INTO rcvfrom(rcvid, uid, mtime, nonce, ipaddr) VALUES(1, 0, 0, NULL, NULL
 `
 
 func CreateRepoSchema(d *DB) error {
+	if d == nil {
+		panic("db.CreateRepoSchema: d must not be nil")
+	}
 	_, err := d.Exec(schemaRepo1)
 	if err != nil {
 		return fmt.Errorf("schema repo1: %w", err)
@@ -195,6 +198,12 @@ func CreateRepoSchema(d *DB) error {
 }
 
 func SeedUser(d *DB, login string) error {
+	if d == nil {
+		panic("db.SeedUser: d must not be nil")
+	}
+	if login == "" {
+		panic("db.SeedUser: login must not be empty")
+	}
 	_, err := d.Exec(
 		"INSERT OR IGNORE INTO user(uid, login, pw, cap, info) VALUES(1, ?, '', 's', '')",
 		login,
@@ -203,6 +212,12 @@ func SeedUser(d *DB, login string) error {
 }
 
 func SeedConfig(d *DB, rng simio.Rand) error {
+	if d == nil {
+		panic("db.SeedConfig: d must not be nil")
+	}
+	if rng == nil {
+		panic("db.SeedConfig: rng must not be nil")
+	}
 	projCode, err := randomHex(20, rng)
 	if err != nil {
 		return fmt.Errorf("generating project-code: %w", err)

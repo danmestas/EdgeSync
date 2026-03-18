@@ -47,6 +47,12 @@ func (b *Buggify) Check(site string, probability float64) bool {
 	if b == nil {
 		return false
 	}
+	if site == "" {
+		panic("buggify.Check: site must not be empty")
+	}
+	if probability < 0 || probability > 1 {
+		panic("buggify.Check: probability must be in [0,1]")
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if !b.sites[site] {

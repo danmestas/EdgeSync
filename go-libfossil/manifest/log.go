@@ -23,6 +23,9 @@ type LogEntry struct {
 }
 
 func Log(r *repo.Repo, opts LogOpts) ([]LogEntry, error) {
+	if r == nil {
+		panic("manifest.Log: r must not be nil")
+	}
 	if opts.Start <= 0 {
 		return nil, fmt.Errorf("manifest.Log: invalid start rid %d", opts.Start)
 	}
@@ -33,18 +36,18 @@ func Log(r *repo.Repo, opts LogOpts) ([]LogEntry, error) {
 			break
 		}
 		var uuid, user, comment string
-		var mtimeRaw any
+		var mtimeScanned any
 		err := r.DB().QueryRow(
 			"SELECT b.uuid, e.user, e.comment, e.mtime FROM blob b JOIN event e ON e.objid=b.rid WHERE b.rid=?",
 			current,
-		).Scan(&uuid, &user, &comment, &mtimeRaw)
+		).Scan(&uuid, &user, &comment, &mtimeScanned)
 		if err != nil {
 			return nil, fmt.Errorf("manifest.Log: rid=%d: %w", current, err)
 		}
 		// mtime is a julianday float. modernc returns float64;
 		// ncruces and mattn return time.Time. Handle both.
 		var mtime float64
-		switch v := mtimeRaw.(type) {
+		switch v := mtimeScanned.(type) {
 		case float64:
 			mtime = v
 		case time.Time:
@@ -52,7 +55,7 @@ func Log(r *repo.Repo, opts LogOpts) ([]LogEntry, error) {
 		case int64:
 			mtime = float64(v)
 		default:
-			return nil, fmt.Errorf("manifest.Log: rid=%d: unexpected mtime type %T", current, mtimeRaw)
+			return nil, fmt.Errorf("manifest.Log: rid=%d: unexpected mtime type %T", current, mtimeScanned)
 		}
 		var parents []string
 		rows, err := r.DB().Query(
@@ -62,7 +65,9 @@ func Log(r *repo.Repo, opts LogOpts) ([]LogEntry, error) {
 		if err == nil {
 			for rows.Next() {
 				var puuid string
-				rows.Scan(&puuid)
+				if err := rows.Scan(&puuid); err != nil {
+					continue
+				}
 				parents = append(parents, puuid)
 			}
 			rows.Close()

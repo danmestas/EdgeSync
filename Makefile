@@ -1,4 +1,4 @@
-.PHONY: build test clean leaf bridge edgesync dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks
+.PHONY: build test clean leaf bridge edgesync dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks drivers
 
 # --- Build ---
 
@@ -19,10 +19,11 @@ clean:
 # --- Test (what CI runs) ---
 
 test:
-	cd go-libfossil && go test -short ./...
-	cd leaf && go test -short ./...
-	cd bridge && go test -short ./...
-	cd dst && go test ./...
+	go test ./go-libfossil/... -short -count=1
+	go test ./leaf/... -short -count=1
+	go test ./bridge/... -short -count=1
+	go test ./dst/ -run 'TestScenario|TestE2E|TestMockFossil|TestSimulator|TestCheck' -count=1
+	go test ./sim/ -run 'TestFaultProxy|TestGenerateSchedule|TestBuggify' -count=1
 
 # --- Pre-commit hook setup ---
 
@@ -33,7 +34,7 @@ setup-hooks:
 
 # --- DST (Deterministic Simulation Testing) — run locally ---
 
-# Quick: 8 seeds x normal, ~2s
+# Quick: 8 seeds × normal, ~2s
 dst:
 	@echo "=== DST quick (8 seeds, normal) ==="
 	@for seed in 1 2 3 4 5 6 7 8; do \
@@ -42,9 +43,9 @@ dst:
 	done
 	@echo "=== DST quick passed ==="
 
-# Full: 16 seeds x 3 levels, ~40s
+# Full: 16 seeds × 3 levels, ~40s
 dst-full:
-	@echo "=== DST full (16 seeds x 3 levels) ==="
+	@echo "=== DST full (16 seeds × 3 levels) ==="
 	@fail=0; \
 	for level in normal adversarial hostile; do \
 		for seed in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do \
@@ -87,9 +88,9 @@ dst-drivers:
 sim:
 	go test ./sim/ -run TestSimulation -sim.seed=1 -v -timeout=120s
 
-# Full: 16 seeds x 3 severities
+# Full: 16 seeds × 3 severities
 sim-full:
-	@echo "=== Sim full (16 seeds x 3 severities) ==="
+	@echo "=== Sim full (16 seeds × 3 severities) ==="
 	@for severity in normal adversarial hostile; do \
 		for seed in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do \
 			echo "  seed=$$seed severity=$$severity ..."; \
@@ -102,9 +103,9 @@ sim-full:
 
 drivers:
 	@echo "=== modernc (default) ==="
-	cd go-libfossil && go test ./... -count=1
+	go test ./go-libfossil/... -count=1
 	@echo "=== ncruces ==="
-	cd go-libfossil && go test -tags ncruces ./... -count=1
+	go test -tags ncruces ./go-libfossil/... -count=1
 	@echo "=== mattn ==="
-	cd go-libfossil && CGO_ENABLED=1 go test -tags mattn ./... -count=1
+	CGO_ENABLED=1 go test -tags mattn ./go-libfossil/... -count=1
 	@echo "=== all drivers passed ==="
