@@ -27,4 +27,5 @@ type CloneResult struct {
 	BlobsRecvd  int
 	ProjectCode string
 	ServerCode  string
+	Messages    []string // Informational messages from server
 }

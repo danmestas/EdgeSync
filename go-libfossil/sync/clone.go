@@ -62,7 +62,9 @@ func Clone(ctx context.Context, path string, t Transport, opts CloneOpts) (r *re
 	defer func() {
 		if err != nil {
 			r.Close()
-			os.Remove(path)
+			if rmErr := os.Remove(path); rmErr != nil {
+				fmt.Fprintf(os.Stderr, "sync.Clone: cleanup failed: %v\n", rmErr)
+			}
 			r = nil
 		}
 	}()
@@ -252,6 +254,9 @@ func (cs *cloneSession) processResponse(msg *xfer.Message) (bool, error) {
 
 		case *xfer.CookieCard:
 			// Ignored during clone.
+
+		case *xfer.MessageCard:
+			cs.result.Messages = append(cs.result.Messages, c.Message)
 		}
 	}
 
