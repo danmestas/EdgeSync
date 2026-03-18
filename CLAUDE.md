@@ -61,11 +61,13 @@ Five modules in a workspace:
 | `tag/` | Tag read/write on artifacts | `Add()`, `List()` |
 | `testutil/` | Shared test helpers | `NewTestRepo()` |
 | `undo/` | Undo/redo state tracking | `Save()`, `Undo()`, `Redo()` |
+| `uv/` | Unversioned file sync (wiki, forum, attachments) | `Status()`, `Write()`, `Read()`, `ContentHash()` |
 | `xfer/` | Xfer card protocol encoder/decoder | `Encode()`, `Decode()`, `Message` |
 
 ### sync/ Package (key types)
-- **Client**: `Sync()`, `Clone()`, `SyncOpts`, `CloneOpts`, `Transport` interface
+- **Client**: `Sync()`, `Clone()`, `SyncOpts{UV: true}`, `CloneOpts`, `Transport` interface
 - **Server**: `HandleSync()`, `HandleSyncWithOpts()`, `HandleFunc`, `HandleOpts`, `ServeHTTP()`
+- **UV Cards**: `handler_uv.go` (server-side uvfile/uvigot/uvgimme dispatch), client UV in `client.go`
 - **Shared**: `storeReceivedFile()`, `resolveFileContent()`, `BuggifyChecker`
 - **Transports**: `HTTPTransport`, `MockTransport` (in sync/); `NATSTransport` (in leaf/agent/)
 
@@ -95,8 +97,10 @@ Five modules in a workspace:
 - Transport: HTTP POST to `/xfer`, `application/x-fossil`, zlib-compressed
 - Wire format: newline-separated cards (`command arg1 arg2`)
 - Core cards: login, push, pull, file, cfile, igot, gimme, cookie, clone, clone_seqno, reqconfig, config
+- UV cards: uvfile (NAME MTIME HASH SIZE FLAGS), uvigot (NAME MTIME HASH SIZE), uvgimme (NAME), pragma uv-hash
 - Stateless request/response rounds that repeat until convergence
 - Push/pull cards accept 1 arg (server-code only) when syncing with known remote
+- UV sync: `SyncOpts{UV: true}`, mtime-wins conflict resolution, `pragma uv-hash` short-circuits when catalogs match
 
 ## Fossil Repo Schema (core tables)
 
@@ -104,3 +108,4 @@ Five modules in a workspace:
 - `delta` — delta relationships (rid -> srcid)
 - `event` — checkin manifests
 - `mlink` — file mappings per checkin
+- `unversioned` — mutable UV files (name, mtime, hash, sz, encoding, content)
