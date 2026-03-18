@@ -14,6 +14,12 @@ import (
 
 // readPayload reads exactly size bytes from the reader.
 func readPayload(r *bufio.Reader, size int) ([]byte, error) {
+	if r == nil {
+		panic("xfer.readPayload: r must not be nil")
+	}
+	if size < 0 {
+		panic("xfer.readPayload: size must not be negative")
+	}
 	if size == 0 {
 		return []byte{}, nil
 	}
@@ -47,6 +53,9 @@ func uvFileOmitsContent(flags int) bool {
 // and empty lines. Returns io.EOF when the reader is exhausted.
 // Unrecognized command words produce an *UnknownCard (not an error).
 func DecodeCard(r *bufio.Reader) (Card, error) {
+	if r == nil {
+		panic("xfer.DecodeCard: r must not be nil")
+	}
 	for {
 		line, err := r.ReadString('\n')
 		// Handle final line without trailing newline
