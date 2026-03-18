@@ -2,6 +2,8 @@
 
 Fossil sync engine — replace Fossil's HTTP sync with NATS messaging or direct peer-to-peer. Leaf agents act as both sync clients and servers.
 
+See `MEMORY.md` for detailed project history, patterns, and decisions across sessions.
+
 ## Architecture
 
 - **Leaf Agent** (Go): daemon that reads/writes Fossil SQLite repo DB directly. Syncs via NATS (client) and serves via HTTP or NATS (server). Can replace both client and server roles.
