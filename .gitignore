@@ -3,6 +3,7 @@ fossil/fossil.fossil
 libfossil/libfossil.fossil
 
 # Build artifacts
+/bin/
 /soak
 /edgesync
 .worktrees/
@@ -14,3 +15,8 @@ libfossil/libfossil.fossil
 *.BASELINE
 *.MERGE
 f.txt
+
+# Agent/skill tool files
+.agents/
+.claude/skills/
+skills-lock.json
