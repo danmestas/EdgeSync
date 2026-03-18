@@ -30,6 +30,7 @@ type SyncOpts struct {
 	ProjectCode, ServerCode string
 	User, Password          string
 	MaxSend                 int
+	UV                      bool              // enable unversioned file sync
 	Env                     *simio.Env        // nil defaults to RealEnv
 	Buggify                 BuggifyChecker    // nil in production
 }
