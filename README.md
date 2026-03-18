@@ -5,16 +5,20 @@ Replace Fossil's HTTP sync with NATS messaging or direct peer-to-peer sync. Leaf
 ## Architecture
 
 ```mermaid
-graph TD
-    Leaf["Leaf Agent<br/><small>client + server</small>"]
-    Bridge["Bridge<br/><small>NATS ↔ HTTP /xfer</small>"]
-    Fossil["Fossil Server<br/><small>unmodified</small>"]
-    Peer["Other Leaf<br/><small>or stock fossil</small>"]
+graph LR
+    Leaf[Leaf Agent]
 
-    Leaf -- "NATS" --> Bridge
-    Bridge -- "HTTP /xfer" --> Fossil
-    Leaf -- "NATS<br/><small>ServeNATS</small>" --> Peer
-    Leaf -- "HTTP<br/><small>ServeHTTP</small>" --> Peer
+    subgraph Bridged
+        Bridge[Bridge] --> Fossil[Fossil Server]
+    end
+
+    subgraph Peer-to-Peer
+        Peer[Other Leaf]
+    end
+
+    Leaf -- NATS --> Bridge
+    Leaf -- NATS --> Peer
+    Leaf -- HTTP --> Peer
 ```
 
 **Three sync modes:**
