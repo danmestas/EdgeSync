@@ -160,17 +160,29 @@ func (cs *cloneSession) buildRequest(cycle int) (*xfer.Message, error) {
 		Values: []string{"22800", "20260315", "120000"},
 	})
 
-	// Clone card with version and current seqno.
-	version := cs.opts.Version
-	if version <= 0 {
-		version = 3
+	// Clone card — only when seqno > 0 (sequential delivery in progress).
+	// When seqno reaches 0, the server has sent all blobs and the client
+	// switches to gimme-based phantom resolution (matching Fossil xfer.c:2706).
+	if cs.seqno > 0 {
+		version := cs.opts.Version
+		if version <= 0 {
+			version = 3
+		}
+		cards = append(cards, &xfer.CloneCard{
+			Version: version,
+			SeqNo:   cs.seqno,
+		})
+	} else {
+		// Pull mode for phantom resolution after sequential delivery completes.
+		if cs.projectCode != "" && cs.serverCode != "" {
+			cards = append(cards, &xfer.PullCard{
+				ServerCode:  cs.serverCode,
+				ProjectCode: cs.projectCode,
+			})
+		}
 	}
-	cards = append(cards, &xfer.CloneCard{
-		Version: version,
-		SeqNo:   cs.seqno,
-	})
 
-	// Gimme cards for phantoms — only when seqno <= 1 (main transfer done).
+	// Gimme cards for phantoms — only when seqno <= 1 (main transfer done or finishing).
 	if cs.seqno <= 1 {
 		for uuid := range cs.phantoms {
 			cards = append(cards, &xfer.GimmeCard{UUID: uuid})
