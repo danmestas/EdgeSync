@@ -30,7 +30,7 @@ func Status(localMtime int64, localHash string, remoteMtime int64, remoteHash st
 	hashCmp := cmpStr(localHash, remoteHash)
 
 	if hashCmp == 0 {
-		return 3 - mtimeCmp
+		return 3 + mtimeCmp
 	}
 
 	// Tiebreaker when mtimes are equal and hashes differ:
