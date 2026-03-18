@@ -85,11 +85,13 @@ func TestExpand_DeltaChain(t *testing.T) {
 }
 
 func TestExpand_InvalidRid(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for rid <= 0")
+		}
+	}()
 	d := setupTestDB(t)
-	_, err := Expand(d, 0)
-	if err == nil {
-		t.Fatal("expected error expanding invalid rid")
-	}
+	Expand(d, 0)
 }
 
 func TestVerify(t *testing.T) {
