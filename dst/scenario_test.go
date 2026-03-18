@@ -1,16 +1,20 @@
 package dst
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"math/rand"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/db"
+	"github.com/dmestas/edgesync/go-libfossil/hash"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/dmestas/edgesync/leaf/agent"
 )
 
 // Command-line flags for CI seed sweeps:
@@ -410,6 +414,191 @@ func TestScenarioIdempotent(t *testing.T) {
 		if c != leafCounts[id] {
 			t.Errorf("%s blob count changed: %d -> %d", id, leafCounts[id], c)
 		}
+	}
+}
+
+// --- Scenario 7: Leaf-to-Leaf Peer Sync ---
+// Two leaves sync directly via HandleSync — no bridge, no master.
+// Leaf-0 has blobs, leaf-1 is empty. Both should converge.
+
+func TestScenarioPeerSync(t *testing.T) {
+	seed := seedFor(7)
+	sev := parseSeverity()
+	steps := stepsFor(100)
+
+	rng := rand.New(rand.NewSource(seed))
+	clock := simio.NewSimClock()
+	tmpDir := t.TempDir()
+
+	// Create two leaf repos.
+	simRand := simio.NewSeededRand(rng.Int63())
+	var leafRepos [2]*repo.Repo
+	var leafPaths [2]string
+	for i := range 2 {
+		path := filepath.Join(tmpDir, fmt.Sprintf("peer-%d.fossil", i))
+		r, err := repo.Create(path, "peeruser", simRand)
+		if err != nil {
+			t.Fatalf("create peer-%d: %v", i, err)
+		}
+		t.Cleanup(func() { r.Close() })
+		leafRepos[i] = r
+		leafPaths[i] = path
+	}
+
+	// Seed blobs into peer-0 only.
+	for i := range 10 {
+		data := []byte(fmt.Sprintf("peer-blob-%d-seed%d", i, seed))
+		uuid := hash.SHA1(data)
+		_, err := leafRepos[0].DB().Exec(
+			"INSERT INTO blob(uuid, size, content) VALUES(?, ?, ?)",
+			uuid, len(data), data,
+		)
+		if err != nil {
+			t.Fatalf("seed blob: %v", err)
+		}
+		leafRepos[0].DB().Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(last_insert_rowid())")
+	}
+
+	// Build peer network: leaf-0 syncs with leaf-1, leaf-1 syncs with leaf-0.
+	peerNet := NewPeerNetwork(rand.New(rand.NewSource(rng.Int63())))
+	peerNet.AddPeer("peer-0", leafRepos[0])
+	peerNet.AddPeer("peer-1", leafRepos[1])
+	peerNet.SetDropRate(sev.DropRate)
+
+	if sev.Buggify {
+		simio.EnableBuggify(rng.Int63())
+		defer simio.DisableBuggify()
+	}
+
+	// Create agents with peer transports.
+	var projCode0, srvCode0, projCode1, srvCode1 string
+	leafRepos[0].DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projCode0)
+	leafRepos[0].DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&srvCode0)
+	leafRepos[1].DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projCode1)
+	leafRepos[1].DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&srvCode1)
+
+	// peer-0 syncs with peer-1, peer-1 syncs with peer-0.
+	agent0 := agent.NewFromParts(agent.Config{
+		Clock:        clock,
+		PollInterval: 5 * time.Second,
+		Push:         true,
+		Pull:         true,
+	}, leafRepos[0], peerNet.Transport("peer-0", "peer-1"), projCode0, srvCode0)
+
+	agent1 := agent.NewFromParts(agent.Config{
+		Clock:        clock,
+		PollInterval: 5 * time.Second,
+		Push:         true,
+		Pull:         true,
+	}, leafRepos[1], peerNet.Transport("peer-1", "peer-0"), projCode1, srvCode1)
+
+	// Manually drive ticks (single-threaded DST).
+	ctx := context.Background()
+	for i := range steps {
+		clock.Advance(3 * time.Second)
+		act0 := agent0.Tick(ctx, agent.EventTimer)
+		act1 := agent1.Tick(ctx, agent.EventTimer)
+		_ = act0
+		_ = act1
+
+		// Check convergence periodically.
+		if i > 0 && i%20 == 0 {
+			c0, _ := CountBlobs(leafRepos[0])
+			c1, _ := CountBlobs(leafRepos[1])
+			if c0 == c1 && c0 > 0 {
+				t.Logf("converged at step %d: %d blobs each", i, c0)
+				break
+			}
+		}
+	}
+
+	// Invariants.
+	c0, _ := CountBlobs(leafRepos[0])
+	c1, _ := CountBlobs(leafRepos[1])
+	t.Logf("peer-0: %d blobs, peer-1: %d blobs", c0, c1)
+
+	if c0 != c1 {
+		t.Fatalf("peer sync did not converge: peer-0=%d peer-1=%d", c0, c1)
+	}
+	if c0 == 0 {
+		t.Fatal("both peers have 0 blobs — seeding failed")
+	}
+
+	// Content integrity.
+	if err := CheckBlobIntegrity("peer-0", leafRepos[0]); err != nil {
+		t.Fatalf("peer-0 integrity: %v", err)
+	}
+	if err := CheckBlobIntegrity("peer-1", leafRepos[1]); err != nil {
+		t.Fatalf("peer-1 integrity: %v", err)
+	}
+}
+
+// --- Scenario 8: Clone via HandleSync ---
+// A fresh repo clones from a MockFossil (now backed by HandleSync).
+// Tests the clone pagination path in HandleSync under DST.
+
+func TestScenarioClone(t *testing.T) {
+	seed := seedFor(8)
+	steps := stepsFor(50)
+
+	masterRepo := createMasterRepo(t)
+	mf := NewMockFossil(masterRepo)
+
+	// Seed enough artifacts to require multiple clone rounds.
+	for i := range 250 {
+		mf.StoreArtifact([]byte(fmt.Sprintf("clone-dst-%04d-seed%d", i, seed)))
+	}
+	masterCount, _ := CountBlobs(masterRepo)
+	t.Logf("master has %d blobs", masterCount)
+
+	// Create an empty leaf and run sync rounds manually (simulating clone pull).
+	tmpDir := t.TempDir()
+	leafPath := filepath.Join(tmpDir, "clone-leaf.fossil")
+	simRand := simio.NewSeededRand(seed)
+	leafRepo, err := repo.Create(leafPath, "cloneuser", simRand)
+	if err != nil {
+		t.Fatalf("create leaf: %v", err)
+	}
+	t.Cleanup(func() { leafRepo.Close() })
+
+	var projCode, srvCode string
+	leafRepo.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projCode)
+	leafRepo.DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&srvCode)
+
+	clock := simio.NewSimClock()
+	a := agent.NewFromParts(agent.Config{
+		Clock:        clock,
+		PollInterval: 5 * time.Second,
+		Push:         false,
+		Pull:         true,
+	}, leafRepo, mf, projCode, srvCode)
+
+	ctx := context.Background()
+	for i := range steps {
+		clock.Advance(5 * time.Second)
+		act := a.Tick(ctx, agent.EventTimer)
+		if act.Err != nil {
+			t.Logf("step %d: sync error (may recover): %v", i, act.Err)
+		}
+		if act.Result != nil {
+			t.Logf("step %d: rounds=%d sent=%d recv=%d",
+				i, act.Result.Rounds, act.Result.FilesSent, act.Result.FilesRecvd)
+		}
+
+		leafCount, _ := CountBlobs(leafRepo)
+		if leafCount >= masterCount {
+			t.Logf("clone converged at step %d: %d blobs", i, leafCount)
+			break
+		}
+	}
+
+	leafCount, _ := CountBlobs(leafRepo)
+	if leafCount < masterCount {
+		t.Fatalf("clone incomplete: leaf=%d master=%d", leafCount, masterCount)
+	}
+
+	if err := CheckBlobIntegrity("clone-leaf", leafRepo); err != nil {
+		t.Fatalf("clone integrity: %v", err)
 	}
 }
 

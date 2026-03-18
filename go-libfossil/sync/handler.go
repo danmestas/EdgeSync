@@ -21,9 +21,20 @@ const DefaultCloneBatchSize = 200
 // Transport listeners call this with decoded requests and write back the response.
 type HandleFunc func(ctx context.Context, r *repo.Repo, req *xfer.Message) (*xfer.Message, error)
 
+// HandleOpts configures optional behavior for HandleSync.
+type HandleOpts struct {
+	Buggify BuggifyChecker // nil in production.
+}
+
 // HandleSync processes an incoming xfer request and produces a response.
 // Stateless per-round — the client drives convergence.
 func HandleSync(ctx context.Context, r *repo.Repo, req *xfer.Message) (*xfer.Message, error) {
+	return HandleSyncWithOpts(ctx, r, req, HandleOpts{})
+}
+
+// HandleSyncWithOpts processes an incoming xfer request with optional
+// fault injection. Used by DST harness; production callers use HandleSync.
+func HandleSyncWithOpts(ctx context.Context, r *repo.Repo, req *xfer.Message, opts HandleOpts) (*xfer.Message, error) {
 	if r == nil {
 		panic("sync.HandleSync: r must not be nil")
 	}
@@ -31,7 +42,7 @@ func HandleSync(ctx context.Context, r *repo.Repo, req *xfer.Message) (*xfer.Mes
 		panic("sync.HandleSync: req must not be nil")
 	}
 
-	h := &handler{repo: r}
+	h := &handler{repo: r, buggify: opts.Buggify}
 	resp, err := h.process(ctx, req)
 	if err == nil && resp == nil {
 		panic("sync.HandleSync: resp must not be nil on success")
@@ -42,6 +53,7 @@ func HandleSync(ctx context.Context, r *repo.Repo, req *xfer.Message) (*xfer.Mes
 // handler holds per-request state while processing cards.
 type handler struct {
 	repo      *repo.Repo
+	buggify   BuggifyChecker
 	resp      []xfer.Card
 	pushOK    bool // client sent a valid push card
 	pullOK    bool // client sent a valid pull card
@@ -130,13 +142,16 @@ func (h *handler) handleGimme(c *xfer.GimmeCard) error {
 	if c == nil {
 		panic("handler.handleGimme: c must not be nil")
 	}
+	// BUGGIFY: 5% chance skip sending a file to test client retry.
+	if h.buggify != nil && h.buggify.Check("handler.handleGimme.skip", 0.05) {
+		return nil
+	}
 	rid, ok := blob.Exists(h.repo.DB(), c.UUID)
 	if !ok {
 		return nil // blob not found — not fatal, skip.
 	}
 	data, err := content.Expand(h.repo.DB(), rid)
 	if err != nil {
-		// Expansion failed — report to client rather than silently dropping.
 		h.resp = append(h.resp, &xfer.ErrorCard{
 			Message: fmt.Sprintf("expand %s: %v", c.UUID, err),
 		})
@@ -153,6 +168,13 @@ func (h *handler) handleFile(uuid, deltaSrc string, payload []byte) error {
 	if !h.pushOK {
 		h.resp = append(h.resp, &xfer.ErrorCard{
 			Message: fmt.Sprintf("file %s rejected: no push card", uuid),
+		})
+		return nil
+	}
+	// BUGGIFY: 3% chance reject a valid file to test client re-push.
+	if h.buggify != nil && h.buggify.Check("handler.handleFile.reject", 0.03) {
+		h.resp = append(h.resp, &xfer.ErrorCard{
+			Message: fmt.Sprintf("buggify: rejected file %s", uuid),
 		})
 		return nil
 	}
@@ -191,20 +213,40 @@ func (h *handler) emitIGots() error {
 		return fmt.Errorf("handler: listing blobs: %w", err)
 	}
 	defer rows.Close()
+
+	var uuids []string
 	for rows.Next() {
 		var uuid string
 		if err := rows.Scan(&uuid); err != nil {
 			return err
 		}
+		uuids = append(uuids, uuid)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// BUGGIFY: 10% chance truncate igot list to test multi-round convergence.
+	if h.buggify != nil && h.buggify.Check("handler.emitIGots.truncate", 0.10) && len(uuids) > 1 {
+		uuids = uuids[:len(uuids)/2]
+	}
+
+	for _, uuid := range uuids {
 		h.resp = append(h.resp, &xfer.IGotCard{UUID: uuid})
 	}
-	return rows.Err()
+	return nil
 }
 
 func (h *handler) emitCloneBatch() error {
+	batchSize := DefaultCloneBatchSize
+	// BUGGIFY: 10% chance reduce batch size to 1 to stress pagination.
+	if h.buggify != nil && h.buggify.Check("handler.emitCloneBatch.smallBatch", 0.10) {
+		batchSize = 1
+	}
+
 	rows, err := h.repo.DB().Query(
 		"SELECT rid, uuid FROM blob WHERE rid > ? AND size >= 0 ORDER BY rid LIMIT ?",
-		h.cloneSeq, DefaultCloneBatchSize+1,
+		h.cloneSeq, batchSize+1,
 	)
 	if err != nil {
 		return fmt.Errorf("handler: clone batch: %w", err)
@@ -219,9 +261,7 @@ func (h *handler) emitCloneBatch() error {
 		if err := rows.Scan(&rid, &uuid); err != nil {
 			return err
 		}
-		if count >= DefaultCloneBatchSize {
-			// More blobs remain — emit seqno for continuation.
-			// Check rows.Err before early return so DB errors aren't lost.
+		if count >= batchSize {
 			if err := rows.Err(); err != nil {
 				return err
 			}
