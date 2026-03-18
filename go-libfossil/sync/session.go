@@ -6,6 +6,7 @@ import (
 
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/dmestas/edgesync/go-libfossil/uv"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
 )
 
@@ -55,6 +56,13 @@ type session struct {
 	igotSentThisRound   int
 	maxSend             int
 	phantomAge          map[string]int // UUID -> consecutive rounds gimme'd without delivery
+	uvHashSent          bool
+	uvPushOK            bool
+	uvPullOnly          bool
+	uvToSend            map[string]bool // name -> true=full content, false=mtime-only
+	uvGimmes            map[string]bool
+	nUvGimmeSent        int
+	nUvFileRcvd         int
 }
 
 func newSession(r *repo.Repo, opts SyncOpts) *session {
@@ -69,7 +77,7 @@ func newSession(r *repo.Repo, opts SyncOpts) *session {
 	if env == nil {
 		env = simio.RealEnv()
 	}
-	return &session{
+	s := &session{
 		repo:        r,
 		env:         env,
 		opts:        opts,
@@ -79,6 +87,23 @@ func newSession(r *repo.Repo, opts SyncOpts) *session {
 		pendingSend: make(map[string]bool),
 		phantomAge:  make(map[string]int),
 	}
+
+	// Pre-populate uvToSend with all local non-tombstone UV files.
+	if opts.UV {
+		uv.EnsureSchema(r.DB())
+		entries, err := uv.List(r.DB())
+		if err == nil {
+			s.uvToSend = make(map[string]bool)
+			s.uvGimmes = make(map[string]bool)
+			for _, e := range entries {
+				if e.Hash != "" {
+					s.uvToSend[e.Name] = true
+				}
+			}
+		}
+	}
+
+	return s
 }
 
 // Sync runs the client sync loop against the given transport.
