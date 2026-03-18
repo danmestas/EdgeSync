@@ -17,6 +17,9 @@ func ServeNATS(ctx context.Context, nc *nats.Conn, subject string, r *repo.Repo,
 	if nc == nil {
 		panic("agent.ServeNATS: nc must not be nil")
 	}
+	if subject == "" {
+		panic("agent.ServeNATS: subject must not be empty")
+	}
 	if r == nil {
 		panic("agent.ServeNATS: r must not be nil")
 	}

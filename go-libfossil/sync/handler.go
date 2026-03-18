@@ -2,6 +2,8 @@ package sync
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/dmestas/edgesync/go-libfossil/blob"
@@ -30,7 +32,11 @@ func HandleSync(ctx context.Context, r *repo.Repo, req *xfer.Message) (*xfer.Mes
 	}
 
 	h := &handler{repo: r}
-	return h.process(ctx, req)
+	resp, err := h.process(ctx, req)
+	if err == nil && resp == nil {
+		panic("sync.HandleSync: resp must not be nil on success")
+	}
+	return resp, err
 }
 
 // handler holds per-request state while processing cards.
@@ -107,6 +113,9 @@ func (h *handler) handleDataCard(card xfer.Card) error {
 }
 
 func (h *handler) handleIGot(c *xfer.IGotCard) error {
+	if c == nil {
+		panic("handler.handleIGot: c must not be nil")
+	}
 	if !h.pullOK {
 		return nil
 	}
@@ -118,19 +127,29 @@ func (h *handler) handleIGot(c *xfer.IGotCard) error {
 }
 
 func (h *handler) handleGimme(c *xfer.GimmeCard) error {
+	if c == nil {
+		panic("handler.handleGimme: c must not be nil")
+	}
 	rid, ok := blob.Exists(h.repo.DB(), c.UUID)
 	if !ok {
-		return nil // blob not found — not fatal, skip
+		return nil // blob not found — not fatal, skip.
 	}
 	data, err := content.Expand(h.repo.DB(), rid)
 	if err != nil {
-		return nil // expansion failed — skip
+		// Expansion failed — report to client rather than silently dropping.
+		h.resp = append(h.resp, &xfer.ErrorCard{
+			Message: fmt.Sprintf("expand %s: %v", c.UUID, err),
+		})
+		return nil
 	}
 	h.resp = append(h.resp, &xfer.FileCard{UUID: c.UUID, Content: data})
 	return nil
 }
 
 func (h *handler) handleFile(uuid, deltaSrc string, payload []byte) error {
+	if uuid == "" {
+		panic("handler.handleFile: uuid must not be empty")
+	}
 	if !h.pushOK {
 		h.resp = append(h.resp, &xfer.ErrorCard{
 			Message: fmt.Sprintf("file %s rejected: no push card", uuid),
@@ -146,12 +165,18 @@ func (h *handler) handleFile(uuid, deltaSrc string, payload []byte) error {
 }
 
 func (h *handler) handleReqConfig(c *xfer.ReqConfigCard) error {
+	if c == nil {
+		panic("handler.handleReqConfig: c must not be nil")
+	}
 	var val string
 	err := h.repo.DB().QueryRow(
 		"SELECT value FROM config WHERE name = ?", c.Name,
 	).Scan(&val)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil // config key not found — expected, not fatal.
+	}
 	if err != nil {
-		return nil // config not found — not fatal
+		return fmt.Errorf("handler: config query %q: %w", c.Name, err)
 	}
 	h.resp = append(h.resp, &xfer.ConfigCard{
 		Name:    c.Name,
@@ -196,6 +221,10 @@ func (h *handler) emitCloneBatch() error {
 		}
 		if count >= DefaultCloneBatchSize {
 			// More blobs remain — emit seqno for continuation.
+			// Check rows.Err before early return so DB errors aren't lost.
+			if err := rows.Err(); err != nil {
+				return err
+			}
 			h.resp = append(h.resp, &xfer.CloneSeqNoCard{SeqNo: lastRID})
 			return nil
 		}

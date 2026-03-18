@@ -12,9 +12,16 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
 )
 
+// maxRequestBodyBytes caps the size of incoming xfer request bodies.
+// Fossil sync payloads are typically under 1MB; 50MB is generous headroom.
+const maxRequestBodyBytes = 50 * 1024 * 1024
+
 // ServeHTTP starts an HTTP server that accepts Fossil xfer requests.
 // Blocks until ctx is cancelled. Stock fossil clone/sync can connect.
 func ServeHTTP(ctx context.Context, addr string, r *repo.Repo, h HandleFunc) error {
+	if addr == "" {
+		panic("sync.ServeHTTP: addr must not be empty")
+	}
 	if r == nil {
 		panic("sync.ServeHTTP: r must not be nil")
 	}
@@ -57,6 +64,9 @@ func xferHandler(r *repo.Repo, h HandleFunc) http.HandlerFunc {
 			return
 		}
 
+		// Bound request body size to prevent resource exhaustion.
+		req.Body = http.MaxBytesReader(w, req.Body, maxRequestBodyBytes)
+
 		body, err := io.ReadAll(req.Body)
 		if err != nil {
 			http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
@@ -65,17 +75,16 @@ func xferHandler(r *repo.Repo, h HandleFunc) http.HandlerFunc {
 
 		if len(body) == 0 {
 			// Empty POST — respond with empty xfer message.
-			empty := &xfer.Message{}
-			respBytes, _ := empty.Encode()
-			w.Header().Set("Content-Type", "application/x-fossil")
-			w.Write(respBytes)
+			writeXferResponse(w, &xfer.Message{})
 			return
 		}
 
 		msg, err := xfer.Decode(body)
 		if err != nil {
-			log.Printf("serve-http: decode failed (%d bytes, first 4: %x): %v", len(body), body[:min(4, len(body))], err)
-			http.Error(w, fmt.Sprintf("decode xfer (%d bytes): %v", len(body), err), http.StatusBadRequest)
+			log.Printf("serve-http: decode failed (%d bytes, first 4: %x): %v",
+				len(body), body[:min(4, len(body))], err)
+			http.Error(w, fmt.Sprintf("decode xfer (%d bytes): %v", len(body), err),
+				http.StatusBadRequest)
 			return
 		}
 
@@ -85,13 +94,19 @@ func xferHandler(r *repo.Repo, h HandleFunc) http.HandlerFunc {
 			return
 		}
 
-		respBytes, err := resp.Encode()
-		if err != nil {
-			http.Error(w, "encode response: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
+		writeXferResponse(w, resp)
+	}
+}
 
-		w.Header().Set("Content-Type", "application/x-fossil")
-		w.Write(respBytes)
+// writeXferResponse encodes an xfer message and writes it as the HTTP response.
+func writeXferResponse(w http.ResponseWriter, msg *xfer.Message) {
+	respBytes, err := msg.Encode()
+	if err != nil {
+		http.Error(w, "encode response: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-fossil")
+	if _, err := w.Write(respBytes); err != nil {
+		log.Printf("serve-http: write response: %v", err)
 	}
 }
