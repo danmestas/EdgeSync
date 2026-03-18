@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/zlib"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"strings"
@@ -818,5 +819,48 @@ func TestDecode_NoTrailingNewline(t *testing.T) {
 	}
 	if g.UUID != "abc123" {
 		t.Errorf("UUID = %q, want %q", g.UUID, "abc123")
+	}
+}
+
+// TestDecodeCFile_FossilBlobFormat verifies that cfile cards using Fossil's
+// native blob compression format (4-byte BE size prefix + zlib) are decoded
+// correctly. This is what Fossil's send_compressed_file() sends during clone v3,
+// reading raw blob content directly from the blob table (xfer.c:657-683).
+func TestDecodeCFile_FossilBlobFormat(t *testing.T) {
+	content := []byte("hello from fossil blob format")
+	uuid := "fossilblob123"
+
+	// Create Fossil blob-format payload: [4-byte BE uncompressed size][zlib data].
+	var compressed bytes.Buffer
+	var sizePrefix [4]byte
+	binary.BigEndian.PutUint32(sizePrefix[:], uint32(len(content)))
+	compressed.Write(sizePrefix[:])
+	zw := zlib.NewWriter(&compressed)
+	zw.Write(content)
+	zw.Close()
+
+	// Build raw cfile wire: "cfile UUID USIZE CSIZE\nPAYLOAD"
+	csize := compressed.Len()
+	line := fmt.Sprintf("cfile %s %d %d\n", uuid, len(content), csize)
+
+	var wire bytes.Buffer
+	wire.WriteString(line)
+	wire.Write(compressed.Bytes())
+	wire.WriteByte('\n')
+
+	r := bufio.NewReader(&wire)
+	card, err := DecodeCard(r)
+	if err != nil {
+		t.Fatalf("DecodeCard: %v", err)
+	}
+	cf, ok := card.(*CFileCard)
+	if !ok {
+		t.Fatalf("expected *CFileCard, got %T", card)
+	}
+	if cf.UUID != uuid {
+		t.Errorf("UUID = %q, want %q", cf.UUID, uuid)
+	}
+	if !bytes.Equal(cf.Content, content) {
+		t.Errorf("Content = %q, want %q", cf.Content, content)
 	}
 }

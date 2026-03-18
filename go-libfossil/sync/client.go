@@ -2,6 +2,7 @@ package sync
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 
 	"github.com/dmestas/edgesync/go-libfossil/blob"
@@ -9,8 +10,13 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/db"
 	"github.com/dmestas/edgesync/go-libfossil/delta"
 	"github.com/dmestas/edgesync/go-libfossil/hash"
+	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
 )
+
+// ErrDeltaSourceMissing is returned by storeReceivedFile when the delta source
+// blob is not present in the repository. Clone uses this to create phantoms.
+var ErrDeltaSourceMissing = errors.New("delta source not found")
 
 // buildRequest assembles one outbound xfer message for the given cycle.
 func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
@@ -292,40 +298,49 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 	return true, nil
 }
 
-// handleFileCard stores a received file (or delta-file) into the repo.
-func (s *session) handleFileCard(uuid, deltaSrc string, payload []byte) error {
-	if uuid == "" {
-		panic("sync.handleFileCard: uuid must not be empty")
+// storeReceivedFile validates, resolves deltas, verifies hashes, and stores
+// a received file (or delta-file) into the repo. It is used by both Sync and Clone.
+// When the delta source is missing, it returns ErrDeltaSourceMissing so callers
+// can handle the case (e.g., Clone creates a phantom).
+// resolveFileContent resolves the full content of a received file card.
+// For non-delta files, returns the payload directly. For deltas, expands
+// the base and applies the delta. Returns ErrDeltaSourceMissing if the
+// delta source is not in the repo.
+func resolveFileContent(r *repo.Repo, uuid, deltaSrc string, payload []byte) ([]byte, error) {
+	if deltaSrc == "" {
+		return payload, nil
 	}
-	if payload == nil {
-		panic("sync.handleFileCard: payload must not be nil")
+	srcRid, ok := blob.Exists(r.DB(), deltaSrc)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrDeltaSourceMissing, deltaSrc)
 	}
+	baseContent, err := content.Expand(r.DB(), srcRid)
+	if err != nil {
+		return nil, fmt.Errorf("expanding delta source %s: %w", deltaSrc, err)
+	}
+	applied, err := delta.Apply(baseContent, payload)
+	if err != nil {
+		return nil, fmt.Errorf("applying delta for %s: %w", uuid, err)
+	}
+	return applied, nil
+}
+
+// storeReceivedFile validates and stores a received file/cfile blob.
+// Returns ErrDeltaSourceMissing if the delta source is not found.
+func storeReceivedFile(r *repo.Repo, uuid, deltaSrc string, payload []byte) error {
+	if r == nil { panic("storeReceivedFile: r must not be nil") }
+	if uuid == "" { panic("storeReceivedFile: uuid must not be empty") }
+	if payload == nil { panic("storeReceivedFile: payload must not be nil") }
 	if !hash.IsValidHash(uuid) {
 		return fmt.Errorf("sync: invalid UUID format: %s", uuid)
 	}
-	var fullContent []byte
 
-	if deltaSrc != "" {
-		// Delta: load base via content.Expand, apply delta
-		srcRid, ok := blob.Exists(s.repo.DB(), deltaSrc)
-		if !ok {
-			return fmt.Errorf("delta source %s not found", deltaSrc)
-		}
-		baseContent, err := content.Expand(s.repo.DB(), srcRid)
-		if err != nil {
-			return fmt.Errorf("expanding delta source %s: %w", deltaSrc, err)
-		}
-		applied, err := delta.Apply(baseContent, payload)
-		if err != nil {
-			return fmt.Errorf("applying delta for %s: %w", uuid, err)
-		}
-		fullContent = applied
-	} else {
-		fullContent = payload
+	fullContent, err := resolveFileContent(r, uuid, deltaSrc, payload)
+	if err != nil {
+		return err
 	}
 
-	// Compute the expected hash based on UUID length.
-	// SHA1 UUIDs are 40 hex chars, SHA3 UUIDs are 64 hex chars.
+	// Verify hash matches UUID.
 	var computedUUID string
 	if len(uuid) > 40 {
 		computedUUID = hash.SHA3(fullContent)
@@ -336,8 +351,7 @@ func (s *session) handleFileCard(uuid, deltaSrc string, payload []byte) error {
 		return fmt.Errorf("UUID mismatch for received file: expected %s, got %s", uuid, computedUUID)
 	}
 
-	err := s.repo.WithTx(func(tx *db.Tx) error {
-		// Check if already stored.
+	return r.WithTx(func(tx *db.Tx) error {
 		if rid, ok := blob.Exists(tx, uuid); ok {
 			_, err := tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid)
 			return err
@@ -357,12 +371,15 @@ func (s *session) handleFileCard(uuid, deltaSrc string, payload []byte) error {
 		if err != nil {
 			return err
 		}
-		// Add to unclustered so we propagate to other remotes
 		_, err = tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid)
 		return err
 	})
-	if err != nil {
-		return fmt.Errorf("storing file %s: %w", uuid, err)
+}
+
+// handleFileCard stores a received file (or delta-file) into the repo.
+func (s *session) handleFileCard(uuid, deltaSrc string, payload []byte) error {
+	if err := storeReceivedFile(s.repo, uuid, deltaSrc, payload); err != nil {
+		return err
 	}
 
 	// BUGGIFY: simulate post-store failure to test retry/recovery logic.

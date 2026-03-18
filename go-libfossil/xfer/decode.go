@@ -343,15 +343,13 @@ func parseCFile(r *bufio.Reader, args []string) (Card, error) {
 	if err != nil {
 		return nil, fmt.Errorf("xfer: cfile payload: %w", err)
 	}
-	// Decompress zlib
-	zr, err := zlib.NewReader(bytes.NewReader(compressed))
+	// Decompress zlib. Fossil's server may send blobs in its blob format
+	// ([4-byte BE size prefix][zlib data]) or plain zlib. Try plain first
+	// (matches our own encoder), fall back to skipping a 4-byte prefix
+	// (matches Fossil's send_compressed_file which sends raw blob content).
+	decompressed, err := decompressCFile(compressed)
 	if err != nil {
-		return nil, fmt.Errorf("xfer: cfile zlib init: %w", err)
-	}
-	defer zr.Close()
-	decompressed, err := io.ReadAll(zr)
-	if err != nil {
-		return nil, fmt.Errorf("xfer: cfile zlib decompress: %w", err)
+		return nil, err
 	}
 	if len(decompressed) != usize {
 		return nil, fmt.Errorf("xfer: cfile usize mismatch: header says %d, got %d", usize, len(decompressed))
@@ -412,4 +410,29 @@ func parseUVFile(r *bufio.Reader, args []string) (Card, error) {
 		c.Content = content
 	}
 	return c, nil
+}
+
+// decompressCFile tries plain zlib first (matches our encoder), then
+// falls back to skipping a 4-byte BE size prefix (Fossil's blob format
+// used by send_compressed_file in clone v3).
+func decompressCFile(data []byte) ([]byte, error) {
+	// Try plain zlib.
+	if zr, err := zlib.NewReader(bytes.NewReader(data)); err == nil {
+		out, readErr := io.ReadAll(zr)
+		zr.Close()
+		if readErr == nil {
+			return out, nil
+		}
+	}
+	// Try with 4-byte size prefix skip (Fossil blob format).
+	if len(data) > 4 {
+		if zr, err := zlib.NewReader(bytes.NewReader(data[4:])); err == nil {
+			out, readErr := io.ReadAll(zr)
+			zr.Close()
+			if readErr == nil {
+				return out, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("xfer: cfile zlib init: could not decompress payload (%d bytes)", len(data))
 }
