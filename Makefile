@@ -8,10 +8,10 @@ edgesync:
 	go build -buildvcs=false -o bin/edgesync ./cmd/edgesync
 
 leaf:
-	go build -o bin/leaf ./cmd/leaf
+	cd leaf && go build -buildvcs=false -o ../bin/leaf ./cmd/leaf
 
 bridge:
-	go build -o bin/bridge ./cmd/bridge
+	cd bridge && go build -buildvcs=false -o ../bin/bridge ./cmd/bridge
 
 clean:
 	rm -rf bin/
@@ -56,9 +56,18 @@ dst-full:
 	if [ $$fail -eq 1 ]; then echo "=== DST FAILED ==="; exit 1; fi
 	@echo "=== DST full passed ==="
 
-# DST across all 3 SQLite drivers: 4 seeds × hostile × 3 drivers
+# Hostile only: 16 seeds
+dst-hostile:
+	@echo "=== DST hostile (16 seeds) ==="
+	@for seed in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do \
+		echo "  seed=$$seed level=hostile ..."; \
+		go test ./dst/ -run TestDST -seed=$$seed -level=hostile -steps=10000 -timeout 60s; \
+	done
+	@echo "=== DST hostile passed ==="
+
+# DST across all 3 SQLite drivers
 dst-drivers:
-	@echo "=== DST driver sweep (4 seeds × hostile × 3 drivers) ==="
+	@echo "=== DST driver sweep (4 seeds x hostile x 3 drivers) ==="
 	@fail=0; \
 	for driver in "default:" "ncruces:-tags=ncruces" "mattn:-tags=mattn"; do \
 		name=$${driver%%:*}; \
@@ -72,15 +81,6 @@ dst-drivers:
 	done; \
 	if [ $$fail -eq 1 ]; then echo "=== DST drivers FAILED ==="; exit 1; fi
 	@echo "=== DST driver sweep passed ==="
-
-# Hostile only: 16 seeds
-dst-hostile:
-	@echo "=== DST hostile (16 seeds) ==="
-	@for seed in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do \
-		echo "  seed=$$seed level=hostile ..."; \
-		go test ./dst/ -run TestDST -seed=$$seed -level=hostile -steps=10000 -timeout 60s; \
-	done
-	@echo "=== DST hostile passed ==="
 
 # --- Sim (Integration Simulation) — run locally, requires fossil ---
 
