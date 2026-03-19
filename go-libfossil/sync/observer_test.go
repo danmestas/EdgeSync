@@ -123,3 +123,58 @@ func TestSyncCallsObserverHooks(t *testing.T) {
 		t.Errorf("SessionEnd err = %v, want nil", rec.lastErr)
 	}
 }
+
+func TestCloneCallsObserverHooks(t *testing.T) {
+	clonePath := filepath.Join(t.TempDir(), "clone.fossil")
+
+	// Simple mock transport that simulates an empty clone (2 rounds minimum).
+	round := 0
+	mt := &MockTransport{
+		Handler: func(req *xfer.Message) *xfer.Message {
+			defer func() { round++ }()
+			if round == 0 {
+				// First round: send project-code, server-code, and seqno 0
+				return &xfer.Message{
+					Cards: []xfer.Card{
+						&xfer.PushCard{
+							ProjectCode: "test-project",
+							ServerCode:  "test-server",
+						},
+						&xfer.CloneSeqNoCard{SeqNo: 0},
+					},
+				}
+			}
+			// Round 1+: empty response with seqno 0 to converge
+			return &xfer.Message{
+				Cards: []xfer.Card{
+					&xfer.CloneSeqNoCard{SeqNo: 0},
+				},
+			}
+		},
+	}
+
+	rec := &recordingObserver{}
+	r, result, err := Clone(context.Background(), clonePath, mt, CloneOpts{
+		Observer: rec,
+	})
+	if err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	defer r.Close()
+
+	if rec.started != 1 {
+		t.Errorf("Started called %d times, want 1", rec.started)
+	}
+	if rec.completed != 1 {
+		t.Errorf("Completed called %d times, want 1", rec.completed)
+	}
+	if len(rec.roundsStarted) != result.Rounds {
+		t.Errorf("RoundStarted called %d times, want %d", len(rec.roundsStarted), result.Rounds)
+	}
+	if rec.lastInfo.Operation != "clone" {
+		t.Errorf("Operation = %q, want %q", rec.lastInfo.Operation, "clone")
+	}
+	if rec.lastEnd.Rounds != result.Rounds {
+		t.Errorf("SessionEnd.Rounds = %d, want %d", rec.lastEnd.Rounds, result.Rounds)
+	}
+}

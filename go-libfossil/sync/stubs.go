@@ -8,6 +8,7 @@ type CloneOpts struct {
 	Password string
 	Version  int        // Protocol version (default 3)
 	Env      *simio.Env // nil defaults to RealEnv
+	Observer Observer   // nil defaults to no-op
 }
 
 // CloneResult reports what happened during a clone.
