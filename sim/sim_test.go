@@ -56,6 +56,7 @@ func TestSimulation(t *testing.T) {
 				Severity:       ParseLevel(*flagSeverity),
 				FaultDuration:  20 * time.Second,
 				QuiesceTimeout: 60 * time.Second,
+				Observer:       testObserver,
 			}
 			if testing.Short() {
 				cfg.FaultDuration = 5 * time.Second
@@ -95,6 +96,7 @@ func TestCloneFromFossilServer(t *testing.T) {
 		MaxBlobSize:    4096,
 		FaultDuration:  0, // No faults — we want clean sync first.
 		QuiesceTimeout: 30 * time.Second,
+		Observer:       testObserver,
 	}
 	h := NewHarness(cfg)
 	if err := h.SetupInfra(); err != nil {
@@ -156,7 +158,8 @@ func TestCloneFromFossilServer(t *testing.T) {
 	defer cancel()
 
 	clonedRepo, result, err := sync.Clone(ctx, clonePath, transport, sync.CloneOpts{
-		Env: &simio.Env{Rand: simio.NewSeededRand(cfg.Seed + 999)},
+		Env:      &simio.Env{Rand: simio.NewSeededRand(cfg.Seed + 999)},
+		Observer: testObserver,
 	})
 	if err != nil {
 		t.Fatalf("Clone failed: %v", err)

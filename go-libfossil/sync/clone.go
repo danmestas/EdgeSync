@@ -23,6 +23,7 @@ type cloneSession struct {
 	seqno       int
 	projectCode string
 	serverCode  string
+	obs         Observer
 }
 
 // Clone performs a full repository clone from a remote Fossil server.
@@ -82,6 +83,7 @@ func Clone(ctx context.Context, path string, t Transport, opts CloneOpts) (r *re
 		seqno:    1,
 		phantoms: make(map[string]bool),
 	}
+	cs.obs = resolveObserver(opts.Observer)
 
 	cloneResult, cloneErr := cs.run(ctx, t)
 	if cloneErr != nil {
@@ -94,34 +96,53 @@ func Clone(ctx context.Context, path string, t Transport, opts CloneOpts) (r *re
 
 // run executes the clone loop.
 func (cs *cloneSession) run(ctx context.Context, t Transport) (*CloneResult, error) {
+	ctx = cs.obs.Started(ctx, SessionStart{
+		Operation: "clone",
+		Pull:      true,
+	})
+
 	prevPhantomCount := -1
 
 	for cycle := 0; ; cycle++ {
 		select {
 		case <-ctx.Done():
+			cs.obs.Completed(ctx, sessionEndFromClone(&cs.result), ctx.Err())
 			return &cs.result, ctx.Err()
 		default:
 		}
 		if cycle >= MaxRounds {
-			return &cs.result, fmt.Errorf("sync.Clone: exceeded %d rounds", MaxRounds)
+			err := fmt.Errorf("sync.Clone: exceeded %d rounds", MaxRounds)
+			cs.obs.Completed(ctx, sessionEndFromClone(&cs.result), err)
+			return &cs.result, err
 		}
+
+		roundCtx := cs.obs.RoundStarted(ctx, cycle)
 
 		req, err := cs.buildRequest(cycle)
 		if err != nil {
+			cs.obs.RoundCompleted(roundCtx, cycle, 0, 0)
+			cs.obs.Completed(ctx, sessionEndFromClone(&cs.result), err)
 			return &cs.result, fmt.Errorf("sync.Clone: buildRequest round %d: %w", cycle, err)
 		}
 
 		resp, err := t.Exchange(ctx, req)
 		if err != nil {
+			cs.obs.RoundCompleted(roundCtx, cycle, 0, 0)
+			cs.obs.Completed(ctx, sessionEndFromClone(&cs.result), err)
 			return &cs.result, fmt.Errorf("sync.Clone: exchange round %d: %w", cycle, err)
 		}
 
+		recvdBefore := cs.result.BlobsRecvd
+
 		done, err := cs.processResponse(resp)
 		if err != nil {
+			cs.obs.RoundCompleted(roundCtx, cycle, 0, cs.result.BlobsRecvd-recvdBefore)
+			cs.obs.Completed(ctx, sessionEndFromClone(&cs.result), err)
 			return &cs.result, fmt.Errorf("sync.Clone: process round %d: %w", cycle, err)
 		}
 
 		cs.result.Rounds = cycle + 1
+		cs.obs.RoundCompleted(roundCtx, cycle, 0, cs.result.BlobsRecvd-recvdBefore)
 
 		// Convergence: need at least 2 rounds.
 		// Continue while seqno > 0 or phantoms remain with progress.
@@ -147,7 +168,19 @@ func (cs *cloneSession) run(ctx context.Context, t Transport) (*CloneResult, err
 
 	cs.result.ProjectCode = cs.projectCode
 	cs.result.ServerCode = cs.serverCode
+	cs.obs.Completed(ctx, sessionEndFromClone(&cs.result), nil)
 	return &cs.result, nil
+}
+
+// sessionEndFromClone builds a SessionEnd from a CloneResult.
+func sessionEndFromClone(r *CloneResult) SessionEnd {
+	return SessionEnd{
+		Operation:   "clone",
+		Rounds:      r.Rounds,
+		FilesRecvd:  r.BlobsRecvd,
+		ProjectCode: r.ProjectCode,
+		Errors:      r.Messages,
+	}
 }
 
 // buildRequest assembles one outbound xfer message for a clone round.

@@ -277,6 +277,7 @@ func (h *Harness) StartAgents() error {
 			PollInterval:  2 * time.Second,
 			SubjectPrefix: "fossil",
 			Buggify:       h.buggify,
+			Observer:      h.Config.Observer,
 		})
 		if err != nil {
 			return fmt.Errorf("sim: agent new leaf-%d: %w", i, err)
@@ -394,6 +395,7 @@ func (h *Harness) restartLeaf(target string, t *testing.T) {
 		PollInterval:  2 * time.Second,
 		SubjectPrefix: "fossil",
 		Buggify:       h.buggify,
+		Observer:      h.Config.Observer,
 	})
 	if err != nil {
 		t.Logf("leaf-%d restart new: %v", idx, err)

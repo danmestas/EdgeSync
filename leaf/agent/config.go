@@ -47,6 +47,10 @@ type Config struct {
 	// Buggify is an optional fault injection checker. Nil in production.
 	Buggify libsync.BuggifyChecker
 
+	// Observer receives telemetry callbacks during sync operations.
+	// Nil defaults to no-op (no telemetry).
+	Observer libsync.Observer
+
 	// ServeHTTPAddr is the HTTP listen address (e.g. ":8080").
 	// Empty means do not serve HTTP. When set, the leaf acts as a
 	// Fossil-compatible HTTP sync server.

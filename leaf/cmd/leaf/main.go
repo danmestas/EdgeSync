@@ -1,15 +1,18 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/dmestas/edgesync/leaf/agent"
+	"github.com/dmestas/edgesync/leaf/telemetry"
 )
 
 func main() {
@@ -21,6 +24,11 @@ func main() {
 	push := flag.Bool("push", true, "enable push")
 	pull := flag.Bool("pull", true, "enable pull")
 
+	// OTel flags (fall back to standard OTEL_* env vars)
+	otelEndpoint := flag.String("otel-endpoint", envOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""), "OTel OTLP endpoint")
+	otelHeaders := flag.String("otel-headers", envOrDefault("OTEL_EXPORTER_OTLP_HEADERS", ""), "OTel OTLP headers (key=value,key=value)")
+	otelServiceName := flag.String("otel-service-name", envOrDefault("OTEL_SERVICE_NAME", "edgesync-leaf"), "OTel service name")
+
 	flag.Parse()
 
 	if *repoPath == "" {
@@ -28,6 +36,22 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	}
+
+	// Setup telemetry
+	ctx := context.Background()
+	telCfg := telemetry.TelemetryConfig{
+		ServiceName: *otelServiceName,
+		Endpoint:    *otelEndpoint,
+		Headers:     parseHeaders(*otelHeaders),
+	}
+	shutdown, err := telemetry.Setup(ctx, telCfg)
+	if err != nil {
+		slog.Error("telemetry setup failed", "error", err)
+		os.Exit(1)
+	}
+
+	// Create observer (nil-safe: if no endpoint, OTel uses no-op providers)
+	obs := telemetry.NewOTelObserver(nil, nil)
 
 	cfg := agent.Config{
 		RepoPath:     *repoPath,
@@ -37,36 +61,61 @@ func main() {
 		Password:     *password,
 		Push:         *push,
 		Pull:         *pull,
+		Observer:     obs,
 	}
 
 	a, err := agent.New(cfg)
 	if err != nil {
-		log.Fatalf("agent: init: %v", err)
+		slog.Error("agent init failed", "error", err)
+		os.Exit(1)
 	}
 
 	if err := a.Start(); err != nil {
-		log.Fatalf("agent: start: %v", err)
+		slog.Error("agent start failed", "error", err)
+		os.Exit(1)
 	}
 
-	log.Printf("leaf-agent started: repo=%s nats=%s poll=%v", *repoPath, *natsURL, *poll)
+	slog.Info("leaf-agent started", "repo", *repoPath, "nats", *natsURL, "poll", *poll)
 
-	// Signal handling: SIGUSR1 triggers immediate sync, SIGINT/SIGTERM stops.
+	// Signal handling
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR1)
 
 	for sig := range sigCh {
 		switch sig {
 		case syscall.SIGUSR1:
-			log.Println("leaf-agent: SIGUSR1 received, triggering sync")
+			slog.Info("SIGUSR1 received, triggering sync")
 			a.SyncNow()
 		case syscall.SIGINT, syscall.SIGTERM:
-			log.Printf("leaf-agent: %v received, shutting down", sig)
+			slog.Info("shutdown signal received", "signal", sig.String())
+			// 1. Stop agent (waits for in-flight sync)
 			if err := a.Stop(); err != nil {
-				log.Printf("leaf-agent: stop error: %v", err)
+				slog.Error("agent stop error", "error", err)
 			}
+			// 2. Flush telemetry
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := shutdown(shutdownCtx); err != nil {
+				slog.Error("telemetry shutdown error", "error", err)
+			}
+			cancel()
 			os.Exit(0)
 		}
 	}
+}
+
+// parseHeaders parses "key=value,key=value" into a map.
+func parseHeaders(s string) map[string]string {
+	if s == "" {
+		return nil
+	}
+	headers := make(map[string]string)
+	for _, pair := range strings.Split(s, ",") {
+		k, v, ok := strings.Cut(pair, "=")
+		if ok {
+			headers[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
+	}
+	return headers
 }
 
 // envOrDefault returns the value of the environment variable named key,

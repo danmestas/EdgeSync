@@ -3,6 +3,8 @@ package sim
 import (
 	"flag"
 	"time"
+
+	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
 )
 
 // Level controls fault injection severity.
@@ -47,6 +49,7 @@ type SimConfig struct {
 	QuiesceTimeout time.Duration
 	Severity       Level
 	KeepOnFailure  bool
+	Observer       libsync.Observer
 }
 
 func (c *SimConfig) applyDefaults() {
