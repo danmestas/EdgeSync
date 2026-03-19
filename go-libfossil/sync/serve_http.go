@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 
@@ -81,8 +81,7 @@ func xferHandler(r *repo.Repo, h HandleFunc) http.HandlerFunc {
 
 		msg, err := xfer.Decode(body)
 		if err != nil {
-			log.Printf("serve-http: decode failed (%d bytes, first 4: %x): %v",
-				len(body), body[:min(4, len(body))], err)
+			slog.Error("serve-http: decode failed", "bytes", len(body), "err", err)
 			http.Error(w, fmt.Sprintf("decode xfer (%d bytes): %v", len(body), err),
 				http.StatusBadRequest)
 			return
@@ -107,6 +106,6 @@ func writeXferResponse(w http.ResponseWriter, msg *xfer.Message) {
 	}
 	w.Header().Set("Content-Type", "application/x-fossil")
 	if _, err := w.Write(respBytes); err != nil {
-		log.Printf("serve-http: write response: %v", err)
+		slog.Error("serve-http: write response failed", "err", err)
 	}
 }

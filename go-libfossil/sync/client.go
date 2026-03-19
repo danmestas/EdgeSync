@@ -59,6 +59,7 @@ func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
 		return nil, fmt.Errorf("buildRequest igot: %w", err)
 	}
 	s.igotSentThisRound = len(igotCards)
+	s.roundStats.IgotsSent = len(igotCards)
 	cards = append(cards, igotCards...)
 
 	// 5. File cards from pendingSend + unsent table, respecting maxSend budget
@@ -170,6 +171,7 @@ func (s *session) buildFileCards() ([]xfer.Card, error) {
 		budget -= size
 		delete(s.pendingSend, uuid)
 		s.result.FilesSent++
+		s.roundStats.BytesSent += int64(size)
 	}
 
 	// Note: files from the unsent table are announced via igot cards (in buildIGotCards).
@@ -214,6 +216,7 @@ func (s *session) buildGimmeCards() []xfer.Card {
 			break
 		}
 		cards = append(cards, &xfer.GimmeCard{UUID: uuid})
+		s.roundStats.GimmesSent++
 		count++
 	}
 	return cards
@@ -309,6 +312,7 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 				return false, err
 			}
 			filesRecvd++
+			s.roundStats.BytesReceived += int64(len(c.Content))
 			delete(s.phantoms, c.UUID)
 
 		case *xfer.CFileCard:
@@ -316,6 +320,7 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 				return false, err
 			}
 			filesRecvd++
+			s.roundStats.BytesReceived += int64(len(c.Content))
 			delete(s.phantoms, c.UUID)
 
 		case *xfer.IGotCard:
