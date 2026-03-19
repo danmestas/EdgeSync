@@ -12,13 +12,17 @@ import (
 
 // recordingObserver records all lifecycle calls for test assertions.
 type recordingObserver struct {
-	started        int
-	roundsStarted  []int
+	started         int
+	roundsStarted   []int
 	roundsCompleted []int
-	completed      int
-	lastInfo       SessionStart
-	lastEnd        SessionEnd
-	lastErr        error
+	roundStats      []RoundStats
+	completed       int
+	lastInfo        SessionStart
+	lastEnd         SessionEnd
+	lastErr         error
+	errors          []error
+	handleStarted   int
+	handleCompleted int
 }
 
 func (r *recordingObserver) Started(ctx context.Context, info SessionStart) context.Context {
@@ -32,8 +36,9 @@ func (r *recordingObserver) RoundStarted(ctx context.Context, round int) context
 	return ctx
 }
 
-func (r *recordingObserver) RoundCompleted(ctx context.Context, round int, sent, recvd int) {
+func (r *recordingObserver) RoundCompleted(ctx context.Context, round int, stats RoundStats) {
 	r.roundsCompleted = append(r.roundsCompleted, round)
+	r.roundStats = append(r.roundStats, stats)
 }
 
 func (r *recordingObserver) Completed(ctx context.Context, info SessionEnd, err error) {
@@ -42,13 +47,29 @@ func (r *recordingObserver) Completed(ctx context.Context, info SessionEnd, err 
 	r.lastErr = err
 }
 
+func (r *recordingObserver) Error(_ context.Context, err error) {
+	r.errors = append(r.errors, err)
+}
+
+func (r *recordingObserver) HandleStarted(ctx context.Context, _ HandleStart) context.Context {
+	r.handleStarted++
+	return ctx
+}
+
+func (r *recordingObserver) HandleCompleted(_ context.Context, _ HandleEnd) {
+	r.handleCompleted++
+}
+
 func TestNopObserverDoesNotPanic(t *testing.T) {
 	var obs nopObserver
 	ctx := context.Background()
 	ctx = obs.Started(ctx, SessionStart{Operation: "sync"})
 	ctx = obs.RoundStarted(ctx, 0)
-	obs.RoundCompleted(ctx, 0, 5, 3)
+	obs.RoundCompleted(ctx, 0, RoundStats{FilesSent: 5, FilesReceived: 3})
 	obs.Completed(ctx, SessionEnd{Operation: "sync", Rounds: 1}, nil)
+	obs.Error(ctx, nil)
+	ctx = obs.HandleStarted(ctx, HandleStart{Operation: "sync"})
+	obs.HandleCompleted(ctx, HandleEnd{})
 }
 
 func TestResolveObserverNil(t *testing.T) {
@@ -59,6 +80,10 @@ func TestResolveObserverNil(t *testing.T) {
 	// Should not panic
 	ctx := obs.Started(context.Background(), SessionStart{})
 	obs.RoundStarted(ctx, 0)
+	obs.RoundCompleted(ctx, 0, RoundStats{})
+	obs.Error(ctx, nil)
+	ctx = obs.HandleStarted(ctx, HandleStart{})
+	obs.HandleCompleted(ctx, HandleEnd{})
 }
 
 func TestSyncCallsObserverHooks(t *testing.T) {

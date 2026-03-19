@@ -66,6 +66,7 @@ type session struct {
 	uvGimmes            map[string]bool
 	nUvGimmeSent        int
 	nUvFileRcvd         int
+	roundStats          RoundStats
 }
 
 func newSession(r *repo.Repo, opts SyncOpts) *session {
@@ -151,16 +152,19 @@ func Sync(ctx context.Context, r *repo.Repo, t Transport, opts SyncOpts) (result
 		}
 
 		roundCtx := obs.RoundStarted(ctx, cycle)
+		s.roundStats = RoundStats{}
 
 		req, err := s.buildRequest(cycle)
 		if err != nil {
-			obs.RoundCompleted(roundCtx, cycle, 0, 0)
+			obs.Error(roundCtx, err)
+			obs.RoundCompleted(roundCtx, cycle, s.roundStats)
 			obs.Completed(ctx, sessionEndFromSync(&s.result, opts.ProjectCode), err)
 			return &s.result, fmt.Errorf("sync: buildRequest round %d: %w", cycle, err)
 		}
 		resp, err := t.Exchange(ctx, req)
 		if err != nil {
-			obs.RoundCompleted(roundCtx, cycle, 0, 0)
+			obs.Error(roundCtx, err)
+			obs.RoundCompleted(roundCtx, cycle, s.roundStats)
 			obs.Completed(ctx, sessionEndFromSync(&s.result, opts.ProjectCode), err)
 			return &s.result, fmt.Errorf("sync: exchange round %d: %w", cycle, err)
 		}
@@ -169,14 +173,19 @@ func Sync(ctx context.Context, r *repo.Repo, t Transport, opts SyncOpts) (result
 		recvdBefore := s.result.FilesRecvd
 
 		done, err := s.processResponse(resp)
+
+		s.roundStats.FilesSent = s.result.FilesSent - sentBefore
+		s.roundStats.FilesReceived = s.result.FilesRecvd - recvdBefore
+
 		if err != nil {
-			obs.RoundCompleted(roundCtx, cycle, s.result.FilesSent-sentBefore, s.result.FilesRecvd-recvdBefore)
+			obs.Error(roundCtx, err)
+			obs.RoundCompleted(roundCtx, cycle, s.roundStats)
 			obs.Completed(ctx, sessionEndFromSync(&s.result, opts.ProjectCode), err)
 			return &s.result, fmt.Errorf("sync: processResponse round %d: %w", cycle, err)
 		}
 		s.result.Rounds = cycle + 1
 
-		obs.RoundCompleted(roundCtx, cycle, s.result.FilesSent-sentBefore, s.result.FilesRecvd-recvdBefore)
+		obs.RoundCompleted(roundCtx, cycle, s.roundStats)
 
 		if done {
 			break

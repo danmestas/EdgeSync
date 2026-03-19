@@ -3,7 +3,7 @@ package bridge
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/nats-io/nats.go"
 
@@ -70,7 +70,7 @@ func (b *Bridge) Start() error {
 	if err := b.conn.Flush(); err != nil {
 		return fmt.Errorf("bridge: flush after subscribe: %w", err)
 	}
-	log.Printf("bridge started: subject=%s fossil=%s", subject, b.config.FossilURL)
+	slog.Info("bridge started", "subject", subject, "fossil", b.config.FossilURL)
 	return nil
 }
 
@@ -86,7 +86,7 @@ func (b *Bridge) Stop() error {
 		b.conn.Drain()
 		b.conn.Close()
 	}
-	log.Println("bridge stopped")
+	slog.Info("bridge stopped")
 	return nil
 }
 
@@ -103,21 +103,21 @@ func (b *Bridge) handleMessage(msg *nats.Msg) {
 
 	req, err := xfer.Decode(msg.Data)
 	if err != nil {
-		log.Printf("bridge: decode error: %v", err)
+		slog.Error("bridge: decode error", "err", err)
 		b.respondEmpty(msg)
 		return
 	}
 
 	resp, err := b.HandleRequest(b.ctx, req)
 	if err != nil {
-		log.Printf("bridge: fossil error: %v", err)
+		slog.Error("bridge: upstream error", "err", err)
 		b.respondEmpty(msg)
 		return
 	}
 
 	data, err := resp.Encode()
 	if err != nil {
-		log.Printf("bridge: encode error: %v", err)
+		slog.Error("bridge: encode error", "err", err)
 		b.respondEmpty(msg)
 		return
 	}

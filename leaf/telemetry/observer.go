@@ -9,6 +9,7 @@ import (
 	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -101,11 +102,15 @@ func (o *OTelObserver) RoundStarted(ctx context.Context, round int) context.Cont
 	return ctx
 }
 
-func (o *OTelObserver) RoundCompleted(ctx context.Context, round int, sent, recvd int) {
+func (o *OTelObserver) RoundCompleted(ctx context.Context, round int, stats libsync.RoundStats) {
 	span := trace.SpanFromContext(ctx)
 	span.SetAttributes(
-		attribute.Int("sync.round.files_sent", sent),
-		attribute.Int("sync.round.files_received", recvd),
+		attribute.Int("sync.round.files_sent", stats.FilesSent),
+		attribute.Int("sync.round.files_received", stats.FilesReceived),
+		attribute.Int("sync.round.gimmes_sent", stats.GimmesSent),
+		attribute.Int("sync.round.igots_sent", stats.IgotsSent),
+		attribute.Int64("sync.round.bytes_sent", stats.BytesSent),
+		attribute.Int64("sync.round.bytes_received", stats.BytesReceived),
 	)
 	span.End()
 }
@@ -122,12 +127,18 @@ func (o *OTelObserver) Completed(ctx context.Context, info libsync.SessionEnd, e
 	)
 	if err != nil {
 		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	for _, errMsg := range info.Errors {
+		span.AddEvent("sync.protocol_error", trace.WithAttributes(
+			attribute.String("error.message", errMsg),
+		))
 	}
 	span.End()
 
 	attrs := metric.WithAttributes(
 		attribute.String("sync.operation", info.Operation),
-		attribute.String("project.code", info.ProjectCode),
+		attribute.String("sync.project_code", info.ProjectCode),
 	)
 	o.sessionsTotal.Add(ctx, 1, attrs)
 	if err != nil {
@@ -141,4 +152,40 @@ func (o *OTelObserver) Completed(ctx context.Context, info libsync.SessionEnd, e
 	o.filesRecvd.Record(ctx, int64(info.FilesRecvd), attrs)
 	o.uvFilesSent.Record(ctx, int64(info.UVFilesSent), attrs)
 	o.uvFilesRecvd.Record(ctx, int64(info.UVFilesRecvd), attrs)
+}
+
+func (o *OTelObserver) Error(ctx context.Context, err error) {
+	if err == nil {
+		return
+	}
+	span := trace.SpanFromContext(ctx)
+	span.AddEvent("sync.error", trace.WithAttributes(
+		attribute.String("error.message", err.Error()),
+	))
+}
+
+func (o *OTelObserver) HandleStarted(ctx context.Context, info libsync.HandleStart) context.Context {
+	ctx, _ = o.tracer.Start(ctx, "sync.handle",
+		trace.WithAttributes(
+			attribute.String("sync.operation", info.Operation),
+			attribute.String("sync.project_code", info.ProjectCode),
+			attribute.String("net.peer.addr", info.RemoteAddr),
+		),
+		trace.WithSpanKind(trace.SpanKindServer),
+	)
+	return ctx
+}
+
+func (o *OTelObserver) HandleCompleted(ctx context.Context, info libsync.HandleEnd) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.Int("sync.handle.cards_processed", info.CardsProcessed),
+		attribute.Int("sync.handle.files_sent", info.FilesSent),
+		attribute.Int("sync.handle.files_received", info.FilesReceived),
+	)
+	if info.Err != nil {
+		span.RecordError(info.Err)
+		span.SetStatus(codes.Error, info.Err.Error())
+	}
+	span.End()
 }

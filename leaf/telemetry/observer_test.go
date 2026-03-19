@@ -28,7 +28,7 @@ func TestOTelObserverCreatesSpans(t *testing.T) {
 		ProjectCode: "abc123",
 	})
 	roundCtx := obs.RoundStarted(ctx, 0)
-	obs.RoundCompleted(roundCtx, 0, 5, 3)
+	obs.RoundCompleted(roundCtx, 0, libsync.RoundStats{FilesSent: 5, FilesReceived: 3})
 	obs.Completed(ctx, libsync.SessionEnd{
 		Operation:  "sync",
 		Rounds:     1,
@@ -63,7 +63,7 @@ func TestOTelObserverCloneSpanNames(t *testing.T) {
 	ctx := context.Background()
 	ctx = obs.Started(ctx, libsync.SessionStart{Operation: "clone"})
 	roundCtx := obs.RoundStarted(ctx, 0)
-	obs.RoundCompleted(roundCtx, 0, 0, 10)
+	obs.RoundCompleted(roundCtx, 0, libsync.RoundStats{FilesReceived: 10})
 	obs.Completed(ctx, libsync.SessionEnd{Operation: "clone", Rounds: 1, FilesRecvd: 10}, nil)
 
 	spans := exporter.GetSpans()

@@ -120,14 +120,14 @@ func (cs *cloneSession) run(ctx context.Context, t Transport) (*CloneResult, err
 
 		req, err := cs.buildRequest(cycle)
 		if err != nil {
-			cs.obs.RoundCompleted(roundCtx, cycle, 0, 0)
+			cs.obs.RoundCompleted(roundCtx, cycle, RoundStats{})
 			cs.obs.Completed(ctx, sessionEndFromClone(&cs.result), err)
 			return &cs.result, fmt.Errorf("sync.Clone: buildRequest round %d: %w", cycle, err)
 		}
 
 		resp, err := t.Exchange(ctx, req)
 		if err != nil {
-			cs.obs.RoundCompleted(roundCtx, cycle, 0, 0)
+			cs.obs.RoundCompleted(roundCtx, cycle, RoundStats{})
 			cs.obs.Completed(ctx, sessionEndFromClone(&cs.result), err)
 			return &cs.result, fmt.Errorf("sync.Clone: exchange round %d: %w", cycle, err)
 		}
@@ -136,13 +136,13 @@ func (cs *cloneSession) run(ctx context.Context, t Transport) (*CloneResult, err
 
 		done, err := cs.processResponse(resp)
 		if err != nil {
-			cs.obs.RoundCompleted(roundCtx, cycle, 0, cs.result.BlobsRecvd-recvdBefore)
+			cs.obs.RoundCompleted(roundCtx, cycle, RoundStats{FilesReceived: cs.result.BlobsRecvd - recvdBefore})
 			cs.obs.Completed(ctx, sessionEndFromClone(&cs.result), err)
 			return &cs.result, fmt.Errorf("sync.Clone: process round %d: %w", cycle, err)
 		}
 
 		cs.result.Rounds = cycle + 1
-		cs.obs.RoundCompleted(roundCtx, cycle, 0, cs.result.BlobsRecvd-recvdBefore)
+		cs.obs.RoundCompleted(roundCtx, cycle, RoundStats{FilesReceived: cs.result.BlobsRecvd - recvdBefore})
 
 		// Convergence: need at least 2 rounds.
 		// Continue while seqno > 0 or phantoms remain with progress.

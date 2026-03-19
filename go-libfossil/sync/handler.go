@@ -23,7 +23,8 @@ type HandleFunc func(ctx context.Context, r *repo.Repo, req *xfer.Message) (*xfe
 
 // HandleOpts configures optional behavior for HandleSync.
 type HandleOpts struct {
-	Buggify BuggifyChecker // nil in production.
+	Buggify  BuggifyChecker // nil in production.
+	Observer Observer       // nil defaults to no-op.
 }
 
 // HandleSync processes an incoming xfer request and produces a response.
@@ -42,12 +43,34 @@ func HandleSyncWithOpts(ctx context.Context, r *repo.Repo, req *xfer.Message, op
 		panic("sync.HandleSync: req must not be nil")
 	}
 
+	obs := resolveObserver(opts.Observer)
+	ctx = obs.HandleStarted(ctx, HandleStart{
+		Operation: detectOperation(req),
+	})
+
 	h := &handler{repo: r, buggify: opts.Buggify}
 	resp, err := h.process(ctx, req)
 	if err == nil && resp == nil {
 		panic("sync.HandleSync: resp must not be nil on success")
 	}
+
+	obs.HandleCompleted(ctx, HandleEnd{
+		CardsProcessed: len(req.Cards),
+		FilesSent:      h.filesSent,
+		FilesReceived:  h.filesRecvd,
+		Err:            err,
+	})
 	return resp, err
+}
+
+// detectOperation checks request cards to determine if this is a clone or sync.
+func detectOperation(req *xfer.Message) string {
+	for _, c := range req.Cards {
+		if _, ok := c.(*xfer.CloneCard); ok {
+			return "clone"
+		}
+	}
+	return "sync"
 }
 
 // handler holds per-request state while processing cards.
@@ -60,6 +83,8 @@ type handler struct {
 	cloneMode     bool // client sent a clone card
 	cloneSeq      int  // clone_seqno cursor from client
 	uvCatalogSent bool // true after sending UV catalog
+	filesSent     int  // files sent in response (for observer)
+	filesRecvd    int  // files received from client (for observer)
 }
 
 func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, error) {
@@ -172,6 +197,7 @@ func (h *handler) handleGimme(c *xfer.GimmeCard) error {
 		return nil
 	}
 	h.resp = append(h.resp, &xfer.FileCard{UUID: c.UUID, Content: data})
+	h.filesSent++
 	return nil
 }
 
@@ -196,7 +222,9 @@ func (h *handler) handleFile(uuid, deltaSrc string, payload []byte) error {
 		h.resp = append(h.resp, &xfer.ErrorCard{
 			Message: fmt.Sprintf("storing %s: %v", uuid, err),
 		})
+		return nil
 	}
+	h.filesRecvd++
 	return nil
 }
 
@@ -287,6 +315,7 @@ func (h *handler) emitCloneBatch() error {
 			return fmt.Errorf("handler: expanding rid %d: %w", rid, err)
 		}
 		h.resp = append(h.resp, &xfer.FileCard{UUID: uuid, Content: data})
+		h.filesSent++
 		lastRID = rid
 		count++
 	}
