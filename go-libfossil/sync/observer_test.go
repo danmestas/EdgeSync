@@ -2,7 +2,12 @@ package sync
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
+
+	"github.com/dmestas/edgesync/go-libfossil/repo"
+	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/dmestas/edgesync/go-libfossil/xfer"
 )
 
 // recordingObserver records all lifecycle calls for test assertions.
@@ -54,4 +59,67 @@ func TestResolveObserverNil(t *testing.T) {
 	// Should not panic
 	ctx := obs.Started(context.Background(), SessionStart{})
 	obs.RoundStarted(ctx, 0)
+}
+
+func TestSyncCallsObserverHooks(t *testing.T) {
+	clientPath := filepath.Join(t.TempDir(), "client.fossil")
+	serverPath := filepath.Join(t.TempDir(), "server.fossil")
+	env := simio.RealEnv()
+
+	server, err := repo.Create(serverPath, "test", env.Rand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	client, err := repo.Create(clientPath, "test", env.Rand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	var projCode, srvCode string
+	client.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projCode)
+	client.DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&srvCode)
+
+	mt := &MockTransport{
+		Handler: func(req *xfer.Message) *xfer.Message {
+			resp, _ := HandleSync(context.Background(), server, req)
+			return resp
+		},
+	}
+
+	rec := &recordingObserver{}
+	result, err := Sync(context.Background(), client, mt, SyncOpts{
+		Push:        true,
+		Pull:        true,
+		ProjectCode: projCode,
+		ServerCode:  srvCode,
+		Observer:    rec,
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	if rec.started != 1 {
+		t.Errorf("Started called %d times, want 1", rec.started)
+	}
+	if rec.completed != 1 {
+		t.Errorf("Completed called %d times, want 1", rec.completed)
+	}
+	if len(rec.roundsStarted) != result.Rounds {
+		t.Errorf("RoundStarted called %d times, want %d", len(rec.roundsStarted), result.Rounds)
+	}
+	if len(rec.roundsCompleted) != result.Rounds {
+		t.Errorf("RoundCompleted called %d times, want %d", len(rec.roundsCompleted), result.Rounds)
+	}
+	if rec.lastInfo.Operation != "sync" {
+		t.Errorf("Operation = %q, want %q", rec.lastInfo.Operation, "sync")
+	}
+	if rec.lastEnd.Rounds != result.Rounds {
+		t.Errorf("SessionEnd.Rounds = %d, want %d", rec.lastEnd.Rounds, result.Rounds)
+	}
+	if rec.lastErr != nil {
+		t.Errorf("SessionEnd err = %v, want nil", rec.lastErr)
+	}
 }

@@ -34,6 +34,7 @@ type SyncOpts struct {
 	UV                      bool              // enable unversioned file sync
 	Env                     *simio.Env        // nil defaults to RealEnv
 	Buggify                 BuggifyChecker    // nil in production
+	Observer                Observer          // nil defaults to no-op
 }
 
 // SyncResult reports what happened during a sync.
@@ -124,34 +125,81 @@ func Sync(ctx context.Context, r *repo.Repo, t Transport, opts SyncOpts) (result
 			panic("sync.Sync: result must not be nil on success")
 		}
 	}()
+
+	obs := resolveObserver(opts.Observer)
 	s := newSession(r, opts)
+
+	ctx = obs.Started(ctx, SessionStart{
+		Operation:   "sync",
+		Push:        opts.Push,
+		Pull:        opts.Pull,
+		UV:          opts.UV,
+		ProjectCode: opts.ProjectCode,
+	})
+
 	for cycle := 0; ; cycle++ {
 		select {
 		case <-ctx.Done():
+			obs.Completed(ctx, sessionEndFromSync(&s.result, opts.ProjectCode), ctx.Err())
 			return &s.result, ctx.Err()
 		default:
 		}
 		if cycle >= MaxRounds {
-			return &s.result, fmt.Errorf("sync: exceeded %d rounds", MaxRounds)
+			err := fmt.Errorf("sync: exceeded %d rounds", MaxRounds)
+			obs.Completed(ctx, sessionEndFromSync(&s.result, opts.ProjectCode), err)
+			return &s.result, err
 		}
+
+		roundCtx := obs.RoundStarted(ctx, cycle)
+
 		req, err := s.buildRequest(cycle)
 		if err != nil {
+			obs.RoundCompleted(roundCtx, cycle, 0, 0)
+			obs.Completed(ctx, sessionEndFromSync(&s.result, opts.ProjectCode), err)
 			return &s.result, fmt.Errorf("sync: buildRequest round %d: %w", cycle, err)
 		}
 		resp, err := t.Exchange(ctx, req)
 		if err != nil {
+			obs.RoundCompleted(roundCtx, cycle, 0, 0)
+			obs.Completed(ctx, sessionEndFromSync(&s.result, opts.ProjectCode), err)
 			return &s.result, fmt.Errorf("sync: exchange round %d: %w", cycle, err)
 		}
+
+		sentBefore := s.result.FilesSent
+		recvdBefore := s.result.FilesRecvd
+
 		done, err := s.processResponse(resp)
 		if err != nil {
+			obs.RoundCompleted(roundCtx, cycle, s.result.FilesSent-sentBefore, s.result.FilesRecvd-recvdBefore)
+			obs.Completed(ctx, sessionEndFromSync(&s.result, opts.ProjectCode), err)
 			return &s.result, fmt.Errorf("sync: processResponse round %d: %w", cycle, err)
 		}
 		s.result.Rounds = cycle + 1
+
+		obs.RoundCompleted(roundCtx, cycle, s.result.FilesSent-sentBefore, s.result.FilesRecvd-recvdBefore)
+
 		if done {
 			break
 		}
 	}
+
+	obs.Completed(ctx, sessionEndFromSync(&s.result, opts.ProjectCode), nil)
 	return &s.result, nil
+}
+
+// sessionEndFromSync builds a SessionEnd from a SyncResult.
+func sessionEndFromSync(r *SyncResult, projectCode string) SessionEnd {
+	return SessionEnd{
+		Operation:    "sync",
+		Rounds:       r.Rounds,
+		FilesSent:    r.FilesSent,
+		FilesRecvd:   r.FilesRecvd,
+		UVFilesSent:  r.UVFilesSent,
+		UVFilesRecvd: r.UVFilesRecvd,
+		UVGimmesSent: r.UVGimmesSent,
+		ProjectCode:  projectCode,
+		Errors:       r.Errors,
+	}
 }
 
 // cardSummary returns a short string describing a card (for trace logging).
