@@ -81,6 +81,38 @@ Five modules in a workspace:
 - `sim/` — Integration sim (real NATS + TCP fault proxy + real Fossil). Serve tests verify `fossil clone`/`fossil sync` against ServeHTTP.
 - Both share `simio/` abstractions and `sync.BuggifyChecker` interface
 
+## Observability (OpenTelemetry)
+
+The leaf agent and sim tests emit traces, metrics, and logs via OpenTelemetry. Telemetry is **optional** — everything builds and runs without it. When `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, the OTel observer is nil and the nopObserver (zero-cost) is used.
+
+### Secrets via Doppler
+
+OTel export secrets (Honeycomb API key) are managed by [Doppler](https://doppler.com). No `.env` files in the repo.
+
+```bash
+# First time per device:
+brew install doppler
+doppler login
+doppler setup          # links this directory to edgesync/dev
+
+# Run with telemetry:
+doppler run -- go test ./sim/ -run TestSimulation -v
+doppler run -- make sim-full
+
+# Run WITHOUT telemetry (no Doppler needed):
+go test ./sim/ -run TestSimulation -v     # works fine, just no OTel export
+make test                                  # CI tests never need Doppler
+```
+
+### Observer Pattern
+
+`sync.Observer` interface in `go-libfossil/sync/observer.go` — lifecycle hooks for session, round, error, and server-side handle events. `leaf/telemetry/observer.go` implements it with OTel spans and metrics. `go-libfossil/` has **no OTel dependency** — all instrumentation flows through the Observer interface.
+
+### Honeycomb Dashboard
+
+- Dataset: `edgesync-sim` in `test` environment
+- Board: "EdgeSync Sim — Operational Overview"
+
 ## Key Conventions
 
 - **SQLite drivers**: `go build` (modernc), `-tags ncruces`, `-tags mattn`. Or `EDGESYNC_SQLITE_DRIVER` env var.
