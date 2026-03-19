@@ -21,6 +21,10 @@ libfossil/
 *.MERGE
 f.txt
 
+# Secrets / environment
+.env
+.env.*
+
 # Agent/skill tool files
 .agents/
 skills-lock.json
