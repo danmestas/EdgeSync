@@ -40,8 +40,7 @@ func Setup(ctx context.Context, cfg TelemetryConfig) (shutdown func(context.Cont
 
 	res, err := resource.Merge(
 		resource.Default(),
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
+		resource.NewSchemaless(
 			semconv.ServiceName(serviceName),
 		),
 	)
