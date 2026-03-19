@@ -56,6 +56,7 @@ type RepoCmd struct {
 	Annotate     RepoAnnotateCmd     `cmd:"" help:"Annotate file lines with version history"`
 	Blame        RepoBlameCmd        `cmd:"" help:"Alias for annotate"`
 	Branch       RepoBranchCmd       `cmd:"" help:"Branch operations"`
+	UV           RepoUVCmd           `cmd:"" name:"uv" help:"Unversioned file operations"`
 }
 
 type SyncCmd struct {

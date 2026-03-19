@@ -16,6 +16,7 @@ type SyncStartCmd struct {
 	PollInterval time.Duration `help:"Sync poll interval" default:"5s"`
 	Push         bool          `help:"Enable push" default:"true" negatable:""`
 	Pull         bool          `help:"Enable pull" default:"true" negatable:""`
+	UV           bool          `help:"Sync unversioned files" default:"false"`
 }
 
 func (c *SyncStartCmd) Run(g *Globals) error {
@@ -29,6 +30,7 @@ func (c *SyncStartCmd) Run(g *Globals) error {
 		PollInterval: c.PollInterval,
 		Push:         c.Push,
 		Pull:         c.Pull,
+		UV:           c.UV,
 	})
 	if err != nil {
 		return fmt.Errorf("agent: %w", err)
