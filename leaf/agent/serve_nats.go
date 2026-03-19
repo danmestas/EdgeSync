@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/sync"
@@ -30,13 +30,13 @@ func ServeNATS(ctx context.Context, nc *nats.Conn, subject string, r *repo.Repo,
 	sub, err := nc.Subscribe(subject, func(msg *nats.Msg) {
 		req, err := xfer.Decode(msg.Data)
 		if err != nil {
-			log.Printf("serve-nats: decode error: %v", err)
+			slog.ErrorContext(ctx, "serve-nats: decode error", "error", err)
 			return
 		}
 
 		resp, err := h(ctx, r, req)
 		if err != nil {
-			log.Printf("serve-nats: handler error: %v", err)
+			slog.ErrorContext(ctx, "serve-nats: handler error", "error", err)
 			resp = &xfer.Message{Cards: []xfer.Card{
 				&xfer.ErrorCard{Message: fmt.Sprintf("handler error: %v", err)},
 			}}
@@ -44,12 +44,12 @@ func ServeNATS(ctx context.Context, nc *nats.Conn, subject string, r *repo.Repo,
 
 		respBytes, err := resp.Encode()
 		if err != nil {
-			log.Printf("serve-nats: encode error: %v", err)
+			slog.ErrorContext(ctx, "serve-nats: encode error", "error", err)
 			return
 		}
 
 		if err := msg.Respond(respBytes); err != nil {
-			log.Printf("serve-nats: respond error: %v", err)
+			slog.ErrorContext(ctx, "serve-nats: respond error", "error", err)
 		}
 	})
 	if err != nil {

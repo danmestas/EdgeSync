@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
@@ -154,7 +154,7 @@ func (a *Agent) Start() error {
 	if a.config.ServeHTTPAddr != "" {
 		go func() {
 			if err := sync.ServeHTTP(ctx, a.config.ServeHTTPAddr, a.repo, sync.HandleSync); err != nil {
-				log.Printf("agent: serve-http stopped: %v", err)
+				slog.Error("serve-http stopped", "error", err)
 			}
 		}()
 	}
@@ -162,7 +162,7 @@ func (a *Agent) Start() error {
 		go func() {
 			subject := a.config.SubjectPrefix + "." + a.projectCode + ".sync"
 			if err := ServeNATS(ctx, a.conn, subject, a.repo, sync.HandleSync); err != nil {
-				log.Printf("agent: serve-nats stopped: %v", err)
+				slog.Error("serve-nats stopped", "error", err)
 			}
 		}()
 	}
@@ -214,14 +214,13 @@ func (a *Agent) pollLoop(ctx context.Context) {
 
 		act := a.Tick(ctx, ev)
 		if act.Err != nil {
-			log.Printf("agent: sync error: %v", act.Err)
+			slog.ErrorContext(ctx, "sync error", "error", act.Err)
 			continue
 		}
 		if act.Result != nil {
-			log.Printf("agent: sync done: rounds=%d sent=%d recv=%d errors=%d",
-				act.Result.Rounds, act.Result.FilesSent, act.Result.FilesRecvd, len(act.Result.Errors))
+			slog.InfoContext(ctx, "sync done", "rounds", act.Result.Rounds, "sent", act.Result.FilesSent, "recv", act.Result.FilesRecvd, "errors", len(act.Result.Errors))
 			for _, e := range act.Result.Errors {
-				log.Printf("agent: sync: %s", e)
+				slog.WarnContext(ctx, "sync protocol error", "detail", e)
 			}
 		}
 	}
@@ -238,6 +237,7 @@ func (a *Agent) runSync(ctx context.Context) (*sync.SyncResult, error) {
 		Password:    a.config.Password,
 		Buggify:     a.config.Buggify,
 		UV:          a.config.UV,
+		Observer:    a.config.Observer,
 	}
 	return sync.Sync(ctx, a.repo, a.transport, opts)
 }
