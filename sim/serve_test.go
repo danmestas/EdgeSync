@@ -229,6 +229,7 @@ func TestLeafToLeafSync(t *testing.T) {
 		PollInterval:     2 * time.Second,
 		SubjectPrefix:    "fossil",
 		ServeNATSEnabled: true,
+		Observer:         testObserver,
 	})
 	if err != nil {
 		t.Fatalf("agent.New leaf-0: %v", err)
@@ -246,6 +247,7 @@ func TestLeafToLeafSync(t *testing.T) {
 		Pull:          true,
 		PollInterval:  2 * time.Second,
 		SubjectPrefix: "fossil",
+		Observer:      testObserver,
 	})
 	if err != nil {
 		t.Fatalf("agent.New leaf-1: %v", err)
@@ -392,6 +394,7 @@ func TestLeafToLeafHTTP(t *testing.T) {
 			Pull:        true,
 			ProjectCode: projCode,
 			ServerCode:  srvCode,
+			Observer:    testObserver,
 		})
 		if err != nil {
 			t.Fatalf("sync round %d: %v", round, err)
