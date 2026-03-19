@@ -6,6 +6,7 @@ import (
 
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/dmestas/edgesync/go-libfossil/uv"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
 )
 
@@ -30,6 +31,7 @@ type SyncOpts struct {
 	ProjectCode, ServerCode string
 	User, Password          string
 	MaxSend                 int
+	UV                      bool              // enable unversioned file sync
 	Env                     *simio.Env        // nil defaults to RealEnv
 	Buggify                 BuggifyChecker    // nil in production
 }
@@ -37,6 +39,8 @@ type SyncOpts struct {
 // SyncResult reports what happened during a sync.
 type SyncResult struct {
 	Rounds, FilesSent, FilesRecvd int
+	UVFilesSent, UVFilesRecvd     int
+	UVGimmesSent                  int
 	Errors                        []string
 }
 
@@ -54,6 +58,13 @@ type session struct {
 	igotSentThisRound   int
 	maxSend             int
 	phantomAge          map[string]int // UUID -> consecutive rounds gimme'd without delivery
+	uvHashSent          bool
+	uvPushOK            bool
+	uvPullOnly          bool
+	uvToSend            map[string]bool // name -> true=full content, false=mtime-only
+	uvGimmes            map[string]bool
+	nUvGimmeSent        int
+	nUvFileRcvd         int
 }
 
 func newSession(r *repo.Repo, opts SyncOpts) *session {
@@ -68,7 +79,7 @@ func newSession(r *repo.Repo, opts SyncOpts) *session {
 	if env == nil {
 		env = simio.RealEnv()
 	}
-	return &session{
+	s := &session{
 		repo:        r,
 		env:         env,
 		opts:        opts,
@@ -78,6 +89,25 @@ func newSession(r *repo.Repo, opts SyncOpts) *session {
 		pendingSend: make(map[string]bool),
 		phantomAge:  make(map[string]int),
 	}
+
+	// Pre-populate uvToSend with all local non-tombstone UV files.
+	if opts.UV {
+		if err := uv.EnsureSchema(r.DB()); err != nil {
+			panic(fmt.Sprintf("sync.newSession: uv.EnsureSchema: %v", err))
+		}
+		entries, err := uv.List(r.DB())
+		if err != nil {
+			panic(fmt.Sprintf("sync.newSession: uv.List: %v", err))
+		}
+		s.uvToSend = make(map[string]bool)
+		s.uvGimmes = make(map[string]bool)
+		for _, e := range entries {
+			// Include both live files and tombstones so deletions propagate.
+			s.uvToSend[e.Name] = true
+		}
+	}
+
+	return s
 }
 
 // Sync runs the client sync loop against the given transport.

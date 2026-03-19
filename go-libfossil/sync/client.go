@@ -11,6 +11,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/delta"
 	"github.com/dmestas/edgesync/go-libfossil/hash"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
+	"github.com/dmestas/edgesync/go-libfossil/uv"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
 )
 
@@ -70,6 +71,42 @@ func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
 	// 6. Gimme cards from phantoms (max = max(MaxGimmeBase, filesRecvdLastRound*2))
 	gimmeCards := s.buildGimmeCards()
 	cards = append(cards, gimmeCards...)
+
+	// UV: pragma uv-hash on first round
+	if s.opts.UV && !s.uvHashSent {
+		if err := uv.EnsureSchema(s.repo.DB()); err != nil {
+			return nil, fmt.Errorf("buildRequest: uv.EnsureSchema: %w", err)
+		}
+		uvHash, err := uv.ContentHash(s.repo.DB())
+		if err != nil {
+			return nil, fmt.Errorf("buildRequest: uv.ContentHash: %w", err)
+		}
+		cards = append(cards, &xfer.PragmaCard{
+			Name:   "uv-hash",
+			Values: []string{uvHash},
+		})
+		s.uvHashSent = true
+	}
+
+	// UV: gimme cards for requested UV files
+	if s.opts.UV {
+		for name := range s.uvGimmes {
+			cards = append(cards, &xfer.UVGimmeCard{Name: name})
+			s.nUvGimmeSent++
+			s.result.UVGimmesSent++
+			delete(s.uvGimmes, name)
+		}
+	}
+
+	// UV: send uvfile cards from uvToSend (only after uvPushOK)
+	if s.opts.UV && s.uvPushOK {
+		uvCards, err := s.buildUVFileCards()
+		if err != nil {
+			return nil, fmt.Errorf("buildRequest uvfile: %w", err)
+		}
+		s.result.UVFilesSent += len(uvCards)
+		cards = append(cards, uvCards...)
+	}
 
 	// 7. Login card computed LAST, prepended to the front.
 	// Nonce = SHA1 of all other cards encoded + random comment.
@@ -182,6 +219,63 @@ func (s *session) buildGimmeCards() []xfer.Card {
 	return cards
 }
 
+// buildUVFileCards produces uvfile cards from uvToSend.
+func (s *session) buildUVFileCards() ([]xfer.Card, error) {
+	// BUGGIFY: shrink UV send budget to stress multi-round UV convergence.
+	if s.opts.Buggify != nil && s.opts.Buggify.Check("sync.buildUVFileCards.minBudget", 0.10) {
+		return nil, nil // skip all UV sends this round
+	}
+
+	var cards []xfer.Card
+	budget := s.maxSend
+
+	for name, sendFullContent := range s.uvToSend {
+		if budget <= 0 {
+			break
+		}
+
+		content, mtime, fileHash, err := uv.Read(s.repo.DB(), name)
+		if err != nil {
+			return nil, fmt.Errorf("buildUVFileCards: read %q: %w", name, err)
+		}
+
+		// Tombstone: send deletion marker.
+		if fileHash == "" {
+			cards = append(cards, &xfer.UVFileCard{
+				Name:  name,
+				MTime: mtime,
+				Hash:  "-",
+				Size:  0,
+				Flags: xfer.UVFlagDeletion,
+			})
+			delete(s.uvToSend, name)
+			continue
+		}
+
+		if sendFullContent && content != nil {
+			cards = append(cards, &xfer.UVFileCard{
+				Name:    name,
+				MTime:   mtime,
+				Hash:    fileHash,
+				Size:    len(content),
+				Flags:   0,
+				Content: content,
+			})
+			budget -= len(content)
+		} else {
+			cards = append(cards, &xfer.UVFileCard{
+				Name:  name,
+				MTime: mtime,
+				Hash:  fileHash,
+				Size:  len(content),
+				Flags: xfer.UVFlagContentOmitted,
+			})
+		}
+		delete(s.uvToSend, name)
+	}
+	return cards, nil
+}
+
 // buildLoginCard encodes the non-login cards, appends a random comment,
 // then computes the login card and returns it.
 func (s *session) buildLoginCard(cards []xfer.Card) (*xfer.LoginCard, error) {
@@ -245,6 +339,37 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 
 		case *xfer.MessageCard:
 			s.result.Errors = append(s.result.Errors, "message: "+c.Message)
+
+		case *xfer.PragmaCard:
+			if c.Name == "uv-push-ok" {
+				s.uvPushOK = true
+			} else if c.Name == "uv-pull-only" {
+				s.uvPullOnly = true
+			}
+
+		case *xfer.UVIGotCard:
+			if s.opts.UV {
+				if err := s.handleUVIGotCard(c); err != nil {
+					return false, err
+				}
+			}
+
+		case *xfer.UVFileCard:
+			if s.opts.UV {
+				if err := s.handleUVFileCard(c); err != nil {
+					return false, err
+				}
+				s.nUvFileRcvd++
+				s.result.UVFilesRecvd++
+			}
+
+		case *xfer.UVGimmeCard:
+			if s.opts.UV {
+				if s.uvToSend == nil {
+					s.uvToSend = make(map[string]bool)
+				}
+				s.uvToSend[c.Name] = true
+			}
 		}
 	}
 
@@ -294,6 +419,21 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 	if unsentCount > 0 {
 		return false, nil
 	}
+
+	// UV convergence
+	if s.opts.UV && s.nUvGimmeSent > 0 && (s.nUvFileRcvd > 0 || s.result.Rounds < 3) {
+		s.nUvGimmeSent = 0
+		s.nUvFileRcvd = 0
+		return false, nil
+	}
+	if s.opts.UV && len(s.uvToSend) > 0 {
+		return false, nil
+	}
+	if s.opts.UV && s.uvGimmes != nil && len(s.uvGimmes) > 0 {
+		return false, nil
+	}
+	s.nUvGimmeSent = 0
+	s.nUvFileRcvd = 0
 
 	return true, nil
 }
@@ -387,5 +527,110 @@ func (s *session) handleFileCard(uuid, deltaSrc string, payload []byte) error {
 		return fmt.Errorf("buggify: simulated storage failure for %s", uuid)
 	}
 
+	return nil
+}
+
+// handleUVIGotCard processes a uvigot card from the server.
+func (s *session) handleUVIGotCard(c *xfer.UVIGotCard) error {
+	if c == nil {
+		panic("session.handleUVIGotCard: c must not be nil")
+	}
+	if err := uv.EnsureSchema(s.repo.DB()); err != nil {
+		return fmt.Errorf("handleUVIGotCard: ensure schema: %w", err)
+	}
+
+	_, localMtime, localHash, err := uv.Read(s.repo.DB(), c.Name)
+	if err != nil {
+		return fmt.Errorf("handleUVIGotCard: read %q: %w", c.Name, err)
+	}
+
+	status := uv.Status(localMtime, localHash, c.MTime, c.Hash)
+
+	switch {
+	case status == 0 || status == 1:
+		delete(s.uvToSend, c.Name)
+		if c.Hash != "-" {
+			s.uvGimmes[c.Name] = true
+			if _, err := s.repo.DB().Exec("DELETE FROM unversioned WHERE name=?", c.Name); err != nil {
+				return fmt.Errorf("handleUVIGotCard: delete %q: %w", c.Name, err)
+			}
+			if err := uv.InvalidateHash(s.repo.DB()); err != nil {
+				return fmt.Errorf("handleUVIGotCard: invalidate hash: %w", err)
+			}
+		} else if status == 1 {
+			if err := uv.Delete(s.repo.DB(), c.Name, c.MTime); err != nil {
+				return fmt.Errorf("handleUVIGotCard: apply deletion %q: %w", c.Name, err)
+			}
+		}
+	case status == 2:
+		if _, err := s.repo.DB().Exec("UPDATE unversioned SET mtime=? WHERE name=?", c.MTime, c.Name); err != nil {
+			return fmt.Errorf("handleUVIGotCard: update mtime %q: %w", c.Name, err)
+		}
+		if err := uv.InvalidateHash(s.repo.DB()); err != nil {
+			return fmt.Errorf("handleUVIGotCard: invalidate hash: %w", err)
+		}
+	case status == 3:
+		delete(s.uvToSend, c.Name)
+	case status == 4:
+		if s.uvPullOnly {
+			delete(s.uvToSend, c.Name)
+		} else {
+			s.uvToSend[c.Name] = false
+		}
+	case status == 5:
+		if s.uvPullOnly {
+			delete(s.uvToSend, c.Name)
+		} else {
+			s.uvToSend[c.Name] = true
+		}
+	}
+	return nil
+}
+
+// handleUVFileCard processes a uvfile card from the server.
+func (s *session) handleUVFileCard(c *xfer.UVFileCard) error {
+	if c == nil {
+		panic("session.handleUVFileCard: c must not be nil")
+	}
+	if err := uv.EnsureSchema(s.repo.DB()); err != nil {
+		return fmt.Errorf("handleUVFileCard: ensure schema: %w", err)
+	}
+
+	// BUGGIFY: reject a valid uvfile to test retry/re-request.
+	if s.opts.Buggify != nil && s.opts.Buggify.Check("sync.handleUVFileCard.reject", 0.05) {
+		return nil
+	}
+
+	// Validate hash if content present.
+	if c.Flags&xfer.UVFlagNoPayload == 0 {
+		if c.Content == nil {
+			panic("session.handleUVFileCard: flags indicate payload but Content is nil")
+		}
+		// BUGGIFY: flip a byte to test hash validation catches corruption.
+		if s.opts.Buggify != nil && len(c.Content) > 0 && s.opts.Buggify.Check("sync.handleUVFileCard.corrupt", 0.02) {
+			c.Content[0] ^= 0xFF
+		}
+		computed := hash.ContentHash(c.Content, c.Hash)
+		if computed != c.Hash {
+			return fmt.Errorf("uvfile %s: hash mismatch", c.Name)
+		}
+	}
+
+	// Double-check status.
+	_, localMtime, localHash, err := uv.Read(s.repo.DB(), c.Name)
+	if err != nil {
+		return fmt.Errorf("handleUVFileCard: read %q: %w", c.Name, err)
+	}
+	status := uv.Status(localMtime, localHash, c.MTime, c.Hash)
+	if status >= 2 {
+		return nil
+	}
+
+	if c.Hash == "-" {
+		return uv.Delete(s.repo.DB(), c.Name, c.MTime)
+	}
+	if c.Content != nil {
+		return uv.Write(s.repo.DB(), c.Name, c.Content, c.MTime)
+	}
 	return nil
 }

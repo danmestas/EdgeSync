@@ -37,6 +37,21 @@ func HashSize(hashType string) int {
 	}
 }
 
+// ContentHash hashes content using the algorithm implied by referenceHash length.
+// 64-char reference = SHA3-256, otherwise SHA1. referenceHash must not be empty.
+func ContentHash(content []byte, referenceHash string) string {
+	if content == nil {
+		panic("hash.ContentHash: content must not be nil")
+	}
+	if referenceHash == "" {
+		panic("hash.ContentHash: referenceHash must not be empty")
+	}
+	if len(referenceHash) > 40 {
+		return SHA3(content)
+	}
+	return SHA1(content)
+}
+
 func IsValidHash(h string) bool {
 	if h == "" {
 		panic("hash.IsValidHash: h must not be empty")

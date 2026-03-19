@@ -14,6 +14,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/hash"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/dmestas/edgesync/go-libfossil/uv"
 	"github.com/dmestas/edgesync/leaf/agent"
 )
 
@@ -625,6 +626,13 @@ func TestDST(t *testing.T) {
 		mf.StoreArtifact([]byte(fmt.Sprintf("dst-sweep-%04d-seed%d", i, seed)))
 	}
 
+	// Seed UV files so sweep exercises UV sync paths.
+	uv.EnsureSchema(masterRepo.DB())
+	for i := range 5 {
+		uv.Write(masterRepo.DB(), fmt.Sprintf("sweep/file-%d.txt", i),
+			[]byte(fmt.Sprintf("sweep-content-%d-seed%d", i, seed)), int64(100+i))
+	}
+
 	sim, err := New(SimConfig{
 		Seed:         seed,
 		NumLeaves:    3,
@@ -632,6 +640,7 @@ func TestDST(t *testing.T) {
 		TmpDir:       t.TempDir(),
 		Upstream:     mf,
 		Buggify:      sev.Buggify,
+		UV:           true,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -672,12 +681,505 @@ func TestDST(t *testing.T) {
 		if err := sim.CheckAllConverged(masterRepo); err != nil {
 			t.Fatalf("Convergence violation at seed=%d: %v", seed, err)
 		}
+		if err := sim.CheckAllUVConverged(masterRepo); err != nil {
+			t.Fatalf("UV convergence violation at seed=%d: %v", seed, err)
+		}
 	}
 
 	// Log per-leaf stats.
 	for _, id := range sim.LeafIDs() {
 		c, _ := CountBlobs(sim.Leaf(id).Repo())
 		t.Logf("  %s: %d blobs", id, c)
+	}
+}
+
+// --- UV Scenarios ---
+
+func TestUVCleanSync(t *testing.T) {
+	sev := parseSeverity()
+	seed := seedFor(10)
+
+	masterRepo := createMasterRepo(t)
+	uv.EnsureSchema(masterRepo.DB())
+	uv.Write(masterRepo.DB(), "wiki/intro.txt", []byte("Welcome to the wiki"), 100)
+	uv.Write(masterRepo.DB(), "wiki/faq.txt", []byte("Frequently asked questions"), 200)
+	uv.Write(masterRepo.DB(), "data/config.json", []byte(`{"version":1}`), 300)
+
+	mf := NewMockFossil(masterRepo)
+
+	sim, err := New(SimConfig{
+		Seed:         seed,
+		NumLeaves:    2,
+		PollInterval: 5 * time.Second,
+		TmpDir:       t.TempDir(),
+		Upstream:     mf,
+		Buggify:      sev.Buggify,
+		UV:           true,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sim.Close()
+
+	steps := stepsFor(200)
+	if err := sim.Run(steps); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	t.Logf("[%s] seed=%d steps=%d syncs=%d", sev.Name, seed, sim.Steps, sim.TotalSyncs)
+
+	if err := sim.CheckSafety(); err != nil {
+		t.Fatalf("Safety: %v", err)
+	}
+
+	if sev.DropRate == 0 && !sev.Buggify {
+		if err := sim.CheckAllUVConverged(masterRepo); err != nil {
+			t.Fatalf("UV Convergence: %v", err)
+		}
+	}
+}
+
+func TestUVBidirectional(t *testing.T) {
+	sev := parseSeverity()
+	seed := seedFor(11)
+
+	masterRepo := createMasterRepo(t)
+	uv.EnsureSchema(masterRepo.DB())
+	uv.Write(masterRepo.DB(), "wiki/page1.txt", []byte("page one"), 100)
+
+	mf := NewMockFossil(masterRepo)
+
+	sim, err := New(SimConfig{
+		Seed:         seed,
+		NumLeaves:    2,
+		PollInterval: 5 * time.Second,
+		TmpDir:       t.TempDir(),
+		Upstream:     mf,
+		Buggify:      sev.Buggify,
+		UV:           true,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sim.Close()
+
+	// Write UV file directly into first leaf.
+	leaf0 := sim.Leaf(sim.LeafIDs()[0])
+	uv.EnsureSchema(leaf0.Repo().DB())
+	uv.Write(leaf0.Repo().DB(), "wiki/page2.txt", []byte("page two"), 200)
+
+	steps := stepsFor(300)
+	if err := sim.Run(steps); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if err := sim.CheckSafety(); err != nil {
+		t.Fatalf("Safety: %v", err)
+	}
+
+	if sev.DropRate == 0 && !sev.Buggify {
+		if err := sim.CheckAllUVConverged(masterRepo); err != nil {
+			t.Fatalf("UV Convergence: %v", err)
+		}
+	}
+}
+
+func TestUVConflictMtimeWins(t *testing.T) {
+	seed := seedFor(12)
+
+	masterRepo := createMasterRepo(t)
+	uv.EnsureSchema(masterRepo.DB())
+	uv.Write(masterRepo.DB(), "conflict.txt", []byte("master version"), 200)
+
+	mf := NewMockFossil(masterRepo)
+
+	sim, err := New(SimConfig{
+		Seed:         seed,
+		NumLeaves:    1,
+		PollInterval: 5 * time.Second,
+		TmpDir:       t.TempDir(),
+		Upstream:     mf,
+		UV:           true,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sim.Close()
+
+	// Leaf has older mtime for same filename.
+	leaf := sim.Leaf(sim.LeafIDs()[0])
+	uv.EnsureSchema(leaf.Repo().DB())
+	uv.Write(leaf.Repo().DB(), "conflict.txt", []byte("leaf version"), 100)
+
+	if err := sim.Run(stepsFor(200)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if err := sim.CheckSafety(); err != nil {
+		t.Fatalf("Safety: %v", err)
+	}
+
+	// Master version (mtime=200) should win on the leaf.
+	content, _, _, _ := uv.Read(leaf.Repo().DB(), "conflict.txt")
+	if string(content) != "master version" {
+		t.Errorf("expected master version, got %q", content)
+	}
+}
+
+func TestUVDeletion(t *testing.T) {
+	seed := seedFor(14)
+
+	masterRepo := createMasterRepo(t)
+	uv.EnsureSchema(masterRepo.DB())
+	uv.Write(masterRepo.DB(), "doomed.txt", []byte("will be deleted"), 100)
+
+	mf := NewMockFossil(masterRepo)
+
+	sim, err := New(SimConfig{
+		Seed:         seed,
+		NumLeaves:    2,
+		PollInterval: 5 * time.Second,
+		TmpDir:       t.TempDir(),
+		Upstream:     mf,
+		UV:           true,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sim.Close()
+
+	// First sync: distribute the file.
+	if err := sim.Run(stepsFor(100)); err != nil {
+		t.Fatalf("Run phase 1: %v", err)
+	}
+
+	// Verify file arrived.
+	for _, id := range sim.LeafIDs() {
+		c, _, _, _ := uv.Read(sim.Leaf(id).Repo().DB(), "doomed.txt")
+		if string(c) != "will be deleted" {
+			t.Fatalf("leaf %s missing file before deletion", id)
+		}
+	}
+
+	// Delete on master with newer mtime.
+	uv.Delete(masterRepo.DB(), "doomed.txt", 200)
+
+	// Second sync: propagate deletion.
+	if err := sim.Run(stepsFor(200)); err != nil {
+		t.Fatalf("Run phase 2: %v", err)
+	}
+
+	if err := sim.CheckSafety(); err != nil {
+		t.Fatalf("Safety: %v", err)
+	}
+
+	// Verify tombstone on all leaves.
+	for _, id := range sim.LeafIDs() {
+		_, mtime, h, _ := uv.Read(sim.Leaf(id).Repo().DB(), "doomed.txt")
+		if h != "" {
+			t.Errorf("leaf %s: expected tombstone, got hash=%q", id, h)
+		}
+		if mtime != 200 {
+			t.Errorf("leaf %s: mtime=%d, want 200", id, mtime)
+		}
+	}
+}
+
+func TestUVDeletionRevival(t *testing.T) {
+	seed := seedFor(15)
+
+	masterRepo := createMasterRepo(t)
+	uv.EnsureSchema(masterRepo.DB())
+	// Master deletes the file at mtime=100.
+	uv.Delete(masterRepo.DB(), "revived.txt", 100)
+
+	mf := NewMockFossil(masterRepo)
+
+	sim, err := New(SimConfig{
+		Seed:         seed,
+		NumLeaves:    1,
+		PollInterval: 5 * time.Second,
+		TmpDir:       t.TempDir(),
+		Upstream:     mf,
+		UV:           true,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sim.Close()
+
+	// Leaf creates file with newer mtime=200.
+	leaf := sim.Leaf(sim.LeafIDs()[0])
+	uv.EnsureSchema(leaf.Repo().DB())
+	uv.Write(leaf.Repo().DB(), "revived.txt", []byte("I'm back"), 200)
+
+	if err := sim.Run(stepsFor(200)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if err := sim.CheckSafety(); err != nil {
+		t.Fatalf("Safety: %v", err)
+	}
+
+	// Leaf version (mtime=200) should win — file is alive on master.
+	content, _, _, _ := uv.Read(masterRepo.DB(), "revived.txt")
+	if string(content) != "I'm back" {
+		t.Errorf("expected revival, got %q", content)
+	}
+}
+
+func TestUVCatalogHashSkip(t *testing.T) {
+	seed := seedFor(19)
+
+	masterRepo := createMasterRepo(t)
+	uv.EnsureSchema(masterRepo.DB())
+	uv.Write(masterRepo.DB(), "same.txt", []byte("identical"), 100)
+
+	mf := NewMockFossil(masterRepo)
+
+	sim, err := New(SimConfig{
+		Seed:         seed,
+		NumLeaves:    1,
+		PollInterval: 5 * time.Second,
+		TmpDir:       t.TempDir(),
+		Upstream:     mf,
+		UV:           true,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sim.Close()
+
+	// Pre-populate leaf with identical content.
+	leaf := sim.Leaf(sim.LeafIDs()[0])
+	uv.EnsureSchema(leaf.Repo().DB())
+	uv.Write(leaf.Repo().DB(), "same.txt", []byte("identical"), 100)
+
+	// After sync, both should still be identical (and no unnecessary data transfer).
+	if err := sim.Run(stepsFor(100)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	masterHash, _ := uv.ContentHash(masterRepo.DB())
+	leafHash, _ := uv.ContentHash(leaf.Repo().DB())
+	if masterHash != leafHash {
+		t.Errorf("hashes should match: master=%s leaf=%s", masterHash, leafHash)
+	}
+}
+
+func TestUVAdversarial(t *testing.T) {
+	// UV sync under network drops and BUGGIFY — tests multi-round convergence.
+	seed := seedFor(20)
+
+	masterRepo := createMasterRepo(t)
+	uv.EnsureSchema(masterRepo.DB())
+	for i := range 5 {
+		uv.Write(masterRepo.DB(), fmt.Sprintf("adversarial/f%d.txt", i),
+			[]byte(fmt.Sprintf("content-%d", i)), int64(100+i))
+	}
+
+	mf := NewMockFossil(masterRepo)
+
+	sim, err := New(SimConfig{
+		Seed:         seed,
+		NumLeaves:    3,
+		PollInterval: 5 * time.Second,
+		TmpDir:       t.TempDir(),
+		Upstream:     mf,
+		Buggify:      true,
+		UV:           true,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sim.Close()
+	sim.Network().SetDropRate(0.15)
+
+	steps := stepsFor(500)
+	if err := sim.Run(steps); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	t.Logf("[adversarial] seed=%d steps=%d syncs=%d errors=%d",
+		seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+
+	// Safety must always hold even under faults.
+	for _, id := range sim.LeafIDs() {
+		r := sim.Leaf(id).Repo()
+		if err := CheckDeltaChains(string(id), r); err != nil {
+			t.Fatalf("Delta chain: %v", err)
+		}
+		if err := CheckNoOrphanPhantoms(string(id), r); err != nil {
+			t.Fatalf("Orphan phantom: %v", err)
+		}
+		if err := CheckUVIntegrity(string(id), r); err != nil {
+			t.Fatalf("UV integrity: %v", err)
+		}
+	}
+}
+
+func TestUVDynamicWorkload(t *testing.T) {
+	// Tests dynamic UV mutations injected mid-simulation via ScheduleUVWrite/Delete.
+	// Master and leaves get new UV files at different times, testing catalog
+	// convergence when content changes between sync sessions.
+	seed := seedFor(22)
+
+	masterRepo := createMasterRepo(t)
+	uv.EnsureSchema(masterRepo.DB())
+	uv.Write(masterRepo.DB(), "base.txt", []byte("initial"), 100)
+
+	mf := NewMockFossil(masterRepo)
+
+	sim, err := New(SimConfig{
+		Seed:                seed,
+		NumLeaves:           2,
+		PollInterval:        5 * time.Second,
+		TmpDir:              t.TempDir(),
+		Upstream:            mf,
+		UV:                  true,
+		SafetyCheckInterval: 25,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sim.Close()
+	sim.SetMasterRepo(masterRepo)
+
+	// Schedule dynamic UV mutations on master between sync rounds.
+	now := sim.Clock().Now()
+	sim.ScheduleUVWrite("master", now.Add(12*time.Second),
+		"dynamic/a.txt", []byte("added mid-sim"), 200)
+	sim.ScheduleUVWrite("master", now.Add(25*time.Second),
+		"dynamic/b.txt", []byte("second file"), 300)
+	sim.ScheduleUVDelete("master", now.Add(40*time.Second),
+		"base.txt", 400)
+
+	// Also schedule a leaf UV write to test bidirectional dynamic workload.
+	sim.ScheduleUVWrite(sim.LeafIDs()[0], now.Add(18*time.Second),
+		"leaf-only.txt", []byte("from leaf"), 250)
+
+	steps := stepsFor(400)
+	if err := sim.Run(steps); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	t.Logf("seed=%d steps=%d syncs=%d uv_sent=%d uv_recv=%d uv_gimmes=%d",
+		seed, sim.Steps, sim.TotalSyncs, sim.TotalUVSent, sim.TotalUVRecvd, sim.TotalUVGimmes)
+
+	if err := sim.CheckSafety(); err != nil {
+		t.Fatalf("Safety: %v", err)
+	}
+
+	if err := sim.CheckAllUVConverged(masterRepo); err != nil {
+		t.Fatalf("UV Convergence: %v", err)
+	}
+
+	// Verify specific state: base.txt should be tombstoned, dynamic files present.
+	_, _, h, _ := uv.Read(masterRepo.DB(), "base.txt")
+	if h != "" {
+		t.Errorf("base.txt should be tombstoned, got hash=%q", h)
+	}
+	c, _, _, _ := uv.Read(masterRepo.DB(), "dynamic/a.txt")
+	if string(c) != "added mid-sim" {
+		t.Errorf("dynamic/a.txt: got %q", c)
+	}
+}
+
+func TestUVResponseTruncation(t *testing.T) {
+	// Tests UV sync convergence under response truncation (partial delivery).
+	seed := seedFor(23)
+
+	masterRepo := createMasterRepo(t)
+	uv.EnsureSchema(masterRepo.DB())
+	for i := range 10 {
+		uv.Write(masterRepo.DB(), fmt.Sprintf("trunc/f%d.txt", i),
+			[]byte(fmt.Sprintf("content-%d", i)), int64(100+i))
+	}
+
+	mf := NewMockFossil(masterRepo)
+
+	sim, err := New(SimConfig{
+		Seed:         seed,
+		NumLeaves:    2,
+		PollInterval: 5 * time.Second,
+		TmpDir:       t.TempDir(),
+		Upstream:     mf,
+		UV:           true,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sim.Close()
+	sim.Network().SetTruncateRate(0.20)
+
+	steps := stepsFor(500)
+	if err := sim.Run(steps); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	t.Logf("[truncation] seed=%d steps=%d syncs=%d errors=%d uv_recv=%d",
+		seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors, sim.TotalUVRecvd)
+
+	// Safety must hold even under truncation.
+	for _, id := range sim.LeafIDs() {
+		if err := CheckUVIntegrity(string(id), sim.Leaf(id).Repo()); err != nil {
+			t.Fatalf("UV integrity %s: %v", id, err)
+		}
+	}
+}
+
+func TestUVLeafDeletion(t *testing.T) {
+	// Tests leaf→server deletion propagation via uvigot/uvfile exchange.
+	seed := seedFor(21)
+
+	masterRepo := createMasterRepo(t)
+	uv.EnsureSchema(masterRepo.DB())
+	uv.Write(masterRepo.DB(), "shared.txt", []byte("original"), 100)
+
+	mf := NewMockFossil(masterRepo)
+
+	sim, err := New(SimConfig{
+		Seed:         seed,
+		NumLeaves:    1,
+		PollInterval: 5 * time.Second,
+		TmpDir:       t.TempDir(),
+		Upstream:     mf,
+		UV:           true,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sim.Close()
+
+	// Phase 1: sync to distribute the file.
+	if err := sim.Run(stepsFor(100)); err != nil {
+		t.Fatalf("Run phase 1: %v", err)
+	}
+
+	leaf := sim.Leaf(sim.LeafIDs()[0])
+	c, _, _, _ := uv.Read(leaf.Repo().DB(), "shared.txt")
+	if string(c) != "original" {
+		t.Fatalf("leaf missing file before deletion")
+	}
+
+	// Phase 2: leaf deletes with newer mtime, should propagate to master.
+	uv.Delete(leaf.Repo().DB(), "shared.txt", 200)
+
+	if err := sim.Run(stepsFor(200)); err != nil {
+		t.Fatalf("Run phase 2: %v", err)
+	}
+
+	if err := sim.CheckSafety(); err != nil {
+		t.Fatalf("Safety: %v", err)
+	}
+
+	// Master should have the tombstone (mtime=200 wins over mtime=100).
+	_, mtime, h, _ := uv.Read(masterRepo.DB(), "shared.txt")
+	if h != "" {
+		t.Errorf("master: expected tombstone, got hash=%q", h)
+	}
+	if mtime != 200 {
+		t.Errorf("master: mtime=%d, want 200", mtime)
 	}
 }
 
