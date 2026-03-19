@@ -1,0 +1,144 @@
+//go:build !wasip1 && !js
+
+package telemetry
+
+import (
+	"context"
+	"time"
+
+	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+)
+
+const instrumentationName = "edgesync-leaf"
+
+type operationKey struct{}
+type startTimeKey struct{}
+
+func withOperation(ctx context.Context, op string) context.Context {
+	return context.WithValue(ctx, operationKey{}, op)
+}
+
+func operationFromContext(ctx context.Context) string {
+	if op, ok := ctx.Value(operationKey{}).(string); ok {
+		return op
+	}
+	return "sync"
+}
+
+// OTelObserver implements sync.Observer using OpenTelemetry spans and metrics.
+type OTelObserver struct {
+	tracer trace.Tracer
+
+	sessionsTotal metric.Int64Counter
+	errorsTotal   metric.Int64Counter
+	duration      metric.Float64Histogram
+	rounds        metric.Int64Histogram
+	filesSent     metric.Int64Histogram
+	filesRecvd    metric.Int64Histogram
+	uvFilesSent   metric.Int64Histogram
+	uvFilesRecvd  metric.Int64Histogram
+}
+
+// NewOTelObserver creates an OTelObserver. Pass nil for either provider
+// to use the globally registered provider (set by Setup).
+func NewOTelObserver(tp trace.TracerProvider, mp metric.MeterProvider) *OTelObserver {
+	if tp == nil {
+		tp = otel.GetTracerProvider()
+	}
+	if mp == nil {
+		mp = otel.GetMeterProvider()
+	}
+	m := mp.Meter(instrumentationName)
+	obs := &OTelObserver{
+		tracer: tp.Tracer(instrumentationName),
+	}
+	obs.sessionsTotal, _ = m.Int64Counter("sync.sessions.total",
+		metric.WithDescription("Total sync/clone sessions"))
+	obs.errorsTotal, _ = m.Int64Counter("sync.errors.total",
+		metric.WithDescription("Sessions ending with error"))
+	obs.duration, _ = m.Float64Histogram("sync.duration.seconds",
+		metric.WithDescription("End-to-end session duration"),
+		metric.WithUnit("s"))
+	obs.rounds, _ = m.Int64Histogram("sync.rounds",
+		metric.WithDescription("Rounds to convergence"))
+	obs.filesSent, _ = m.Int64Histogram("sync.files.sent",
+		metric.WithDescription("Files sent per session"))
+	obs.filesRecvd, _ = m.Int64Histogram("sync.files.received",
+		metric.WithDescription("Files received per session"))
+	obs.uvFilesSent, _ = m.Int64Histogram("sync.uv.files.sent",
+		metric.WithDescription("UV files sent per session"))
+	obs.uvFilesRecvd, _ = m.Int64Histogram("sync.uv.files.received",
+		metric.WithDescription("UV files received per session"))
+	return obs
+}
+
+func (o *OTelObserver) Started(ctx context.Context, info libsync.SessionStart) context.Context {
+	ctx = withOperation(ctx, info.Operation)
+	ctx = context.WithValue(ctx, startTimeKey{}, time.Now())
+	ctx, _ = o.tracer.Start(ctx, info.Operation+".session",
+		trace.WithAttributes(
+			attribute.String("sync.operation", info.Operation),
+			attribute.Bool("sync.push", info.Push),
+			attribute.Bool("sync.pull", info.Pull),
+			attribute.Bool("sync.uv", info.UV),
+			attribute.String("sync.project_code", info.ProjectCode),
+		),
+	)
+	return ctx
+}
+
+func (o *OTelObserver) RoundStarted(ctx context.Context, round int) context.Context {
+	op := operationFromContext(ctx)
+	ctx, _ = o.tracer.Start(ctx, op+".round",
+		trace.WithAttributes(
+			attribute.Int("sync.round", round),
+		),
+	)
+	return ctx
+}
+
+func (o *OTelObserver) RoundCompleted(ctx context.Context, round int, sent, recvd int) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.Int("sync.round.files_sent", sent),
+		attribute.Int("sync.round.files_received", recvd),
+	)
+	span.End()
+}
+
+func (o *OTelObserver) Completed(ctx context.Context, info libsync.SessionEnd, err error) {
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		attribute.Int("sync.rounds", info.Rounds),
+		attribute.Int("sync.files_sent", info.FilesSent),
+		attribute.Int("sync.files_received", info.FilesRecvd),
+		attribute.Int("sync.uv_files_sent", info.UVFilesSent),
+		attribute.Int("sync.uv_files_received", info.UVFilesRecvd),
+		attribute.Int("sync.errors_count", len(info.Errors)),
+	)
+	if err != nil {
+		span.RecordError(err)
+	}
+	span.End()
+
+	attrs := metric.WithAttributes(
+		attribute.String("sync.operation", info.Operation),
+		attribute.String("project.code", info.ProjectCode),
+	)
+	o.sessionsTotal.Add(ctx, 1, attrs)
+	if err != nil {
+		o.errorsTotal.Add(ctx, 1, attrs)
+	}
+	if startTime, ok := ctx.Value(startTimeKey{}).(time.Time); ok {
+		o.duration.Record(ctx, time.Since(startTime).Seconds(), attrs)
+	}
+	o.rounds.Record(ctx, int64(info.Rounds), attrs)
+	o.filesSent.Record(ctx, int64(info.FilesSent), attrs)
+	o.filesRecvd.Record(ctx, int64(info.FilesRecvd), attrs)
+	o.uvFilesSent.Record(ctx, int64(info.UVFilesSent), attrs)
+	o.uvFilesRecvd.Record(ctx, int64(info.UVFilesRecvd), attrs)
+}
