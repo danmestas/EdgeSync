@@ -1,3 +1,5 @@
+//go:build !js
+
 // Package undo saves, restores, and redoes checkout state in a Fossil .fslckout database.
 //
 // The undo state machine uses a vvar entry "undo_available":

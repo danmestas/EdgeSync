@@ -36,6 +36,14 @@ func (*OTelObserver) RoundStarted(ctx context.Context, _ int) context.Context {
 	return ctx
 }
 
-func (*OTelObserver) RoundCompleted(_ context.Context, _ int, _, _ int) {}
+func (*OTelObserver) RoundCompleted(_ context.Context, _ int, _ libsync.RoundStats) {}
 
 func (*OTelObserver) Completed(_ context.Context, _ libsync.SessionEnd, _ error) {}
+
+func (*OTelObserver) Error(_ context.Context, _ error) {}
+
+func (*OTelObserver) HandleStarted(ctx context.Context, _ libsync.HandleStart) context.Context {
+	return ctx
+}
+
+func (*OTelObserver) HandleCompleted(_ context.Context, _ libsync.HandleEnd) {}

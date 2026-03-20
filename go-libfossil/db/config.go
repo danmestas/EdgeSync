@@ -9,11 +9,15 @@ type OpenConfig struct {
 }
 
 func defaultPragmas() map[string]string {
-	return map[string]string{
+	m := map[string]string{
 		"journal_mode": "WAL",
 		"busy_timeout": "5000",
 		"foreign_keys": "OFF", // ncruces enables FK by default; normalize to OFF for schema compat
 	}
+	for k, v := range wasmPragmaOverrides() {
+		m[k] = v
+	}
+	return m
 }
 
 func driverFromEnv() string {

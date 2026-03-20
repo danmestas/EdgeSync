@@ -1,4 +1,4 @@
-.PHONY: build test clean leaf bridge edgesync dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks drivers
+.PHONY: build test clean leaf bridge edgesync wasm-wasi wasm-browser wasm dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks drivers
 
 # --- Build ---
 
@@ -12,6 +12,15 @@ leaf:
 
 bridge:
 	cd bridge && go build -buildvcs=false -o ../bin/bridge ./cmd/bridge
+
+wasm-wasi:
+	GOOS=wasip1 GOARCH=wasm go build -buildvcs=false -tags ncruces -o bin/leaf.wasm ./leaf/cmd/leaf/
+
+wasm-browser:
+	GOOS=js GOARCH=wasm go build -buildvcs=false -tags ncruces -o bin/leaf-browser.wasm ./leaf/cmd/wasm/
+	cp "$$(go env GOROOT)/lib/wasm/wasm_exec.js" bin/
+
+wasm: wasm-wasi wasm-browser
 
 clean:
 	rm -rf bin/

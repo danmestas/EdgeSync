@@ -1,3 +1,5 @@
+//go:build !js
+
 // Package stash saves and restores working directory changes, storing deltas
 // against baseline blobs in the checkout database (.fslckout).
 package stash
