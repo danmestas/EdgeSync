@@ -1,4 +1,4 @@
-.PHONY: build test clean leaf bridge edgesync dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks drivers
+.PHONY: build test clean leaf bridge edgesync wasm-wasi dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks drivers
 
 # --- Build ---
 
@@ -12,6 +12,9 @@ leaf:
 
 bridge:
 	cd bridge && go build -buildvcs=false -o ../bin/bridge ./cmd/bridge
+
+wasm-wasi:
+	GOOS=wasip1 GOARCH=wasm go build -buildvcs=false -tags ncruces -o bin/leaf.wasm ./leaf/cmd/leaf/
 
 clean:
 	rm -rf bin/
