@@ -82,8 +82,11 @@ func main() {
 	}
 
 	slog.Info("leaf-agent started", "repo", *repoPath, "nats", *natsURL, "poll", *poll)
+	awaitSignals(a, shutdown)
+}
 
-	// Signal handling
+// awaitSignals blocks until SIGINT/SIGTERM (clean shutdown) or SIGUSR1 (manual sync).
+func awaitSignals(a *agent.Agent, shutdown func(context.Context) error) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR1)
 
@@ -94,11 +97,9 @@ func main() {
 			a.SyncNow()
 		case syscall.SIGINT, syscall.SIGTERM:
 			slog.Info("shutdown signal received", "signal", sig.String())
-			// 1. Stop agent (waits for in-flight sync)
 			if err := a.Stop(); err != nil {
 				slog.Error("agent stop error", "error", err)
 			}
-			// 2. Flush telemetry
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if err := shutdown(shutdownCtx); err != nil {
 				slog.Error("telemetry shutdown error", "error", err)

@@ -275,7 +275,10 @@ func TestServeHTTPHealthz(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("healthz: got status %d, want 200", resp.StatusCode)
 	}
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(string(body), "ok") {
 		t.Fatalf("healthz: body %q does not contain 'ok'", body)
 	}
