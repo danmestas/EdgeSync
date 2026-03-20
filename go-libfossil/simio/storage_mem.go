@@ -24,6 +24,9 @@ func NewMemStorage() *MemStorage {
 
 // Stat returns file info for the given path.
 func (m *MemStorage) Stat(path string) (os.FileInfo, error) {
+	if path == "" {
+		panic("MemStorage.Stat: path must not be empty")
+	}
 	// Check files first
 	if data, ok := m.files[path]; ok {
 		return &memFileInfo{
@@ -45,13 +48,20 @@ func (m *MemStorage) Stat(path string) (os.FileInfo, error) {
 	return nil, fmt.Errorf("stat %s: %w", path, os.ErrNotExist)
 }
 
-// Remove deletes the file at the given path.
+// Remove deletes the file or empty directory at the given path.
 func (m *MemStorage) Remove(path string) error {
-	if _, ok := m.files[path]; !ok {
-		return os.ErrNotExist
+	if path == "" {
+		panic("MemStorage.Remove: path must not be empty")
 	}
-	delete(m.files, path)
-	return nil
+	if _, ok := m.files[path]; ok {
+		delete(m.files, path)
+		return nil
+	}
+	if m.dirs[path] {
+		delete(m.dirs, path)
+		return nil
+	}
+	return os.ErrNotExist
 }
 
 // MkdirAll creates the directory and all parent directories.
@@ -73,8 +83,11 @@ func (m *MemStorage) MkdirAll(path string, perm os.FileMode) error {
 	return nil
 }
 
-// ReadFile reads the file at the given path.
+// ReadFile reads the file at the given path. Returns a copy of the data.
 func (m *MemStorage) ReadFile(path string) ([]byte, error) {
+	if path == "" {
+		panic("MemStorage.ReadFile: path must not be empty")
+	}
 	data, ok := m.files[path]
 	if !ok {
 		return nil, os.ErrNotExist
@@ -85,8 +98,14 @@ func (m *MemStorage) ReadFile(path string) ([]byte, error) {
 	return result, nil
 }
 
-// WriteFile writes data to the file at the given path.
+// WriteFile writes data to the file at the given path. Stores a copy.
 func (m *MemStorage) WriteFile(path string, data []byte, perm os.FileMode) error {
+	if path == "" {
+		panic("MemStorage.WriteFile: path must not be empty")
+	}
+	if data == nil {
+		panic("MemStorage.WriteFile: data must not be nil")
+	}
 	// Store a copy to prevent external modification
 	stored := make([]byte, len(data))
 	copy(stored, data)
@@ -103,7 +122,12 @@ type memFileInfo struct {
 
 func (f *memFileInfo) Name() string       { return f.name }
 func (f *memFileInfo) Size() int64        { return f.size }
-func (f *memFileInfo) Mode() os.FileMode  { return 0644 }
+func (f *memFileInfo) Mode() os.FileMode {
+	if f.isDir {
+		return os.ModeDir | 0755
+	}
+	return 0644
+}
 func (f *memFileInfo) ModTime() time.Time { return time.Time{} }
 func (f *memFileInfo) IsDir() bool        { return f.isDir }
 func (f *memFileInfo) Sys() any           { return nil }

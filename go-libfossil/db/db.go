@@ -53,9 +53,14 @@ func OpenWith(path string, cfg OpenConfig) (*DB, error) {
 
 	if wasmClearPragmas {
 		// Apply safe pragmas via SQL. Skip journal_mode (WAL not supported on WASI).
+		// Only apply known-safe pragmas to prevent SQL injection.
+		safePragmas := map[string]bool{
+			"busy_timeout": true,
+			"foreign_keys": true,
+		}
 		for k, v := range pragmas {
-			if k == "journal_mode" {
-				continue // WASI defaults to DELETE, which is correct
+			if !safePragmas[k] {
+				continue
 			}
 			if _, err := conn.Exec(fmt.Sprintf("PRAGMA %s = %s", k, v)); err != nil {
 				conn.Close()

@@ -24,17 +24,26 @@ func jsNewAgent(_ js.Value, args []js.Value) any {
 	cfg := args[0]
 
 	repoPath := cfg.Get("repoPath").String()
+	if repoPath == "" {
+		return js.ValueOf("error: repoPath is required")
+	}
 	natsUrl := cfg.Get("natsUrl").String()
+	if natsUrl == "" {
+		return js.ValueOf("error: natsUrl is required")
+	}
 
-	// Optional fields with defaults
-	pollSec := 5
+	// Optional fields with defaults.
+	const defaultPollSeconds = 5
+	pollSec := defaultPollSeconds
 	if p := cfg.Get("pollSeconds"); !p.IsUndefined() && !p.IsNull() {
 		pollSec = p.Int()
 	}
 
-	// Setup no-op telemetry for browser
+	// Setup no-op telemetry for browser.
 	ctx := context.Background()
-	telemetry.Setup(ctx, telemetry.TelemetryConfig{ServiceName: "edgesync-browser"})
+	if _, err := telemetry.Setup(ctx, telemetry.TelemetryConfig{ServiceName: "edgesync-browser"}); err != nil {
+		slog.Error("telemetry setup failed", "error", err)
+	}
 	obs := telemetry.NewOTelObserver(nil, nil)
 
 	config := agent.Config{
