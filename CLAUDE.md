@@ -66,14 +66,18 @@ Five modules in a workspace:
 
 ### sync/ Package (key types)
 - **Client**: `Sync()`, `Clone()`, `SyncOpts{UV: true}`, `CloneOpts`, `Transport` interface
-- **Server**: `HandleSync()`, `HandleSyncWithOpts()`, `HandleFunc`, `HandleOpts`, `ServeHTTP()`
+- **Server**: `HandleSync()`, `HandleSyncWithOpts()`, `HandleFunc`, `HandleOpts`, `ServeHTTP()`, `XferHandler()`
 - **UV Cards**: `handler_uv.go` (server-side uvfile/uvigot/uvgimme dispatch), client UV in `client.go`
 - **Shared**: `storeReceivedFile()`, `resolveFileContent()`, `BuggifyChecker`
 - **Transports**: `HTTPTransport`, `MockTransport` (in sync/); `NATSTransport` (in leaf/agent/)
 
 ### Agent/Bridge
-- `leaf/agent/` — `Config` (config.go), `New()`, `Start()`, `Stop()`, `SyncNow()`, `ServeNATS()`, `ServeP2P()` stub
+- `leaf/agent/` — `Config` (config.go), `New()`, `Start()`, `Stop()`, `SyncNow()`
+  - `serve_http.go` — composes mux with `/healthz` + `sync.XferHandler()` (operational endpoints live here, not in go-libfossil)
+  - `serve_nats.go` — NATS request/reply listener for leaf-to-leaf sync
+  - `serve_p2p.go` — libp2p stub
   - Config fields: `ServeHTTPAddr` (":8080" to serve HTTP), `ServeNATSEnabled` (leaf-to-leaf)
+  - CLI flags: `--repo`, `--nats`, `--poll`, `--serve-http`, `--serve-nats`, `--uv`, `--push`, `--pull`, `--user`, `--password`
 - `bridge/bridge/` — `Config` (config.go), `New()`, `Start()`, `Stop()`
 
 ### Simulation Testing
@@ -113,6 +117,29 @@ make test                                  # CI tests never need Doppler
 - Dataset: `edgesync-sim` in `test` environment
 - Board: "EdgeSync Sim — Operational Overview"
 
+## Deployment (Hetzner VPS)
+
+Docker Compose stack in `deploy/`. Two containers: NATS + leaf agent.
+
+```bash
+# On VPS (91.99.202.69):
+cd ~/EdgeSync/deploy && sudo docker compose up -d --build
+
+# Update:
+cd ~/EdgeSync && git pull && cd deploy && sudo docker compose up -d --build
+```
+
+| Endpoint | URL | Access |
+|----------|-----|--------|
+| Public HTTPS | `https://sync.craftdesign.group` | Cloudflare Tunnel |
+| Tailscale HTTP | `http://100.78.32.45:9000` | Tailnet only |
+| Tailscale NATS | `nats://100.78.32.45:4222` | Tailnet only |
+
+- `deploy/Dockerfile` — multi-stage build, uses `GOWORK=off` (only copies go-libfossil/ + leaf/)
+- `deploy/docker-compose.yml` — NATS on Tailscale IP, leaf on port 9000 (8080/8090 occupied by Coolify/Caddy)
+- Cloudflare Tunnel config: `~/.cloudflared/config.yml` on VPS, service `cloudflared-fossil`
+- Repo files: `deploy/data/*.fossil` (host volume mount)
+
 ## Key Conventions
 
 - **SQLite drivers**: `go build` (modernc), `-tags ncruces`, `-tags mattn`. Or `EDGESYNC_SQLITE_DRIVER` env var.
@@ -123,6 +150,7 @@ make test                                  # CI tests never need Doppler
 - **simio.CryptoRand{}**: Use for production callsites of `repo.Create` and `db.SeedConfig`
 - **Pre-commit hook**: `make setup-hooks` installs ~8s test gate
 - **HandleSync vs HandleSyncWithOpts**: Use `HandleSync` in production, `HandleSyncWithOpts` with `HandleOpts{Buggify}` for DST
+- **go-libfossil is transport-agnostic**: No operational endpoints (healthz, metrics) in go-libfossil. Use `XferHandler()` to compose custom muxes. Operational concerns live in `leaf/agent/serve_http.go`.
 
 ## Fossil Sync Protocol
 
