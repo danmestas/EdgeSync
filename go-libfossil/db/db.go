@@ -33,10 +33,35 @@ func OpenWith(path string, cfg OpenConfig) (*DB, error) {
 		pragmas[k] = v
 	}
 
-	dsn := buildDSN(path, pragmas)
+	// WASM targets: skip DSN pragmas (ncruces _pragma syntax fails under WASI
+	// file locking). Open with nolock=1, then apply safe pragmas via SQL.
+	var dsn string
+	if wasmClearPragmas {
+		suffix := wasmDSNSuffix()
+		if suffix != "" {
+			dsn = fmt.Sprintf("file:%s?%s", path, suffix)
+		} else {
+			dsn = path
+		}
+	} else {
+		dsn = buildDSN(path, pragmas)
+	}
 	conn, err := sql.Open(driver, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("db.Open(%s): %w", driver, err)
+	}
+
+	if wasmClearPragmas {
+		// Apply safe pragmas via SQL. Skip journal_mode (WAL not supported on WASI).
+		for k, v := range pragmas {
+			if k == "journal_mode" {
+				continue // WASI defaults to DELETE, which is correct
+			}
+			if _, err := conn.Exec(fmt.Sprintf("PRAGMA %s = %s", k, v)); err != nil {
+				conn.Close()
+				return nil, fmt.Errorf("db.Open PRAGMA %s: %w", k, err)
+			}
+		}
 	}
 
 	return &DB{conn: conn, path: path, driver: driver}, nil
