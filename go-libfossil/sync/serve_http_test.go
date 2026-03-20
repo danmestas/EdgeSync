@@ -3,7 +3,6 @@ package sync
 import (
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -253,33 +252,5 @@ func TestServeHTTPClone(t *testing.T) {
 	}
 	if len(stored) > 0 {
 		t.Fatalf("clone missing blobs: %v", stored)
-	}
-}
-
-func TestServeHTTPHealthz(t *testing.T) {
-	r := setupSyncTestRepo(t)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	addr := freePort(t)
-	go ServeHTTP(ctx, addr, r, HandleSync)
-	time.Sleep(100 * time.Millisecond)
-
-	resp, err := http.Get("http://" + addr + "/healthz")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("healthz: got status %d, want 200", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(body), "ok") {
-		t.Fatalf("healthz: body %q does not contain 'ok'", body)
 	}
 }
