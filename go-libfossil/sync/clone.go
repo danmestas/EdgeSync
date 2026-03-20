@@ -38,14 +38,18 @@ func Clone(ctx context.Context, path string, t Transport, opts CloneOpts) (r *re
 		panic("sync.Clone: t must not be nil")
 	}
 
-	// Path must not already exist.
-	if _, statErr := os.Stat(path); statErr == nil {
-		return nil, nil, fmt.Errorf("sync.Clone: file already exists: %s", path)
-	}
-
 	env := opts.Env
 	if env == nil {
 		env = simio.RealEnv()
+	}
+	storage := env.Storage
+	if storage == nil {
+		storage = simio.OSStorage{}
+	}
+
+	// Path must not already exist.
+	if _, statErr := storage.Stat(path); statErr == nil {
+		return nil, nil, fmt.Errorf("sync.Clone: file already exists: %s", path)
 	}
 
 	user := opts.User
@@ -54,7 +58,7 @@ func Clone(ctx context.Context, path string, t Transport, opts CloneOpts) (r *re
 	}
 
 	// Create the repository.
-	r, err = repo.Create(path, user, env.Rand)
+	r, err = repo.CreateWithEnv(path, user, env)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sync.Clone: create repo: %w", err)
 	}
@@ -63,7 +67,7 @@ func Clone(ctx context.Context, path string, t Transport, opts CloneOpts) (r *re
 	defer func() {
 		if err != nil {
 			r.Close()
-			if rmErr := os.Remove(path); rmErr != nil {
+			if rmErr := storage.Remove(path); rmErr != nil {
 				fmt.Fprintf(os.Stderr, "sync.Clone: cleanup failed: %v\n", rmErr)
 			}
 			r = nil
