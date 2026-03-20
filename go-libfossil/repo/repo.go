@@ -2,7 +2,6 @@ package repo
 
 import (
 	"fmt"
-	"os"
 
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"github.com/dmestas/edgesync/go-libfossil/content"
@@ -16,69 +15,93 @@ type Repo struct {
 }
 
 func Create(path string, user string, rng simio.Rand) (*Repo, error) {
+	env := simio.RealEnv()
+	env.Rand = rng
+	return CreateWithEnv(path, user, env)
+}
+
+func CreateWithEnv(path string, user string, env *simio.Env) (*Repo, error) {
 	if path == "" {
-		panic("repo.Create: path must not be empty")
+		panic("repo.CreateWithEnv: path must not be empty")
 	}
-	if rng == nil {
-		panic("repo.Create: rng must not be nil")
+	if env == nil {
+		env = simio.RealEnv()
 	}
-	if _, err := os.Stat(path); err == nil {
-		return nil, fmt.Errorf("repo.Create: file already exists: %s", path)
+	if env.Rand == nil {
+		panic("repo.CreateWithEnv: env.Rand must not be nil")
+	}
+	if env.Storage == nil {
+		env.Storage = simio.OSStorage{}
+	}
+
+	if _, err := env.Storage.Stat(path); err == nil {
+		return nil, fmt.Errorf("repo.CreateWithEnv: file already exists: %s", path)
 	}
 
 	d, err := db.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("repo.Create open: %w", err)
+		return nil, fmt.Errorf("repo.CreateWithEnv open: %w", err)
 	}
 
 	if err := db.CreateRepoSchema(d); err != nil {
 		d.Close()
-		if rmErr := os.Remove(path); rmErr != nil {
-			return nil, fmt.Errorf("repo.Create: %w (cleanup failed: %v)", err, rmErr)
+		if rmErr := env.Storage.Remove(path); rmErr != nil {
+			return nil, fmt.Errorf("repo.CreateWithEnv: %w (cleanup failed: %v)", err, rmErr)
 		}
-		return nil, fmt.Errorf("repo.Create schema: %w", err)
+		return nil, fmt.Errorf("repo.CreateWithEnv schema: %w", err)
 	}
 
 	if err := db.SeedUser(d, user); err != nil {
 		d.Close()
-		if rmErr := os.Remove(path); rmErr != nil {
-			return nil, fmt.Errorf("repo.Create: %w (cleanup failed: %v)", err, rmErr)
+		if rmErr := env.Storage.Remove(path); rmErr != nil {
+			return nil, fmt.Errorf("repo.CreateWithEnv: %w (cleanup failed: %v)", err, rmErr)
 		}
-		return nil, fmt.Errorf("repo.Create seed user: %w", err)
+		return nil, fmt.Errorf("repo.CreateWithEnv seed user: %w", err)
 	}
 
-	if err := db.SeedConfig(d, rng); err != nil {
+	if err := db.SeedConfig(d, env.Rand); err != nil {
 		d.Close()
-		if rmErr := os.Remove(path); rmErr != nil {
-			return nil, fmt.Errorf("repo.Create: %w (cleanup failed: %v)", err, rmErr)
+		if rmErr := env.Storage.Remove(path); rmErr != nil {
+			return nil, fmt.Errorf("repo.CreateWithEnv: %w (cleanup failed: %v)", err, rmErr)
 		}
-		return nil, fmt.Errorf("repo.Create seed config: %w", err)
+		return nil, fmt.Errorf("repo.CreateWithEnv seed config: %w", err)
 	}
 
 	return &Repo{db: d, path: path}, nil
 }
 
 func Open(path string) (*Repo, error) {
+	return OpenWithEnv(path, nil)
+}
+
+func OpenWithEnv(path string, env *simio.Env) (*Repo, error) {
 	if path == "" {
-		panic("repo.Open: path must not be empty")
+		panic("repo.OpenWithEnv: path must not be empty")
 	}
-	if _, err := os.Stat(path); err != nil {
-		return nil, fmt.Errorf("repo.Open: %w", err)
+	if env == nil {
+		env = simio.RealEnv()
+	}
+	if env.Storage == nil {
+		env.Storage = simio.OSStorage{}
+	}
+
+	if _, err := env.Storage.Stat(path); err != nil {
+		return nil, fmt.Errorf("repo.OpenWithEnv: %w", err)
 	}
 
 	d, err := db.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("repo.Open: %w", err)
+		return nil, fmt.Errorf("repo.OpenWithEnv: %w", err)
 	}
 
 	id, err := d.ApplicationID()
 	if err != nil {
 		d.Close()
-		return nil, fmt.Errorf("repo.Open application_id: %w", err)
+		return nil, fmt.Errorf("repo.OpenWithEnv application_id: %w", err)
 	}
 	if id != libfossil.FossilApplicationID {
 		d.Close()
-		return nil, fmt.Errorf("repo.Open: not a fossil repo (application_id=%d, want %d)",
+		return nil, fmt.Errorf("repo.OpenWithEnv: not a fossil repo (application_id=%d, want %d)",
 			id, libfossil.FossilApplicationID)
 	}
 
