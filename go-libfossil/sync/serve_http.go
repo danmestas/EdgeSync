@@ -53,8 +53,20 @@ func ServeHTTP(ctx context.Context, addr string, r *repo.Repo, h HandleFunc) err
 	return err
 }
 
-// xferHandler returns an http.HandlerFunc that decodes xfer requests,
-// dispatches to the HandleFunc, and encodes the response.
+// XferHandler returns an http.HandlerFunc that decodes Fossil xfer requests,
+// dispatches to the HandleFunc, and encodes the response. Use this to compose
+// a custom mux when you need additional routes (e.g. /healthz) alongside xfer.
+func XferHandler(r *repo.Repo, h HandleFunc) http.HandlerFunc {
+	if r == nil {
+		panic("sync.XferHandler: r must not be nil")
+	}
+	if h == nil {
+		panic("sync.XferHandler: h must not be nil")
+	}
+	return xferHandler(r, h)
+}
+
+// xferHandler is the unexported implementation.
 func xferHandler(r *repo.Repo, h HandleFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		// Fossil sends GET as a server probe — respond with a basic page.

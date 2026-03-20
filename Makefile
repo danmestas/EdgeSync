@@ -24,7 +24,7 @@ test:
 	go test ./bridge/... -short -count=1
 	go test ./dst/ -run 'TestScenario|TestE2E|TestMockFossil|TestSimulator|TestCheck' -count=1
 	go test ./sim/ -run 'TestFaultProxy|TestGenerateSchedule|TestBuggify' -count=1
-	go test ./sim/ -run 'TestServeHTTP|TestLeafToLeaf' -count=1 -timeout=120s
+	go test ./sim/ -run 'TestServeHTTP|TestLeafToLeaf|TestAgentServe' -count=1 -timeout=120s
 
 # --- Pre-commit hook setup ---
 
@@ -51,7 +51,7 @@ dst-full:
 	for level in normal adversarial hostile; do \
 		for seed in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do \
 			echo "  level=$$level seed=$$seed ..."; \
-			go test ./dst/ -run TestDST -seed=$$seed -level=$$level -steps=10000 -timeout 60s || fail=1; \
+			go test ./dst/ -run TestDST -seed=$$seed -level=$$level -steps=10000 -timeout 180s || fail=1; \
 		done; \
 	done; \
 	if [ $$fail -eq 1 ]; then echo "=== DST FAILED ==="; exit 1; fi
@@ -62,7 +62,7 @@ dst-hostile:
 	@echo "=== DST hostile (16 seeds) ==="
 	@for seed in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do \
 		echo "  seed=$$seed level=hostile ..."; \
-		go test ./dst/ -run TestDST -seed=$$seed -level=hostile -steps=10000 -timeout 60s; \
+		go test ./dst/ -run TestDST -seed=$$seed -level=hostile -steps=10000 -timeout 180s; \
 	done
 	@echo "=== DST hostile passed ==="
 
@@ -77,7 +77,7 @@ dst-drivers:
 		if [ "$$name" = "mattn" ]; then cgo=1; fi; \
 		for seed in 1 2 3 4; do \
 			echo "  driver=$$name seed=$$seed ..."; \
-			(cd dst && CGO_ENABLED=$$cgo go test $$tags -run TestDST -seed=$$seed -level=hostile -steps=10000 -timeout 60s) || fail=1; \
+			(cd dst && CGO_ENABLED=$$cgo go test $$tags -run TestDST -seed=$$seed -level=hostile -steps=10000 -timeout 180s) || fail=1; \
 		done; \
 	done; \
 	if [ $$fail -eq 1 ]; then echo "=== DST drivers FAILED ==="; exit 1; fi

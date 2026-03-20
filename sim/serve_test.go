@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"net/http"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -443,6 +444,103 @@ func TestLeafToLeafHTTP(t *testing.T) {
 	}
 
 	t.Logf("PASS: leaf-to-leaf HTTP — %d blobs converged, both repos pass fossil rebuild", len(seededUUIDs))
+}
+
+// TestAgentServeHTTPFossilClone exercises the production serving path:
+// agent.Start() with ServeHTTPAddr → healthz + XferHandler mux → fossil clone.
+// This is what actually runs on the VPS, not sync.ServeHTTP directly.
+func TestAgentServeHTTPFossilClone(t *testing.T) {
+	if !hasFossil() {
+		t.Skip("fossil binary not found in PATH")
+	}
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	// 1. Embedded NATS (agent.New requires a NATS connection).
+	natsOpts := &natsserver.Options{Port: -1}
+	ns, err := natsserver.NewServer(natsOpts)
+	if err != nil {
+		t.Fatalf("nats server: %v", err)
+	}
+	ns.Start()
+	defer ns.Shutdown()
+	if !ns.ReadyForConnections(5 * time.Second) {
+		t.Fatal("nats not ready")
+	}
+
+	// 2. Create and seed a repo.
+	repoPath := filepath.Join(dir, "agent.fossil")
+	r, err := repo.Create(repoPath, "testuser", simio.CryptoRand{})
+	if err != nil {
+		t.Fatalf("repo.Create: %v", err)
+	}
+	rng := rand.New(rand.NewSource(88))
+	uuids, err := SeedLeaf(r, rng, 5, 4096)
+	if err != nil {
+		r.Close()
+		t.Fatalf("SeedLeaf: %v", err)
+	}
+	t.Logf("Seeded %d blobs", len(uuids))
+	r.Close()
+
+	// 3. Start agent with ServeHTTPAddr (production path).
+	addr := freeAddr(t)
+	a, err := agent.New(agent.Config{
+		RepoPath:      repoPath,
+		NATSUrl:       ns.ClientURL(),
+		ServeHTTPAddr: addr,
+		PollInterval:  60 * time.Second,
+		Observer:      testObserver,
+	})
+	if err != nil {
+		t.Fatalf("agent.New: %v", err)
+	}
+	if err := a.Start(); err != nil {
+		t.Fatalf("agent.Start: %v", err)
+	}
+	defer a.Stop()
+	waitForAddr(t, addr, 5*time.Second)
+
+	// 4. Verify /healthz works through agent's mux.
+	resp, err := http.Get(fmt.Sprintf("http://%s/healthz", addr))
+	if err != nil {
+		t.Fatalf("healthz request: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("healthz: got %d, want 200", resp.StatusCode)
+	}
+
+	// 5. fossil clone through agent's mux (XferHandler path).
+	clonePath := filepath.Join(dir, "clone.fossil")
+	cmd := exec.Command("fossil", "clone", fmt.Sprintf("http://%s", addr), clonePath)
+	out, err := cmd.CombinedOutput()
+	t.Logf("fossil clone output:\n%s", out)
+	if err != nil {
+		t.Fatalf("fossil clone failed: %v", err)
+	}
+
+	// 6. Verify all blobs readable by real fossil.
+	for _, uuid := range uuids {
+		cmd := exec.Command("fossil", "artifact", uuid, "-R", clonePath)
+		artOut, artErr := cmd.CombinedOutput()
+		if artErr != nil {
+			t.Errorf("fossil artifact %s failed: %v\n%s", uuid[:16], artErr, artOut)
+		}
+	}
+
+	// 7. fossil rebuild for full integrity.
+	rebuildCmd := exec.Command("fossil", "rebuild", clonePath)
+	rebuildOut, rebuildErr := rebuildCmd.CombinedOutput()
+	t.Logf("fossil rebuild output:\n%s", rebuildOut)
+	if rebuildErr != nil {
+		t.Errorf("fossil rebuild failed: %v", rebuildErr)
+	}
+
+	t.Logf("PASS: agent.Start() ServeHTTP → fossil clone — %d blobs, healthz + xfer verified", len(uuids))
 }
 
 // --- helpers ---

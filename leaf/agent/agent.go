@@ -153,7 +153,7 @@ func (a *Agent) Start() error {
 	// Server listeners
 	if a.config.ServeHTTPAddr != "" {
 		go func() {
-			if err := sync.ServeHTTP(ctx, a.config.ServeHTTPAddr, a.repo, sync.HandleSync); err != nil {
+			if err := a.serveHTTP(ctx); err != nil {
 				slog.Error("serve-http stopped", "error", err)
 			}
 		}()

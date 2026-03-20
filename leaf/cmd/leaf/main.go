@@ -23,6 +23,9 @@ func main() {
 	password := flag.String("password", envOrDefault("LEAF_PASSWORD", ""), "Fossil user password")
 	push := flag.Bool("push", true, "enable push")
 	pull := flag.Bool("pull", true, "enable pull")
+	serveHTTP := flag.String("serve-http", envOrDefault("LEAF_SERVE_HTTP", ""), "HTTP listen address (e.g. :8080) to serve fossil clone/sync")
+	serveNATS := flag.Bool("serve-nats", false, "enable NATS request/reply listener for leaf-to-leaf sync")
+	uv := flag.Bool("uv", false, "enable unversioned file sync (wiki, forum, attachments)")
 
 	// OTel flags (fall back to standard OTEL_* env vars)
 	otelEndpoint := flag.String("otel-endpoint", envOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""), "OTel OTLP endpoint")
@@ -54,14 +57,17 @@ func main() {
 	obs := telemetry.NewOTelObserver(nil, nil)
 
 	cfg := agent.Config{
-		RepoPath:     *repoPath,
-		NATSUrl:      *natsURL,
-		PollInterval: *poll,
-		User:         *user,
-		Password:     *password,
-		Push:         *push,
-		Pull:         *pull,
-		Observer:     obs,
+		RepoPath:         *repoPath,
+		NATSUrl:          *natsURL,
+		PollInterval:     *poll,
+		User:             *user,
+		Password:         *password,
+		Push:             *push,
+		Pull:             *pull,
+		UV:               *uv,
+		ServeHTTPAddr:    *serveHTTP,
+		ServeNATSEnabled: *serveNATS,
+		Observer:         obs,
 	}
 
 	a, err := agent.New(cfg)
@@ -76,8 +82,11 @@ func main() {
 	}
 
 	slog.Info("leaf-agent started", "repo", *repoPath, "nats", *natsURL, "poll", *poll)
+	awaitSignals(a, shutdown)
+}
 
-	// Signal handling
+// awaitSignals blocks until SIGINT/SIGTERM (clean shutdown) or SIGUSR1 (manual sync).
+func awaitSignals(a *agent.Agent, shutdown func(context.Context) error) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR1)
 
@@ -88,11 +97,9 @@ func main() {
 			a.SyncNow()
 		case syscall.SIGINT, syscall.SIGTERM:
 			slog.Info("shutdown signal received", "signal", sig.String())
-			// 1. Stop agent (waits for in-flight sync)
 			if err := a.Stop(); err != nil {
 				slog.Error("agent stop error", "error", err)
 			}
-			// 2. Flush telemetry
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if err := shutdown(shutdownCtx); err != nil {
 				slog.Error("telemetry shutdown error", "error", err)
