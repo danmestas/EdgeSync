@@ -30,6 +30,11 @@ func ServeHTTP(ctx context.Context, addr string, r *repo.Repo, h HandleFunc) err
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"status":"ok"}`)
+	})
 	mux.HandleFunc("/", xferHandler(r, h))
 
 	srv := &http.Server{
