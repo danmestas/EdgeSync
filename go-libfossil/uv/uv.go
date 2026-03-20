@@ -132,7 +132,7 @@ func Read(d *db.DB, name string) ([]byte, int64, string, error) {
 	var stored []byte
 
 	err := d.QueryRow(
-		"SELECT mtime, hash, encoding, content FROM unversioned WHERE name=?", name,
+		"SELECT CAST(mtime AS INTEGER), hash, encoding, content FROM unversioned WHERE name=?", name,
 	).Scan(&mtime, &hashVal, &encoding, &stored)
 	if err == sql.ErrNoRows {
 		return nil, 0, "", nil
@@ -173,7 +173,7 @@ func List(d *db.DB) ([]Entry, error) {
 		panic("uv.List: d must not be nil")
 	}
 
-	rows, err := d.Query("SELECT name, mtime, hash, sz FROM unversioned ORDER BY name")
+	rows, err := d.Query("SELECT name, CAST(mtime AS INTEGER), hash, sz FROM unversioned ORDER BY name")
 	if err != nil {
 		return nil, fmt.Errorf("uv.List: %w", err)
 	}
