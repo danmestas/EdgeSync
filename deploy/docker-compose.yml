@@ -21,7 +21,7 @@ services:
       - --uv
       - --poll=5s
     ports:
-      - "0.0.0.0:8090:8080"
+      - "0.0.0.0:9000:8080"
     volumes:
       - ./data:/data
     depends_on:
