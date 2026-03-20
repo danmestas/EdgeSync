@@ -23,6 +23,9 @@ func main() {
 	password := flag.String("password", envOrDefault("LEAF_PASSWORD", ""), "Fossil user password")
 	push := flag.Bool("push", true, "enable push")
 	pull := flag.Bool("pull", true, "enable pull")
+	serveHTTP := flag.String("serve-http", envOrDefault("LEAF_SERVE_HTTP", ""), "HTTP listen address (e.g. :8080) to serve fossil clone/sync")
+	serveNATS := flag.Bool("serve-nats", false, "enable NATS request/reply listener for leaf-to-leaf sync")
+	uv := flag.Bool("uv", false, "enable unversioned file sync (wiki, forum, attachments)")
 
 	// OTel flags (fall back to standard OTEL_* env vars)
 	otelEndpoint := flag.String("otel-endpoint", envOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""), "OTel OTLP endpoint")
@@ -54,14 +57,17 @@ func main() {
 	obs := telemetry.NewOTelObserver(nil, nil)
 
 	cfg := agent.Config{
-		RepoPath:     *repoPath,
-		NATSUrl:      *natsURL,
-		PollInterval: *poll,
-		User:         *user,
-		Password:     *password,
-		Push:         *push,
-		Pull:         *pull,
-		Observer:     obs,
+		RepoPath:         *repoPath,
+		NATSUrl:          *natsURL,
+		PollInterval:     *poll,
+		User:             *user,
+		Password:         *password,
+		Push:             *push,
+		Pull:             *pull,
+		UV:               *uv,
+		ServeHTTPAddr:    *serveHTTP,
+		ServeNATSEnabled: *serveNATS,
+		Observer:         obs,
 	}
 
 	a, err := agent.New(cfg)
