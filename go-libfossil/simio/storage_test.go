@@ -1,6 +1,7 @@
 package simio
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -211,5 +212,110 @@ func TestOSStorageRemoveNotFound(t *testing.T) {
 
 	if !os.IsNotExist(err) {
 		t.Errorf("expected IsNotExist error, got: %v", err)
+	}
+}
+
+func TestMemStorageRoundTrip(t *testing.T) {
+	storage := NewMemStorage()
+	path := "/test/file.txt"
+	content := []byte("test content\nline 2\n")
+
+	// Write file
+	if err := storage.WriteFile(path, content, 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Read file back
+	got, err := storage.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	if string(got) != string(content) {
+		t.Errorf("content mismatch:\nwant: %q\ngot:  %q", content, got)
+	}
+
+	// Verify we got a copy, not a reference
+	got[0] = 'X'
+	original, _ := storage.ReadFile(path)
+	if original[0] == 'X' {
+		t.Error("ReadFile returned reference to internal data, expected copy")
+	}
+}
+
+func TestMemStorageStatNotFound(t *testing.T) {
+	storage := NewMemStorage()
+	path := "/nonexistent.txt"
+
+	_, err := storage.Stat(path)
+	if err == nil {
+		t.Fatal("expected error for nonexistent file, got nil")
+	}
+
+	// Use errors.Is to check wrapped error
+	if !os.IsNotExist(err) && !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("expected IsNotExist error, got: %v", err)
+	}
+}
+
+func TestMemStorageRemove(t *testing.T) {
+	storage := NewMemStorage()
+	path := "/test.txt"
+
+	// Create a file
+	if err := storage.WriteFile(path, []byte("test"), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Verify it exists
+	if _, err := storage.Stat(path); err != nil {
+		t.Fatalf("Stat failed after WriteFile: %v", err)
+	}
+
+	// Remove it
+	if err := storage.Remove(path); err != nil {
+		t.Fatalf("Remove failed: %v", err)
+	}
+
+	// Verify it no longer exists
+	_, err := storage.Stat(path)
+	if !os.IsNotExist(err) && !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("file still exists after Remove, Stat error: %v", err)
+	}
+}
+
+func TestMemStorageMkdirAll(t *testing.T) {
+	storage := NewMemStorage()
+	path := "/a/b/c"
+
+	// Create nested directories
+	if err := storage.MkdirAll(path, 0755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+
+	// Verify directory exists
+	info, err := storage.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+
+	if !info.IsDir() {
+		t.Error("expected directory, got file")
+	}
+
+	// Verify intermediate directories were created
+	for _, subpath := range []string{"/a", "/a/b"} {
+		info, err := storage.Stat(subpath)
+		if err != nil {
+			t.Errorf("intermediate directory %s not created: %v", subpath, err)
+		}
+		if !info.IsDir() {
+			t.Errorf("expected %s to be directory", subpath)
+		}
+	}
+
+	// Verify calling MkdirAll on existing directory is idempotent
+	if err := storage.MkdirAll(path, 0755); err != nil {
+		t.Errorf("MkdirAll on existing directory failed: %v", err)
 	}
 }
