@@ -1,0 +1,38 @@
+services:
+  nats:
+    image: nats:latest
+    command: ["-js", "-c", "/etc/nats/nats.conf"]
+    ports:
+      - "100.78.32.45:4222:4222"
+    volumes:
+      - ./nats.conf:/etc/nats/nats.conf:ro
+      - nats-data:/data
+    restart: unless-stopped
+
+  leaf:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command:
+      - --repo=/data/repo.fossil
+      - --nats=nats://nats:4222
+      - --serve-http=:8080
+      - --serve-nats
+      - --uv
+      - --poll=5s
+    ports:
+      - "0.0.0.0:8080:8080"
+    volumes:
+      - ./data:/data
+    depends_on:
+      nats:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  nats-data:
