@@ -27,7 +27,7 @@ go test ./sim/ -run "TestFaultProxy|TestGenerateSchedule|TestBuggify" -count=1 -
 echo "  sim (unit): OK"
 
 echo "=== pre-commit: sim serve tests ==="
-go test ./sim/ -run "TestServeHTTP|TestLeafToLeaf" -count=1 -timeout=60s > /dev/null 2>&1
+go test ./sim/ -run "TestServeHTTP|TestLeafToLeaf|TestAgentServe" -count=1 -timeout=60s > /dev/null 2>&1
 echo "  sim (serve): OK"
 
 echo "=== pre-commit: all passed (~8s) ==="
