@@ -2,9 +2,14 @@
 
 package db
 
-// wasmPragmaOverrides returns nil on WASM — pragmas are skipped entirely.
+// wasmPragmaOverrides returns browser/WASI-specific pragma overrides.
+// OPFS doesn't support shared memory, so WAL is replaced with DELETE journal
+// and EXCLUSIVE locking mode (single connection per Worker).
 func wasmPragmaOverrides() map[string]string {
-	return nil
+	return map[string]string{
+		"journal_mode": "DELETE",
+		"locking_mode": "EXCLUSIVE",
+	}
 }
 
 // wasmDSNSuffix appends nolock=1 to disable file locking on WASM.
@@ -13,5 +18,6 @@ func wasmDSNSuffix() string {
 	return "nolock=1"
 }
 
-// wasmClearPragmas signals that WASM builds should skip DSN pragmas entirely.
-const wasmClearPragmas = true
+// wasmClearPragmas signals that WASM builds should not skip pragmas —
+// browser builds need DELETE journal + EXCLUSIVE locking.
+const wasmClearPragmas = false

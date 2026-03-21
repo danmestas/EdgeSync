@@ -1,18 +1,20 @@
 module github.com/dmestas/edgesync/go-libfossil
 
-go 1.25.4
+go 1.26.0
 
 require (
 	github.com/mattn/go-sqlite3 v1.14.34
-	github.com/ncruces/go-sqlite3 v0.32.0
+	github.com/ncruces/go-sqlite3 v0.33.0
 	golang.org/x/crypto v0.49.0
 	modernc.org/sqlite v1.46.1
 )
 
 require (
+	github.com/danmestas/go-sqlite3-opfs v0.2.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/ncruces/go-sqlite3-wasm v1.0.1-0.20260321101821-261d0f98d39c // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

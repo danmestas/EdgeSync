@@ -85,7 +85,7 @@ func OpenWithEnv(path string, env *simio.Env) (*Repo, error) {
 		env.Storage = simio.OSStorage{}
 	}
 
-	if _, err := env.Storage.Stat(path); err != nil {
+	if err := checkExists(env, path); err != nil {
 		return nil, fmt.Errorf("repo.OpenWithEnv: %w", err)
 	}
 
