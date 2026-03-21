@@ -1,4 +1,4 @@
-//go:build ncruces
+//go:build ncruces && !js
 
 package db
 
@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
 func driverName() string { return "sqlite3" }
