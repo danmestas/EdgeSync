@@ -2,11 +2,14 @@ package sync_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/dmestas/edgesync/go-libfossil/blob"
+	"github.com/dmestas/edgesync/go-libfossil/deck"
 	"github.com/dmestas/edgesync/go-libfossil/delta"
 	"github.com/dmestas/edgesync/go-libfossil/hash"
 	"github.com/dmestas/edgesync/go-libfossil/sync"
@@ -335,4 +338,102 @@ func TestCloneWithPhantoms(t *testing.T) {
 	}
 
 	t.Logf("Clone with phantoms: rounds=%d blobs=%d", result.Rounds, result.BlobsRecvd)
+}
+
+// TestCloneCrosslinksManifests verifies that Clone automatically populates the
+// event/plink/leaf tables by crosslinking received manifest blobs.
+func TestCloneCrosslinksManifests(t *testing.T) {
+	// Build a file blob.
+	fileContent := []byte("hello from crosslink test")
+	fileUUID := hash.SHA1(fileContent)
+
+	// Build a checkin manifest referencing the file.
+	d := &deck.Deck{
+		Type: deck.Checkin,
+		C:    "test checkin",
+		D:    time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC),
+		F:    []deck.FileCard{{Name: "hello.txt", UUID: fileUUID}},
+		U:    "tester",
+		T: []deck.TagCard{
+			{Type: deck.TagPropagating, Name: "branch", UUID: "*", Value: "trunk"},
+			{Type: deck.TagSingleton, Name: "sym-trunk", UUID: "*"},
+		},
+	}
+
+	// Compute R-card.
+	rHash, err := d.ComputeR(func(uuid string) ([]byte, error) {
+		if uuid == fileUUID {
+			return fileContent, nil
+		}
+		return nil, fmt.Errorf("unknown uuid: %s", uuid)
+	})
+	if err != nil {
+		t.Fatalf("ComputeR: %v", err)
+	}
+	d.R = rHash
+
+	manifestBytes, err := d.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	manifestUUID := hash.SHA1(manifestBytes)
+
+	transport := &mockCloneTransport{
+		handler: func(round int, req *xfer.Message) *xfer.Message {
+			if round == 0 {
+				return &xfer.Message{Cards: []xfer.Card{
+					&xfer.PushCard{ServerCode: "srv1", ProjectCode: "proj1"},
+					&xfer.FileCard{UUID: fileUUID, Content: fileContent},
+					&xfer.FileCard{UUID: manifestUUID, Content: manifestBytes},
+					&xfer.CloneSeqNoCard{SeqNo: 0},
+				}}
+			}
+			return &xfer.Message{Cards: []xfer.Card{
+				&xfer.CloneSeqNoCard{SeqNo: 0},
+			}}
+		},
+	}
+
+	tmpDir := t.TempDir()
+	repoPath := filepath.Join(tmpDir, "crosslink.fossil")
+
+	r, result, err := sync.Clone(context.Background(), repoPath, transport, sync.CloneOpts{})
+	if err != nil {
+		t.Fatalf("Clone failed: %v", err)
+	}
+	defer r.Close()
+
+	// Verify blobs received.
+	if result.BlobsRecvd != 2 {
+		t.Errorf("BlobsRecvd = %d, want 2", result.BlobsRecvd)
+	}
+
+	// Verify crosslink populated the event table.
+	if result.CheckinsLinked != 1 {
+		t.Errorf("CheckinsLinked = %d, want 1", result.CheckinsLinked)
+	}
+
+	var eventCount int
+	if err := r.DB().QueryRow("SELECT count(*) FROM event WHERE type='ci'").Scan(&eventCount); err != nil {
+		t.Fatalf("query event: %v", err)
+	}
+	if eventCount != 1 {
+		t.Errorf("event count = %d, want 1", eventCount)
+	}
+
+	// Verify leaf table has the manifest.
+	var leafCount int
+	if err := r.DB().QueryRow("SELECT count(*) FROM leaf").Scan(&leafCount); err != nil {
+		t.Fatalf("query leaf: %v", err)
+	}
+	if leafCount != 1 {
+		t.Errorf("leaf count = %d, want 1", leafCount)
+	}
+
+	// Verify manifest blob exists.
+	if _, ok := blob.Exists(r.DB(), manifestUUID); !ok {
+		t.Error("manifest blob not found")
+	}
+
+	t.Logf("Clone crosslink: rounds=%d blobs=%d checkins=%d", result.Rounds, result.BlobsRecvd, result.CheckinsLinked)
 }

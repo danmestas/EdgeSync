@@ -13,9 +13,10 @@ type CloneOpts struct {
 
 // CloneResult reports what happened during a clone.
 type CloneResult struct {
-	Rounds      int
-	BlobsRecvd  int
-	ProjectCode string
-	ServerCode  string
-	Messages    []string // Informational messages from server
+	Rounds         int
+	BlobsRecvd     int
+	CheckinsLinked int      // Manifests crosslinked into event table
+	ProjectCode    string
+	ServerCode     string
+	Messages       []string // Informational messages from server
 }

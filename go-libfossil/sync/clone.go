@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/dmestas/edgesync/go-libfossil/blob"
+	"github.com/dmestas/edgesync/go-libfossil/manifest"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
@@ -94,6 +95,14 @@ func Clone(ctx context.Context, path string, t Transport, opts CloneOpts) (r *re
 		err = cloneErr
 		return
 	}
+
+	// Crosslink: parse received manifests into event/plink/leaf/mlink tables.
+	linked, xlinkErr := manifest.Crosslink(r)
+	if xlinkErr != nil {
+		err = fmt.Errorf("sync.Clone: crosslink: %w", xlinkErr)
+		return
+	}
+	cloneResult.CheckinsLinked = linked
 
 	return r, cloneResult, nil
 }
