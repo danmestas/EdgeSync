@@ -60,6 +60,7 @@ func testEnv(t *testing.T) (repoDB *sql.DB, ckout *sql.DB, dir string) {
 			srcid INTEGER NOT NULL REFERENCES blob
 		)`,
 		`CREATE INDEX delta_i1 ON delta(srcid)`,
+		`CREATE TABLE unclustered(rid INTEGER PRIMARY KEY)`,
 	}
 	_ = repoSchema
 	for _, s := range repoSchema2 {

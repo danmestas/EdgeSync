@@ -47,6 +47,13 @@ func Store(q db.Querier, content []byte) (rid libfossil.FslID, uuid string, err 
 	}
 
 	rid = libfossil.FslID(ridInt)
+
+	// Mark as unclustered — matches Fossil's content_put_ex (content.c:633).
+	// Only new blobs reach here; Exists early-return skips this.
+	if _, err := q.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid); err != nil {
+		return 0, "", fmt.Errorf("blob.Store unclustered: %w", err)
+	}
+
 	return rid, uuid, nil
 }
 
@@ -100,6 +107,11 @@ func StoreDelta(q db.Querier, content []byte, srcRid libfossil.FslID) (rid libfo
 	_, err = q.Exec("INSERT INTO delta(rid, srcid) VALUES(?, ?)", rid, srcRid)
 	if err != nil {
 		return 0, "", fmt.Errorf("blob.StoreDelta insert delta: %w", err)
+	}
+
+	// Mark as unclustered — matches Fossil's content_put_ex (content.c:633).
+	if _, err := q.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid); err != nil {
+		return 0, "", fmt.Errorf("blob.StoreDelta unclustered: %w", err)
 	}
 
 	return rid, uuid, nil
