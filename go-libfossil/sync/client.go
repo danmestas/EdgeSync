@@ -432,7 +432,13 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 		return false, nil
 	}
 	if s.opts.UV && len(s.uvToSend) > 0 {
-		return false, nil
+		if !s.uvPushOK {
+			// Server did not grant uv-push-ok — UV hashes match,
+			// nothing to push. Clear stale uvToSend from prior rounds.
+			s.uvToSend = nil
+		} else {
+			return false, nil
+		}
 	}
 	if s.opts.UV && s.uvGimmes != nil && len(s.uvGimmes) > 0 {
 		return false, nil
