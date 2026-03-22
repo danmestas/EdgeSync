@@ -425,3 +425,128 @@ func testFossilToLeaf(t *testing.T, commits []map[string]string, messages []stri
 	leafWorkDir := fossilCheckout(t, leafPath)
 	assertFiles(t, leafWorkDir, expected)
 }
+
+func TestLeafToLeaf(t *testing.T) {
+	requireFossil(t)
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+
+	t.Run("single_file", func(t *testing.T) {
+		testLeafToLeaf(t, []checkinFiles{
+			{
+				files:   []manifest.File{{Name: "hello.txt", Content: []byte("hello world")}},
+				comment: "single file",
+			},
+		}, map[string]string{"hello.txt": "hello world"})
+	})
+
+	t.Run("multi_file", func(t *testing.T) {
+		testLeafToLeaf(t, []checkinFiles{
+			{
+				files: []manifest.File{
+					{Name: "a.txt", Content: []byte("alpha")},
+					{Name: "b.txt", Content: []byte("bravo")},
+					{Name: "c.txt", Content: []byte("charlie")},
+				},
+				comment: "multi file",
+			},
+		}, map[string]string{"a.txt": "alpha", "b.txt": "bravo", "c.txt": "charlie"})
+	})
+
+	t.Run("commit_chain", func(t *testing.T) {
+		testLeafToLeaf(t, []checkinFiles{
+			{
+				files:   []manifest.File{{Name: "base.txt", Content: []byte("base content")}},
+				comment: "parent",
+			},
+			{
+				files: []manifest.File{
+					{Name: "base.txt", Content: []byte("base content")},
+					{Name: "added.txt", Content: []byte("new in child")},
+				},
+				comment: "child",
+			},
+		}, map[string]string{"base.txt": "base content", "added.txt": "new in child"})
+	})
+}
+
+func testLeafToLeaf(t *testing.T, checkins []checkinFiles, expected map[string]string) {
+	t.Helper()
+	dir := t.TempDir()
+
+	// 1. Create leaf A, do checkins.
+	leafA := leafRepo(t, dir, "leaf-a.fossil")
+	var parentRid int64
+	for _, ci := range checkins {
+		parentRid = checkin(t, leafA, parentRid, ci.files, ci.comment)
+	}
+
+	// Read project/server codes from leaf A.
+	var projCode, srvCode string
+	leafA.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projCode)
+	leafA.DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&srvCode)
+
+	// 2. Create leaf B (empty, same project code).
+	leafB := leafRepo(t, dir, "leaf-b.fossil")
+	leafB.DB().Exec("UPDATE config SET value=? WHERE name='project-code'", projCode)
+
+	// 3. Serve leaf A over HTTP.
+	leafA.Close()
+	leafAReopened, err := repo.Open(filepath.Join(dir, "leaf-a.fossil"))
+	if err != nil {
+		t.Fatalf("reopen leaf-a: %v", err)
+	}
+	defer leafAReopened.Close()
+
+	addr, cancel := serveLeafHTTP(t, leafAReopened)
+	defer cancel()
+
+	// 4. Sync leaf B from leaf A.
+	transport := &sync.HTTPTransport{URL: fmt.Sprintf("http://%s", addr)}
+	ctx := context.Background()
+	for round := 0; round < 10; round++ {
+		result, err := sync.Sync(ctx, leafB, transport, sync.SyncOpts{
+			Push:        true,
+			Pull:        true,
+			ProjectCode: projCode,
+			ServerCode:  srvCode,
+		})
+		if err != nil {
+			t.Fatalf("sync round %d: %v", round, err)
+		}
+		if result.FilesSent == 0 && result.FilesRecvd == 0 {
+			break
+		}
+	}
+
+	// 5. Crosslink leaf B (sync.Sync doesn't crosslink, unlike sync.Clone).
+	n, err := manifest.Crosslink(leafB)
+	if err != nil {
+		t.Fatalf("Crosslink: %v", err)
+	}
+	t.Logf("crosslinked %d manifests", n)
+
+	// Find the tip checkin (most recent by mtime in event table).
+	var tipRid int64
+	err = leafB.DB().QueryRow(`SELECT objid FROM event WHERE type='ci' ORDER BY mtime DESC LIMIT 1`).Scan(&tipRid)
+	if err != nil {
+		t.Fatalf("get tip rid: %v", err)
+	}
+
+	// Add sym-trunk tag (Crosslink doesn't process manifest tags yet).
+	if _, err := tag.AddTag(leafB, tag.TagOpts{
+		TargetRID: libfossil.FslID(tipRid),
+		TagName:   "sym-trunk",
+		TagType:   tag.TagSingleton,
+		User:      "testuser",
+		Time:      time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("AddTag sym-trunk: %v", err)
+	}
+
+	// 6. fossil open + verify.
+	leafB.Close()
+	leafBWorkDir := fossilCheckout(t, filepath.Join(dir, "leaf-b.fossil"))
+	assertFiles(t, leafBWorkDir, expected)
+}
