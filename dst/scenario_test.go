@@ -11,7 +11,6 @@ import (
 
 	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/db"
-	"github.com/dmestas/edgesync/go-libfossil/hash"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
 	"github.com/dmestas/edgesync/go-libfossil/uv"
@@ -164,7 +163,6 @@ func TestScenarioBidirectional(t *testing.T) {
 			r.WithTx(func(tx *db.Tx) error {
 				rid, u, _ := blob.Store(tx, data)
 				uuid = u
-				tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid)
 				tx.Exec("INSERT OR IGNORE INTO unsent(rid) VALUES(?)", rid)
 				return nil
 			})
@@ -449,15 +447,13 @@ func TestScenarioPeerSync(t *testing.T) {
 	// Seed blobs into peer-0 only.
 	for i := range 10 {
 		data := []byte(fmt.Sprintf("peer-blob-%d-seed%d", i, seed))
-		uuid := hash.SHA1(data)
-		_, err := leafRepos[0].DB().Exec(
-			"INSERT INTO blob(uuid, size, content) VALUES(?, ?, ?)",
-			uuid, len(data), data,
-		)
+		err := leafRepos[0].WithTx(func(tx *db.Tx) error {
+			_, _, err := blob.Store(tx, data)
+			return err
+		})
 		if err != nil {
 			t.Fatalf("seed blob: %v", err)
 		}
-		leafRepos[0].DB().Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(last_insert_rowid())")
 	}
 
 	// Build peer network: leaf-0 syncs with leaf-1, leaf-1 syncs with leaf-0.

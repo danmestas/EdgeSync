@@ -59,13 +59,12 @@ func (f *MockFossil) StoreArtifact(data []byte) (string, error) {
 	}
 	var uuid string
 	err := f.repo.WithTx(func(tx *db.Tx) error {
-		rid, u, err := blob.Store(tx, data)
+		_, u, err := blob.Store(tx, data)
 		if err != nil {
 			return err
 		}
 		uuid = u
-		_, err = tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid)
-		return err
+		return nil
 	})
 	return uuid, err
 }

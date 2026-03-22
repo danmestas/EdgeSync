@@ -31,9 +31,6 @@ func SeedLeaf(r *repo.Repo, rng *rand.Rand, count, maxSize int) ([]string, error
 				return fmt.Errorf("blob.Store: %w", err)
 			}
 
-			if _, err := tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid); err != nil {
-				return fmt.Errorf("insert unclustered: %w", err)
-			}
 			if _, err := tx.Exec("INSERT OR IGNORE INTO unsent(rid) VALUES(?)", rid); err != nil {
 				return fmt.Errorf("insert unsent: %w", err)
 			}
