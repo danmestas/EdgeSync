@@ -93,10 +93,26 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 		h.handleControlCard(card)
 	}
 
-	// Second pass: handle data cards.
+	// Second pass: handle file cards first (so blobs are stored before
+	// igot cards check existence — prevents spurious gimmes for blobs
+	// received in the same request).
 	for _, card := range req.Cards {
-		if err := h.handleDataCard(card); err != nil {
-			return nil, err
+		switch card.(type) {
+		case *xfer.FileCard, *xfer.CFileCard:
+			if err := h.handleDataCard(card); err != nil {
+				return nil, err
+			}
+		}
+	}
+	// Third pass: handle remaining data cards.
+	for _, card := range req.Cards {
+		switch card.(type) {
+		case *xfer.FileCard, *xfer.CFileCard:
+			continue // already handled
+		default:
+			if err := h.handleDataCard(card); err != nil {
+				return nil, err
+			}
 		}
 	}
 
