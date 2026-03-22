@@ -1,6 +1,8 @@
 package sim
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/manifest"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/dmestas/edgesync/go-libfossil/sync"
 	"github.com/dmestas/edgesync/go-libfossil/tag"
 )
 
@@ -142,4 +145,110 @@ func TestEquivalenceSmoke(t *testing.T) {
 
 	workDir := fossilCheckout(t, r2.Path())
 	assertFiles(t, workDir, map[string]string{"smoke.txt": "smoke test"})
+}
+
+// serveLeafHTTP starts an HTTP server for the repo and returns the address
+// and a cancel function. The caller should defer cancel().
+func serveLeafHTTP(t *testing.T, r *repo.Repo) (string, context.CancelFunc) {
+	t.Helper()
+	addr := freeAddr(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	go sync.ServeHTTP(ctx, addr, r, sync.HandleSync)
+	waitForAddr(t, addr, 5*time.Second)
+	return addr, cancel
+}
+
+func TestLeafToFossil(t *testing.T) {
+	requireFossil(t)
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+
+	t.Run("single_file", func(t *testing.T) {
+		testLeafToFossil(t, []checkinFiles{
+			{
+				files:   []manifest.File{{Name: "hello.txt", Content: []byte("hello world")}},
+				comment: "single file checkin",
+			},
+		}, map[string]string{"hello.txt": "hello world"})
+	})
+
+	t.Run("multi_file", func(t *testing.T) {
+		testLeafToFossil(t, []checkinFiles{
+			{
+				files: []manifest.File{
+					{Name: "a.txt", Content: []byte("alpha")},
+					{Name: "b.txt", Content: []byte("bravo")},
+					{Name: "c.txt", Content: []byte("charlie")},
+				},
+				comment: "multi file checkin",
+			},
+		}, map[string]string{"a.txt": "alpha", "b.txt": "bravo", "c.txt": "charlie"})
+	})
+
+	t.Run("commit_chain", func(t *testing.T) {
+		testLeafToFossil(t, []checkinFiles{
+			{
+				files:   []manifest.File{{Name: "base.txt", Content: []byte("base content")}},
+				comment: "parent commit",
+			},
+			{
+				files: []manifest.File{
+					{Name: "base.txt", Content: []byte("base content")},
+					{Name: "added.txt", Content: []byte("new in child")},
+				},
+				comment: "child commit",
+			},
+		}, map[string]string{"base.txt": "base content", "added.txt": "new in child"})
+	})
+}
+
+func testLeafToFossil(t *testing.T, checkins []checkinFiles, expected map[string]string) {
+	t.Helper()
+	dir := t.TempDir()
+
+	// 1. Create leaf repo and do checkins.
+	src := leafRepo(t, dir, "src.fossil")
+	var parentRid int64
+	for _, ci := range checkins {
+		parentRid = checkin(t, src, parentRid, ci.files, ci.comment)
+	}
+
+	// For commit chains, the last commit needs sym-trunk tag.
+	// Checkin only adds trunk tags when Parent==0 (initial commit).
+	if len(checkins) > 1 {
+		if _, err := tag.AddTag(src, tag.TagOpts{
+			TargetRID: libfossil.FslID(parentRid),
+			TagName:   "sym-trunk",
+			TagType:   tag.TagSingleton,
+			User:      "testuser",
+			Time:      time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("AddTag sym-trunk: %v", err)
+		}
+	}
+	src.Close()
+
+	// 2. Reopen and serve over HTTP.
+	srcReopened, err := repo.Open(filepath.Join(dir, "src.fossil"))
+	if err != nil {
+		t.Fatalf("reopen src: %v", err)
+	}
+	defer srcReopened.Close()
+
+	addr, cancel := serveLeafHTTP(t, srcReopened)
+	defer cancel()
+
+	// 3. fossil clone from our HTTP server.
+	clonePath := filepath.Join(dir, "clone.fossil")
+	cmd := exec.Command("fossil", "clone", fmt.Sprintf("http://%s", addr), clonePath)
+	out, err := cmd.CombinedOutput()
+	t.Logf("fossil clone:\n%s", out)
+	if err != nil {
+		t.Fatalf("fossil clone: %v", err)
+	}
+
+	// 4. fossil open + verify files.
+	workDir := fossilCheckout(t, clonePath)
+	assertFiles(t, workDir, expected)
 }
