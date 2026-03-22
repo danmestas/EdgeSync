@@ -79,10 +79,27 @@ func New(cfg Config) (*Agent, error) {
 		return nil, fmt.Errorf("agent: read server-code: %w", err)
 	}
 
-	nc, err := nats.Connect(cfg.NATSUrl)
+	natsOpts := []nats.Option{nats.Name("edgesync-leaf")}
+	if cfg.CustomDialer != nil {
+		natsOpts = append(natsOpts, nats.SetCustomDialer(cfg.CustomDialer))
+	}
+	if cfg.Logger != nil {
+		natsOpts = append(natsOpts, nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
+			if err != nil {
+				cfg.Logger("NATS disconnected: " + err.Error())
+			}
+		}))
+		natsOpts = append(natsOpts, nats.ReconnectHandler(func(_ *nats.Conn) {
+			cfg.Logger("NATS reconnected")
+		}))
+	}
+	nc, err := nats.Connect(cfg.NATSUrl, natsOpts...)
 	if err != nil {
 		r.Close()
 		return nil, fmt.Errorf("agent: nats connect: %w", err)
+	}
+	if cfg.Logger != nil {
+		cfg.Logger("connected to NATS: " + cfg.NATSUrl)
 	}
 
 	transport := NewNATSTransport(nc, projectCode, 0, cfg.SubjectPrefix)
@@ -137,6 +154,12 @@ func (a *Agent) Tick(ctx context.Context, ev Event) Action {
 	}
 }
 
+func (a *Agent) logf(format string, args ...any) {
+	if a.config.Logger != nil {
+		a.config.Logger(fmt.Sprintf(format, args...))
+	}
+}
+
 // Repo returns the agent's Fossil repository (for invariant checking in simulation).
 func (a *Agent) Repo() *repo.Repo {
 	return a.repo
@@ -145,6 +168,7 @@ func (a *Agent) Repo() *repo.Repo {
 // Start launches the background poll loop and any configured server
 // listeners. Call Stop to shut everything down.
 func (a *Agent) Start() error {
+	a.logf("starting agent...")
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
 	a.done = make(chan struct{})
@@ -201,26 +225,35 @@ func (a *Agent) SyncNow() {
 // into Tick calls and logging results.
 func (a *Agent) pollLoop(ctx context.Context) {
 	defer close(a.done)
+	a.logf("poll loop started, interval %s", a.config.PollInterval)
 	for {
 		var ev Event
 		select {
 		case <-ctx.Done():
+			a.logf("poll loop stopped")
 			return
 		case <-a.clock.After(a.config.PollInterval):
 			ev = EventTimer
 		case <-a.syncNow:
 			ev = EventSyncNow
+			a.logf("manual sync triggered")
 		}
 
 		act := a.Tick(ctx, ev)
 		if act.Err != nil {
+			a.logf("sync error: %v", act.Err)
 			slog.ErrorContext(ctx, "sync error", "error", act.Err)
 			continue
 		}
 		if act.Result != nil {
+			a.logf("sync done: ↑%d ↓%d rounds=%d", act.Result.FilesSent, act.Result.FilesRecvd, act.Result.Rounds)
 			slog.InfoContext(ctx, "sync done", "rounds", act.Result.Rounds, "sent", act.Result.FilesSent, "recv", act.Result.FilesRecvd, "errors", len(act.Result.Errors))
 			for _, e := range act.Result.Errors {
+				a.logf("sync warning: %s", e)
 				slog.WarnContext(ctx, "sync protocol error", "detail", e)
+			}
+			if a.config.PostSyncHook != nil {
+				a.config.PostSyncHook(act.Result)
 			}
 		}
 	}

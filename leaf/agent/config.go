@@ -8,6 +8,7 @@ import (
 
 	"github.com/dmestas/edgesync/go-libfossil/simio"
 	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
+	"github.com/nats-io/nats.go"
 )
 
 // Config holds all settings for a leaf agent instance.
@@ -59,6 +60,18 @@ type Config struct {
 	// ServeNATSEnabled starts a NATS request/reply listener on the
 	// project sync subject. Enables leaf-to-leaf sync without a bridge.
 	ServeNATSEnabled bool
+
+	// CustomDialer overrides the default net.Dial for NATS connections.
+	// Set to &wsdialer.WSDialer{URL: "ws://..."} for browser WebSocket.
+	CustomDialer nats.CustomDialer
+
+	// Logger receives human-readable agent lifecycle messages.
+	// Nil means no logging beyond slog.
+	Logger func(string)
+
+	// PostSyncHook is called after each successful sync with the result.
+	// Use for crosslinking received manifests or refreshing UI state.
+	PostSyncHook func(result *libsync.SyncResult)
 }
 
 // applyDefaults fills in zero-valued fields with sensible defaults.
