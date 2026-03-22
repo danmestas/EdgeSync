@@ -105,10 +105,7 @@ func AddTag(r *repo.Repo, opts TagOpts) (libfossil.FslID, error) {
 			return fmt.Errorf("tagxref insert: %w", err)
 		}
 
-		// Mark as unclustered and unsent
-		if _, err := tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", controlRid); err != nil {
-			return fmt.Errorf("tag.AddTag: unclustered: %w", err)
-		}
+		// Mark as unsent (unclustered is handled by blob.Store automatically)
 		if _, err := tx.Exec("INSERT OR IGNORE INTO unsent(rid) VALUES(?)", controlRid); err != nil {
 			return fmt.Errorf("tag.AddTag: unsent: %w", err)
 		}

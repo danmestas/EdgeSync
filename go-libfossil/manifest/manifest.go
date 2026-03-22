@@ -73,11 +73,9 @@ func Checkin(r *repo.Repo, opts CheckinOpts) (manifestRid libfossil.FslID, manif
 			return txErr
 		}
 
-		// Mark file blobs as unclustered/unsent so sync pushes them.
+		// Mark file blobs as unsent so sync pushes them.
+		// (unclustered is handled by blob.Store automatically.)
 		for _, frid := range fileRids {
-			if _, err := tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", frid); err != nil {
-				return fmt.Errorf("unclustered file: %w", err)
-			}
 			if _, err := tx.Exec("INSERT OR IGNORE INTO unsent(rid) VALUES(?)", frid); err != nil {
 				return fmt.Errorf("unsent file: %w", err)
 			}
@@ -222,10 +220,7 @@ func markLeafAndEvent(tx *db.Tx, opts CheckinOpts, manifestRid libfossil.FslID) 
 		}
 	}
 
-	// unclustered + unsent
-	if _, err := tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", manifestRid); err != nil {
-		return fmt.Errorf("unclustered: %w", err)
-	}
+	// unsent (unclustered is handled by blob.Store automatically)
 	if _, err := tx.Exec("INSERT OR IGNORE INTO unsent(rid) VALUES(?)", manifestRid); err != nil {
 		return fmt.Errorf("unsent: %w", err)
 	}
