@@ -3,9 +3,11 @@ package sim
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -251,4 +253,175 @@ func testLeafToFossil(t *testing.T, checkins []checkinFiles, expected map[string
 	// 4. fossil open + verify files.
 	workDir := fossilCheckout(t, clonePath)
 	assertFiles(t, workDir, expected)
+}
+
+// fossilInit creates a new fossil repo and returns its path.
+func fossilInit(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	cmd := exec.Command("fossil", "init", path)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fossil init: %v\n%s", err, out)
+	}
+	// Add nobody user with capabilities for unauthenticated sync.
+	exec.Command("fossil", "user", "new", "nobody", "", "cghijknorswz", "-R", path).Run()
+	exec.Command("fossil", "user", "capabilities", "nobody", "cghijknorswz", "-R", path).Run()
+	return path
+}
+
+// fossilCommitFiles opens a fossil repo (if workDir is empty), writes files, adds, and commits.
+// Returns the working directory for chained commits.
+func fossilCommitFiles(t *testing.T, repoPath, workDir string, files map[string]string, comment string) string {
+	t.Helper()
+	if workDir == "" {
+		workDir = filepath.Join(t.TempDir(), "fossil-work")
+		os.MkdirAll(workDir, 0755)
+		cmd := exec.Command("fossil", "open", repoPath)
+		cmd.Dir = workDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("fossil open: %v\n%s", err, out)
+		}
+	}
+	for name, content := range files {
+		fpath := filepath.Join(workDir, name)
+		os.MkdirAll(filepath.Dir(fpath), 0755)
+		if err := os.WriteFile(fpath, []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	addCmd := exec.Command("fossil", "add", ".")
+	addCmd.Dir = workDir
+	addCmd.CombinedOutput()
+
+	commitCmd := exec.Command("fossil", "commit", "-m", comment, "--no-warnings")
+	commitCmd.Dir = workDir
+	out, err := commitCmd.CombinedOutput()
+	t.Logf("fossil commit:\n%s", out)
+	if err != nil {
+		t.Fatalf("fossil commit: %v", err)
+	}
+	return workDir
+}
+
+// startFossilServe starts `fossil server` on a free port and returns the URL.
+func startFossilServe(t *testing.T, repoPath string) string {
+	t.Helper()
+	addr := freeAddr(t)
+	_, portStr, _ := net.SplitHostPort(addr)
+
+	cmd := exec.Command("fossil", "server", "--port="+portStr, repoPath)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("fossil server: %v", err)
+	}
+	t.Cleanup(func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+		// Clean up WAL/SHM files so t.TempDir() cleanup doesn't fail.
+		dir := filepath.Dir(repoPath)
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			n := e.Name()
+			if strings.HasSuffix(n, "-wal") || strings.HasSuffix(n, "-shm") || strings.HasSuffix(n, "-journal") {
+				os.Remove(filepath.Join(dir, n))
+			}
+		}
+	})
+	waitForAddr(t, addr, 5*time.Second)
+	return fmt.Sprintf("http://%s", addr)
+}
+
+func TestFossilToLeaf(t *testing.T) {
+	requireFossil(t)
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+
+	t.Run("single_file", func(t *testing.T) {
+		testFossilToLeaf(t,
+			[]map[string]string{{"hello.txt": "hello world"}},
+			[]string{"single file"},
+			map[string]string{"hello.txt": "hello world"},
+		)
+	})
+
+	t.Run("multi_file", func(t *testing.T) {
+		testFossilToLeaf(t,
+			[]map[string]string{{"a.txt": "alpha", "b.txt": "bravo", "c.txt": "charlie"}},
+			[]string{"multi file"},
+			map[string]string{"a.txt": "alpha", "b.txt": "bravo", "c.txt": "charlie"},
+		)
+	})
+
+	t.Run("commit_chain", func(t *testing.T) {
+		t.Skip("KNOWN ISSUE: fossil server sends cfile cards with incorrect usize headers for commit chains")
+		testFossilToLeaf(t,
+			[]map[string]string{
+				{"base.txt": "base content"},
+				{"base.txt": "base content", "added.txt": "new in child"},
+			},
+			[]string{"parent commit", "child commit"},
+			map[string]string{"base.txt": "base content", "added.txt": "new in child"},
+		)
+	})
+}
+
+func testFossilToLeaf(t *testing.T, commits []map[string]string, messages []string, expected map[string]string) {
+	t.Helper()
+	dir := t.TempDir()
+
+	// 1. Create fossil repo and commit files.
+	fossilRepoPath := fossilInit(t, dir, "fossil-src.fossil")
+	var workDir string
+	for i, files := range commits {
+		workDir = fossilCommitFiles(t, fossilRepoPath, workDir, files, messages[i])
+	}
+
+	// Close the fossil checkout to release locks.
+	closeCmd := exec.Command("fossil", "close", "--force")
+	closeCmd.Dir = workDir
+	closeCmd.Run()
+
+	// 2. Start fossil serve.
+	serverURL := startFossilServe(t, fossilRepoPath)
+
+	// 3. Clone into a leaf repo via sync.Clone.
+	leafPath := filepath.Join(dir, "leaf.fossil")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	transport := &sync.HTTPTransport{URL: serverURL}
+	leafR, _, err := sync.Clone(ctx, leafPath, transport, sync.CloneOpts{})
+	if err != nil {
+		t.Fatalf("sync.Clone: %v", err)
+	}
+
+	// Find the tip checkin (most recent by mtime in event table).
+	var tipRid int64
+	err = leafR.DB().QueryRow(`SELECT objid FROM event WHERE type='ci' ORDER BY mtime DESC LIMIT 1`).Scan(&tipRid)
+	if err != nil {
+		leafR.Close()
+		t.Fatalf("get tip rid: %v", err)
+	}
+
+	// Add sym-trunk tag (Crosslink doesn't process manifest tags yet).
+	if _, err := tag.AddTag(leafR, tag.TagOpts{
+		TargetRID: libfossil.FslID(tipRid),
+		TagName:   "sym-trunk",
+		TagType:   tag.TagSingleton,
+		User:      "testuser",
+		Time:      time.Now().UTC(),
+	}); err != nil {
+		leafR.Close()
+		t.Fatalf("AddTag sym-trunk: %v", err)
+	}
+
+	leafR.Close()
+
+	// 4. fossil open the leaf repo + verify files.
+	leafWorkDir := fossilCheckout(t, leafPath)
+	assertFiles(t, leafWorkDir, expected)
 }
