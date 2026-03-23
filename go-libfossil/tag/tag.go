@@ -105,6 +105,13 @@ func AddTag(r *repo.Repo, opts TagOpts) (libfossil.FslID, error) {
 			return fmt.Errorf("tagxref insert: %w", err)
 		}
 
+		// Propagate to descendants (matches Fossil's tag_insert → tag_propagate).
+		if opts.TagType == TagPropagating || opts.TagType == TagCancel {
+			if err := propagate(tx, tagid, opts.TagType, opts.TargetRID, mtime, opts.Value, opts.TagName, opts.TargetRID); err != nil {
+				return fmt.Errorf("tag propagate: %w", err)
+			}
+		}
+
 		// Mark control artifact as unsent so sync pushes it (unclustered is handled by blob.Store).
 		if _, err := tx.Exec("INSERT OR IGNORE INTO unsent(rid) VALUES(?)", controlRid); err != nil {
 			return fmt.Errorf("tag.AddTag: unsent: %w", err)
