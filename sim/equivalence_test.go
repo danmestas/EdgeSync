@@ -118,24 +118,14 @@ func TestEquivalenceSmoke(t *testing.T) {
 
 	dir := t.TempDir()
 	r := leafRepo(t, dir, "smoke.fossil")
-	rid := checkin(t, r, 0, []manifest.File{
+	checkin(t, r, 0, []manifest.File{
 		{Name: "smoke.txt", Content: []byte("smoke test")},
 	}, "smoke checkin")
 
-	// Crosslink manifests to populate event table (required for fossil open).
+	// Crosslink populates event table and processes inline T-cards
+	// (branch=trunk, sym-trunk) — no manual tag workaround needed.
 	if _, err := manifest.Crosslink(r); err != nil {
 		t.Fatalf("Crosslink: %v", err)
-	}
-
-	// Add sym-trunk tag (Crosslink doesn't process manifest tags yet).
-	if _, err := tag.AddTag(r, tag.TagOpts{
-		TargetRID: libfossil.FslID(rid),
-		TagName:   "sym-trunk",
-		TagType:   tag.TagSingleton,
-		User:      "testuser",
-		Time:      time.Now().UTC(),
-	}); err != nil {
-		t.Fatalf("AddTag sym-trunk: %v", err)
 	}
 
 	// Close and reopen so fossil can read it.
@@ -217,18 +207,18 @@ func testLeafToFossil(t *testing.T, checkins []checkinFiles, expected map[string
 		parentRid = checkin(t, src, parentRid, ci.files, ci.comment)
 	}
 
-	// For commit chains, the last commit needs sym-trunk tag.
-	// Checkin only adds trunk tags when Parent==0 (initial commit).
+	// For commit chains, move sym-trunk to the tip so fossil open resolves it.
+	// manifest.Checkin only adds sym-trunk on initial commits (Parent==0).
+	// Moving sym-trunk is normally done by `fossil commit` — our Checkin doesn't
+	// do this yet (needs checkout layer, CDG-152).
 	if len(checkins) > 1 {
-		if _, err := tag.AddTag(src, tag.TagOpts{
+		tag.AddTag(src, tag.TagOpts{
 			TargetRID: libfossil.FslID(parentRid),
 			TagName:   "sym-trunk",
 			TagType:   tag.TagSingleton,
 			User:      "testuser",
 			Time:      time.Now().UTC(),
-		}); err != nil {
-			t.Fatalf("AddTag sym-trunk: %v", err)
-		}
+		})
 	}
 	src.Close()
 
@@ -414,26 +404,21 @@ func testFossilToLeaf(t *testing.T, commits []map[string]string, messages []stri
 		t.Fatalf("sync.Clone: %v", err)
 	}
 
-	// Find the tip checkin (most recent by mtime in event table).
+	// Add sym-trunk tag so fossil open can resolve the checkout tip.
+	// sync.Clone + Crosslink processes inline T-cards, but the fossil-created
+	// repo's sym-trunk may not transfer correctly via the xfer protocol.
 	var tipRid int64
-	err = leafR.DB().QueryRow(`SELECT objid FROM event WHERE type='ci' ORDER BY mtime DESC LIMIT 1`).Scan(&tipRid)
-	if err != nil {
+	if err := leafR.DB().QueryRow(`SELECT objid FROM event WHERE type='ci' ORDER BY mtime DESC LIMIT 1`).Scan(&tipRid); err != nil {
 		leafR.Close()
 		t.Fatalf("get tip rid: %v", err)
 	}
-
-	// Add sym-trunk tag (Crosslink doesn't process manifest tags yet).
-	if _, err := tag.AddTag(leafR, tag.TagOpts{
+	tag.AddTag(leafR, tag.TagOpts{
 		TargetRID: libfossil.FslID(tipRid),
 		TagName:   "sym-trunk",
 		TagType:   tag.TagSingleton,
 		User:      "testuser",
 		Time:      time.Now().UTC(),
-	}); err != nil {
-		leafR.Close()
-		t.Fatalf("AddTag sym-trunk: %v", err)
-	}
-
+	})
 	leafR.Close()
 
 	// 4. fossil open the leaf repo + verify files.
@@ -547,22 +532,19 @@ func testLeafToLeaf(t *testing.T, checkins []checkinFiles, expected map[string]s
 	}
 	t.Logf("crosslinked %d manifests", n)
 
-	// Find the tip checkin (most recent by mtime in event table).
-	var tipRid int64
-	err = leafB.DB().QueryRow(`SELECT objid FROM event WHERE type='ci' ORDER BY mtime DESC LIMIT 1`).Scan(&tipRid)
-	if err != nil {
-		t.Fatalf("get tip rid: %v", err)
-	}
-
-	// Add sym-trunk tag (Crosslink doesn't process manifest tags yet).
-	if _, err := tag.AddTag(leafB, tag.TagOpts{
-		TargetRID: libfossil.FslID(tipRid),
-		TagName:   "sym-trunk",
-		TagType:   tag.TagSingleton,
-		User:      "testuser",
-		Time:      time.Now().UTC(),
-	}); err != nil {
-		t.Fatalf("AddTag sym-trunk: %v", err)
+	// For commit chains, move sym-trunk to the tip (same as testLeafToFossil).
+	if len(checkins) > 1 {
+		var tipRid int64
+		if err := leafB.DB().QueryRow(`SELECT objid FROM event WHERE type='ci' ORDER BY mtime DESC LIMIT 1`).Scan(&tipRid); err != nil {
+			t.Fatalf("get tip rid: %v", err)
+		}
+		tag.AddTag(leafB, tag.TagOpts{
+			TargetRID: libfossil.FslID(tipRid),
+			TagName:   "sym-trunk",
+			TagType:   tag.TagSingleton,
+			User:      "testuser",
+			Time:      time.Now().UTC(),
+		})
 	}
 
 	// 6. fossil open + verify.

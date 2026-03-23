@@ -11,6 +11,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/deck"
 	"github.com/dmestas/edgesync/go-libfossil/hash"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
+	"github.com/dmestas/edgesync/go-libfossil/tag"
 )
 
 type CheckinOpts struct {
@@ -49,6 +50,8 @@ func Checkin(r *repo.Repo, opts CheckinOpts) (manifestRid libfossil.FslID, manif
 		opts.Time = time.Now().UTC()
 	}
 
+	var inlineTCards []deck.TagCard
+
 	err = r.WithTx(func(tx *db.Tx) error {
 		fCards, fileRids, txErr := storeFileBlobs(tx, opts.Files)
 		if txErr != nil {
@@ -59,6 +62,7 @@ func Checkin(r *repo.Repo, opts CheckinOpts) (manifestRid libfossil.FslID, manif
 		if txErr != nil {
 			return txErr
 		}
+		inlineTCards = d.T // capture for post-tx tag processing
 
 		manifestRid, manifestUUID, txErr = insertCheckinBlob(tx, d)
 		if txErr != nil {
@@ -86,6 +90,36 @@ func Checkin(r *repo.Repo, opts CheckinOpts) (manifestRid libfossil.FslID, manif
 	if err != nil {
 		return 0, "", fmt.Errorf("manifest.Checkin: %w", err)
 	}
+
+	// Process inline T-cards (branch, sym-trunk, etc.) after the transaction
+	// completes so the event/plink tables are populated for tag propagation.
+	for _, tc := range inlineTCards {
+		if tc.UUID != "*" {
+			continue // non-self T-cards are for control artifacts
+		}
+		var tagType int
+		switch tc.Type {
+		case deck.TagPropagating:
+			tagType = tag.TagPropagating
+		case deck.TagSingleton:
+			tagType = tag.TagSingleton
+		case deck.TagCancel:
+			tagType = tag.TagCancel
+		default:
+			continue
+		}
+		if err := tag.ApplyTag(r, tag.ApplyOpts{
+			TargetRID: manifestRid,
+			SrcRID:    manifestRid,
+			TagName:   tc.Name,
+			TagType:   tagType,
+			Value:     tc.Value,
+			MTime:     libfossil.TimeToJulian(opts.Time),
+		}); err != nil {
+			return 0, "", fmt.Errorf("manifest.Checkin inline tag %q: %w", tc.Name, err)
+		}
+	}
+
 	return manifestRid, manifestUUID, nil
 }
 

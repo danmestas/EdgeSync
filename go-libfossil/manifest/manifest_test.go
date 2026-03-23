@@ -11,6 +11,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/deck"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/dmestas/edgesync/go-libfossil/tag"
 	"github.com/dmestas/edgesync/go-libfossil/testutil"
 	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
 )
@@ -358,5 +359,96 @@ func BenchmarkListFiles(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		ListFiles(r, rid)
+	}
+}
+
+func TestCrosslinkInlineTCards(t *testing.T) {
+	r := setupTestRepo(t)
+
+	rid, _, err := Checkin(r, CheckinOpts{
+		Files:   []File{{Name: "hello.txt", Content: []byte("hello")}},
+		Comment: "initial commit",
+		User:    "testuser",
+		Time:    time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("Checkin: %v", err)
+	}
+
+	// Clear event and tagxref to simulate post-clone state (blobs exist, but not crosslinked).
+	r.DB().Exec("DELETE FROM event")
+	r.DB().Exec("DELETE FROM plink")
+	r.DB().Exec("DELETE FROM leaf")
+	r.DB().Exec("DELETE FROM mlink")
+	r.DB().Exec("DELETE FROM tagxref")
+
+	// Run Crosslink.
+	n, err := Crosslink(r)
+	if err != nil {
+		t.Fatalf("Crosslink: %v", err)
+	}
+	t.Logf("crosslinked %d artifacts", n)
+
+	// Verify inline T-cards were processed.
+	// Initial checkin adds: *branch trunk, +sym-trunk
+	var branchCount int
+	r.DB().QueryRow(
+		"SELECT count(*) FROM tagxref JOIN tag USING(tagid) WHERE tagname='branch' AND rid=?", rid,
+	).Scan(&branchCount)
+	if branchCount != 1 {
+		t.Errorf("branch tagxref count=%d, want 1", branchCount)
+	}
+
+	var symCount int
+	r.DB().QueryRow(
+		"SELECT count(*) FROM tagxref JOIN tag USING(tagid) WHERE tagname='sym-trunk' AND rid=?", rid,
+	).Scan(&symCount)
+	if symCount != 1 {
+		t.Errorf("sym-trunk tagxref count=%d, want 1", symCount)
+	}
+}
+
+func TestCrosslinkControlArtifact(t *testing.T) {
+	r := setupTestRepo(t)
+
+	rid, _, err := Checkin(r, CheckinOpts{
+		Files:   []File{{Name: "hello.txt", Content: []byte("hello")}},
+		Comment: "initial commit",
+		User:    "testuser",
+		Time:    time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("Checkin: %v", err)
+	}
+
+	// Create a control artifact via AddTag.
+	_, err = tag.AddTag(r, tag.TagOpts{
+		TargetRID: rid,
+		TagName:   "testlabel",
+		TagType:   tag.TagSingleton,
+		Value:     "myvalue",
+		User:      "testuser",
+		Time:      time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("AddTag: %v", err)
+	}
+
+	// Clear tagxref to simulate post-clone.
+	r.DB().Exec("DELETE FROM tagxref")
+
+	n, err := Crosslink(r)
+	if err != nil {
+		t.Fatalf("Crosslink: %v", err)
+	}
+	t.Logf("crosslinked %d artifacts", n)
+
+	// Verify control artifact's tag was re-applied.
+	var count int
+	r.DB().QueryRow(
+		"SELECT count(*) FROM tagxref JOIN tag USING(tagid) WHERE tagname='testlabel' AND rid=?", rid,
+	).Scan(&count)
+	if count != 1 {
+		t.Errorf("testlabel tagxref count=%d, want 1", count)
 	}
 }

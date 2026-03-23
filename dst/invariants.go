@@ -270,6 +270,66 @@ func (s *Simulator) CheckAllUVConverged(master *repo.Repo) error {
 	return CheckUVConvergence(master, leaves)
 }
 
+// --- Tag invariants ---
+
+// CheckTagxrefIntegrity verifies that:
+// 1. Every tagxref.rid references a valid blob
+// 2. Every tagxref.tagid references a valid tag
+// 3. Propagated entries (srcid=0) have tagtype=2
+// 4. No tagxref.rid references a phantom blob
+func CheckTagxrefIntegrity(nodeID string, r *repo.Repo) error {
+	// Check all tagxref rows reference valid blobs and tags.
+	rows, err := r.DB().Query(`
+		SELECT tx.rid, tx.tagid, tx.srcid, tx.tagtype, t.tagname
+		FROM tagxref tx
+		JOIN tag t ON tx.tagid = t.tagid
+	`)
+	if err != nil {
+		return fmt.Errorf("CheckTagxrefIntegrity(%s): query: %w", nodeID, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var rid, tagid, srcid int64
+		var tagtype int
+		var tagname string
+		if err := rows.Scan(&rid, &tagid, &srcid, &tagtype, &tagname); err != nil {
+			return fmt.Errorf("CheckTagxrefIntegrity(%s): scan: %w", nodeID, err)
+		}
+
+		// Verify rid references a real blob.
+		var blobExists int
+		if err := r.DB().QueryRow("SELECT count(*) FROM blob WHERE rid=?", rid).Scan(&blobExists); err != nil || blobExists == 0 {
+			return &InvariantError{
+				Invariant: "tagxref-integrity",
+				NodeID:    nodeID,
+				Detail:    fmt.Sprintf("tagxref.rid=%d (tag=%s) references non-existent blob", rid, tagname),
+			}
+		}
+
+		// Verify propagated entries have tagtype=2.
+		if srcid == 0 && tagtype != 2 {
+			return &InvariantError{
+				Invariant: "tagxref-integrity",
+				NodeID:    nodeID,
+				Detail:    fmt.Sprintf("tagxref.rid=%d (tag=%s) has srcid=0 but tagtype=%d (want 2)", rid, tagname, tagtype),
+			}
+		}
+
+		// Verify rid is not a phantom.
+		var isPhantom int
+		r.DB().QueryRow("SELECT count(*) FROM phantom WHERE rid=?", rid).Scan(&isPhantom)
+		if isPhantom > 0 {
+			return &InvariantError{
+				Invariant: "tagxref-integrity",
+				NodeID:    nodeID,
+				Detail:    fmt.Sprintf("tagxref.rid=%d (tag=%s) references a phantom blob", rid, tagname),
+			}
+		}
+	}
+	return rows.Err()
+}
+
 // --- Helpers ---
 
 func allBlobRIDs(q db.Querier) ([]libfossil.FslID, error) {
