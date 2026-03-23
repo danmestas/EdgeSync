@@ -121,9 +121,8 @@ func (c *Checkout) revertFile(id int64, pathname string, rid int64, callback fun
 		}
 
 		// Remove from filesystem
-		if err := c.env.Storage.Remove(fullPath); err != nil {
-			// Ignore "not exists" errors — file might already be gone
-			// For other errors, continue anyway (best-effort cleanup)
+		if err := c.env.Storage.Remove(fullPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("checkout.Revert: remove %s: %w", fullPath, err)
 		}
 
 		// Notify callback

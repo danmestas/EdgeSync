@@ -107,6 +107,6 @@ func (c *Checkout) IsRootedIn(absPath string) bool {
 	cleanAbs := filepath.Clean(absPath)
 	cleanDir := filepath.Clean(c.dir)
 
-	// Check if absPath starts with checkout dir
-	return strings.HasPrefix(cleanAbs, cleanDir)
+	// Check if absPath is within checkout dir (exact match or separator-bounded prefix)
+	return cleanAbs == cleanDir || strings.HasPrefix(cleanAbs, cleanDir+string(filepath.Separator))
 }

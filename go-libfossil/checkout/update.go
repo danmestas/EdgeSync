@@ -50,6 +50,110 @@ func (c *Checkout) CalcUpdateVersion() (libfossil.FslID, error) {
 	return libfossil.FslID(tipRID), nil
 }
 
+// updateFileMaps holds name→UUID maps for the current, target, and ancestor versions.
+type updateFileMaps struct {
+	current  map[string]string
+	target   map[string]string
+	ancestor map[string]string
+	allNames map[string]bool
+}
+
+// buildFileMaps builds name→UUID maps for the current, target, and ancestor
+// file lists, plus the union of all file names.
+func buildFileMaps(currentFiles, targetFiles, ancestorFiles []manifest.FileEntry) updateFileMaps {
+	m := updateFileMaps{
+		current:  make(map[string]string, len(currentFiles)),
+		target:   make(map[string]string, len(targetFiles)),
+		ancestor: make(map[string]string, len(ancestorFiles)),
+		allNames: make(map[string]bool, len(currentFiles)+len(targetFiles)),
+	}
+	for _, f := range currentFiles {
+		m.current[f.Name] = f.UUID
+		m.allNames[f.Name] = true
+	}
+	for _, f := range targetFiles {
+		m.target[f.Name] = f.UUID
+		m.allNames[f.Name] = true
+	}
+	for _, f := range ancestorFiles {
+		m.ancestor[f.Name] = f.UUID
+	}
+	return m
+}
+
+// processFileUpdates iterates over all file names and applies update/merge
+// logic for each one. Returns stats for the observer.
+func (c *Checkout) processFileUpdates(
+	ctx context.Context,
+	maps updateFileMaps,
+	strategy merge.Strategy,
+	opts UpdateOpts,
+) (filesWritten, filesRemoved, conflicts int, err error) {
+	for name := range maps.allNames {
+		curUUID, inCurrent := maps.current[name]
+		tgtUUID, inTarget := maps.target[name]
+		ancUUID := maps.ancestor[name]
+
+		change, ferr := c.updateFile(name, curUUID, tgtUUID, ancUUID, inCurrent, inTarget, strategy, opts.DryRun)
+		if ferr != nil {
+			return filesWritten, filesRemoved, conflicts, fmt.Errorf("checkout.Update: %w", ferr)
+		}
+
+		if change == UpdateNone {
+			continue
+		}
+
+		switch change {
+		case UpdateAdded, UpdateUpdated, UpdateMerged:
+			filesWritten++
+		case UpdateConflictMerged:
+			filesWritten++
+			conflicts++
+		case UpdateRemoved:
+			filesRemoved++
+		}
+
+		c.obs.ExtractFileCompleted(ctx, name, change)
+
+		if opts.Callback != nil {
+			if cerr := opts.Callback(name, change); cerr != nil {
+				return filesWritten, filesRemoved, conflicts, fmt.Errorf("checkout.Update: callback for %s: %w", name, cerr)
+			}
+		}
+	}
+	return filesWritten, filesRemoved, conflicts, nil
+}
+
+// buildUpdateMaps gathers file lists for current, target, and their common
+// ancestor, then builds the combined name→UUID maps for 3-way comparison.
+func (c *Checkout) buildUpdateMaps(currentRID, target libfossil.FslID) (updateFileMaps, error) {
+	currentFiles, err := manifest.ListFiles(c.repo, currentRID)
+	if err != nil {
+		return updateFileMaps{}, fmt.Errorf("checkout.Update: list current files: %w", err)
+	}
+	targetFiles, err := manifest.ListFiles(c.repo, target)
+	if err != nil {
+		return updateFileMaps{}, fmt.Errorf("checkout.Update: list target files: %w", err)
+	}
+
+	ancestor, err := merge.FindCommonAncestor(c.repo, currentRID, target)
+	if err != nil {
+		ancestor = currentRID
+	}
+
+	var ancestorFiles []manifest.FileEntry
+	if ancestor == currentRID {
+		ancestorFiles = currentFiles
+	} else {
+		ancestorFiles, err = manifest.ListFiles(c.repo, ancestor)
+		if err != nil {
+			return updateFileMaps{}, fmt.Errorf("checkout.Update: list ancestor files: %w", err)
+		}
+	}
+
+	return buildFileMaps(currentFiles, targetFiles, ancestorFiles), nil
+}
+
 // Update updates the checkout to a new version, performing 3-way merge where
 // needed to preserve local modifications.
 //
@@ -80,7 +184,6 @@ func (c *Checkout) Update(opts UpdateOpts) error {
 	if err != nil {
 		return fmt.Errorf("checkout.Update: %w", err)
 	}
-
 	if currentRID == target {
 		return nil // already at target
 	}
@@ -105,61 +208,13 @@ func (c *Checkout) Update(opts UpdateOpts) error {
 		})
 	}()
 
-	// Get file lists for current and target
-	currentFiles, err := manifest.ListFiles(c.repo, currentRID)
+	// Build 3-version file maps
+	maps, err := c.buildUpdateMaps(currentRID, target)
 	if err != nil {
-		updateErr = fmt.Errorf("checkout.Update: list current files: %w", err)
-		return updateErr
-	}
-	targetFiles, err := manifest.ListFiles(c.repo, target)
-	if err != nil {
-		updateErr = fmt.Errorf("checkout.Update: list target files: %w", err)
+		updateErr = err
 		return updateErr
 	}
 
-	// Find common ancestor
-	ancestor, err := merge.FindCommonAncestor(c.repo, currentRID, target)
-	if err != nil {
-		// If no common ancestor found, treat current as ancestor (linear update)
-		ancestor = currentRID
-	}
-
-	// Get ancestor files (if ancestor differs from current)
-	var ancestorFiles []manifest.FileEntry
-	if ancestor == currentRID {
-		ancestorFiles = currentFiles
-	} else {
-		ancestorFiles, err = manifest.ListFiles(c.repo, ancestor)
-		if err != nil {
-			updateErr = fmt.Errorf("checkout.Update: list ancestor files: %w", err)
-			return updateErr
-		}
-	}
-
-	// Build file maps (name → UUID)
-	currentMap := make(map[string]string, len(currentFiles))
-	for _, f := range currentFiles {
-		currentMap[f.Name] = f.UUID
-	}
-	targetMap := make(map[string]string, len(targetFiles))
-	for _, f := range targetFiles {
-		targetMap[f.Name] = f.UUID
-	}
-	ancestorMap := make(map[string]string, len(ancestorFiles))
-	for _, f := range ancestorFiles {
-		ancestorMap[f.Name] = f.UUID
-	}
-
-	// Collect all file names across all three versions
-	allNames := make(map[string]bool)
-	for name := range currentMap {
-		allNames[name] = true
-	}
-	for name := range targetMap {
-		allNames[name] = true
-	}
-
-	// Get the 3-way merge strategy
 	strategy, ok := merge.StrategyByName("three-way")
 	if !ok {
 		updateErr = fmt.Errorf("checkout.Update: three-way merge strategy not registered")
@@ -167,68 +222,35 @@ func (c *Checkout) Update(opts UpdateOpts) error {
 	}
 
 	// Process each file
-	for name := range allNames {
-		curUUID, inCurrent := currentMap[name]
-		tgtUUID, inTarget := targetMap[name]
-		ancUUID := ancestorMap[name]
-
-		change, err := c.updateFile(name, curUUID, tgtUUID, ancUUID, inCurrent, inTarget, strategy, opts.DryRun)
-		if err != nil {
-			updateErr = fmt.Errorf("checkout.Update: %w", err)
-			return updateErr
-		}
-
-		if change == UpdateNone {
-			continue
-		}
-
-		// Track stats
-		switch change {
-		case UpdateAdded, UpdateUpdated, UpdateMerged:
-			filesWritten++
-		case UpdateConflictMerged:
-			filesWritten++
-			conflicts++
-		case UpdateRemoved:
-			filesRemoved++
-		}
-
-		// Notify observer
-		c.obs.ExtractFileCompleted(ctx, name, change)
-
-		// Call user callback
-		if opts.Callback != nil {
-			if err := opts.Callback(name, change); err != nil {
-				updateErr = fmt.Errorf("checkout.Update: callback for %s: %w", name, err)
-				return updateErr
-			}
-		}
+	filesWritten, filesRemoved, conflicts, updateErr = c.processFileUpdates(ctx, maps, strategy, opts)
+	if updateErr != nil {
+		return updateErr
 	}
 
-	// Reload vfile for target RID
+	// Finalize: reload vfile and update vvar
+	updateErr = c.finalizeUpdate(target)
+	return updateErr
+}
+
+// finalizeUpdate reloads vfile for the target version, looks up its UUID,
+// and updates the vvar checkout/checkout-hash entries.
+func (c *Checkout) finalizeUpdate(target libfossil.FslID) error {
 	if _, err := c.LoadVFile(target, true); err != nil {
-		updateErr = fmt.Errorf("checkout.Update: reload vfile: %w", err)
-		return updateErr
+		return fmt.Errorf("checkout.Update: reload vfile: %w", err)
 	}
 
-	// Look up target UUID
 	var targetUUID string
-	err = c.repo.DB().QueryRow("SELECT uuid FROM blob WHERE rid = ?", int64(target)).Scan(&targetUUID)
+	err := c.repo.DB().QueryRow("SELECT uuid FROM blob WHERE rid = ?", int64(target)).Scan(&targetUUID)
 	if err != nil {
-		updateErr = fmt.Errorf("checkout.Update: query target uuid: %w", err)
-		return updateErr
+		return fmt.Errorf("checkout.Update: query target uuid: %w", err)
 	}
 
-	// Update vvar checkout and checkout-hash
 	if err := setVVar(c.db, "checkout", strconv.FormatInt(int64(target), 10)); err != nil {
-		updateErr = fmt.Errorf("checkout.Update: %w", err)
-		return updateErr
+		return fmt.Errorf("checkout.Update: %w", err)
 	}
 	if err := setVVar(c.db, "checkout-hash", targetUUID); err != nil {
-		updateErr = fmt.Errorf("checkout.Update: %w", err)
-		return updateErr
+		return fmt.Errorf("checkout.Update: %w", err)
 	}
-
 	return nil
 }
 

@@ -71,81 +71,46 @@ func (c *Checkout) DiscardQueue() error {
 	return nil
 }
 
-// Commit creates a new checkin from staged files in the checkout.
-// Returns the new manifest RID and UUID.
-func (c *Checkout) Commit(opts CommitOpts) (libfossil.FslID, string, error) {
-	if c == nil {
-		panic("checkout.Commit: c must not be nil")
-	}
+// vfileEntry holds a single vfile row for commit processing.
+type vfileCommitEntry struct {
+	pathname string
+	changed  bool
+	deleted  bool
+	rid      int64
+}
 
-	// Get current checkout version (parent)
-	parentRID, _, err := c.Version()
-	if err != nil {
-		return 0, "", fmt.Errorf("checkout.Commit: %w", err)
-	}
-
-	// Scan for changes (with hashing)
-	if err := c.ScanChanges(ScanHash); err != nil {
-		return 0, "", fmt.Errorf("checkout.Commit: scan: %w", err)
-	}
-
-	// Build the complete file list for the new checkin.
-	// Fossil manifests list ALL files, not just changed ones.
-	// We need to:
-	// 1. Get all files from the parent manifest
-	// 2. Apply changes from vfile (modified/deleted)
-	// 3. Filter by queue if non-empty
-
-	// Get parent manifest files
-	parentFiles, err := manifest.ListFiles(c.repo, parentRID)
-	if err != nil {
-		return 0, "", fmt.Errorf("checkout.Commit: list parent files: %w", err)
-	}
-
-	// Build a map of parent files
-	fileMap := make(map[string]manifest.File)
-	for _, pf := range parentFiles {
-		// We'll read content later if this file hasn't changed
-		fileMap[pf.Name] = manifest.File{
-			Name: pf.Name,
-			Perm: pf.Perm,
-		}
-	}
-
-	// Query vfile for all files in this checkout
+// collectVFileEntries queries vfile for all entries of the given version and
+// classifies them into changed, deleted, and all-entries map.
+func (c *Checkout) collectVFileEntries(vid libfossil.FslID) (
+	entries map[string]vfileCommitEntry,
+	changedFiles []string,
+	deletedFiles []string,
+	err error,
+) {
 	rows, err := c.db.Query(`
 		SELECT pathname, chnged, deleted, rid
 		FROM vfile
 		WHERE vid = ?
-	`, parentRID)
+	`, int64(vid))
 	if err != nil {
-		return 0, "", fmt.Errorf("checkout.Commit: query vfile: %w", err)
+		return nil, nil, nil, fmt.Errorf("checkout.Commit: query vfile: %w", err)
 	}
 	defer rows.Close()
 
-	var changedFiles []string
-	var deletedFiles []string
-	vfileEntries := make(map[string]struct {
-		changed bool
-		deleted bool
-		rid     int64
-	})
+	entries = make(map[string]vfileCommitEntry)
 
 	for rows.Next() {
 		var pathname string
 		var chnged, deleted int
 		var rid sql.NullInt64
 		if err := rows.Scan(&pathname, &chnged, &deleted, &rid); err != nil {
-			return 0, "", fmt.Errorf("checkout.Commit: scan vfile: %w", err)
+			return nil, nil, nil, fmt.Errorf("checkout.Commit: scan vfile: %w", err)
 		}
-		vfileEntries[pathname] = struct {
-			changed bool
-			deleted bool
-			rid     int64
-		}{
-			changed: chnged > 0,
-			deleted: deleted > 0,
-			rid:     rid.Int64,
+		entries[pathname] = vfileCommitEntry{
+			pathname: pathname,
+			changed:  chnged > 0,
+			deleted:  deleted > 0,
+			rid:      rid.Int64,
 		}
 
 		if deleted > 0 {
@@ -155,39 +120,43 @@ func (c *Checkout) Commit(opts CommitOpts) (libfossil.FslID, string, error) {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return 0, "", fmt.Errorf("checkout.Commit: vfile rows: %w", err)
+		return nil, nil, nil, fmt.Errorf("checkout.Commit: vfile rows: %w", err)
 	}
 
-	// Apply queue filter if non-empty
-	queueActive := c.checkinQueue != nil && len(c.checkinQueue) > 0
-	shouldInclude := func(name string) bool {
-		if !queueActive {
-			return true // no queue = include all
+	return entries, changedFiles, deletedFiles, nil
+}
+
+// buildCommitFiles constructs the complete file list for a new checkin by
+// starting from the parent manifest, applying vfile changes (modified/deleted),
+// and loading unchanged file content from the repo.
+func (c *Checkout) buildCommitFiles(
+	parentRID libfossil.FslID,
+	vfEntries map[string]vfileCommitEntry,
+	changedFiles []string,
+	deletedFiles []string,
+	shouldInclude func(string) bool,
+) ([]manifest.File, error) {
+	// Get parent manifest files
+	parentFiles, err := manifest.ListFiles(c.repo, parentRID)
+	if err != nil {
+		return nil, fmt.Errorf("checkout.Commit: list parent files: %w", err)
+	}
+
+	// Build a map of parent files (name → FileEntry for O(1) lookup)
+	parentFileMap := make(map[string]manifest.FileEntry, len(parentFiles))
+	for _, pf := range parentFiles {
+		parentFileMap[pf.Name] = pf
+	}
+
+	// Start from parent file set
+	fileMap := make(map[string]manifest.File, len(parentFiles))
+	for _, pf := range parentFiles {
+		fileMap[pf.Name] = manifest.File{
+			Name: pf.Name,
+			Perm: pf.Perm,
 		}
-		return c.checkinQueue[name]
 	}
 
-	// Count enqueued files for observer
-	enqueuedCount := 0
-	if queueActive {
-		enqueuedCount = len(c.checkinQueue)
-	} else {
-		enqueuedCount = len(changedFiles)
-	}
-
-	// Start observer
-	ctx := c.obs.CommitStarted(context.Background(), CommitStart{
-		FilesEnqueued: enqueuedCount,
-		Branch:        opts.Branch,
-		User:          opts.User,
-	})
-
-	var result CommitEnd
-	defer func() {
-		c.obs.CommitCompleted(ctx, result)
-	}()
-
-	// Apply changes to fileMap
 	// 1. Remove deleted files
 	for _, name := range deletedFiles {
 		if shouldInclude(name) {
@@ -198,18 +167,15 @@ func (c *Checkout) Commit(opts CommitOpts) (libfossil.FslID, string, error) {
 	// 2. Update changed files with new content from disk
 	for _, name := range changedFiles {
 		if !shouldInclude(name) {
-			continue // skip files not in queue
+			continue
 		}
 
-		// Read content from Storage
 		fullPath := filepath.Join(c.dir, name)
-		content, err := c.env.Storage.ReadFile(fullPath)
+		fileData, err := c.env.Storage.ReadFile(fullPath)
 		if err != nil {
-			result.Err = fmt.Errorf("checkout.Commit: read %s: %w", name, err)
-			return 0, "", result.Err
+			return nil, fmt.Errorf("checkout.Commit: read %s: %w", name, err)
 		}
 
-		// Get perm from existing entry or default to empty
 		perm := ""
 		if existing, ok := fileMap[name]; ok {
 			perm = existing.Perm
@@ -217,109 +183,140 @@ func (c *Checkout) Commit(opts CommitOpts) (libfossil.FslID, string, error) {
 
 		fileMap[name] = manifest.File{
 			Name:    name,
-			Content: content,
+			Content: fileData,
 			Perm:    perm,
 		}
 	}
 
-	// 3. For unchanged files, we need to read their content from the repo
+	// 3. For unchanged files, load content from the repo
 	for name, entry := range fileMap {
 		if len(entry.Content) > 0 {
 			continue // already have content (was changed)
 		}
 
-		// Get the file's RID from vfile or parent manifest
 		var fileRID int64
-		if ve, ok := vfileEntries[name]; ok {
+		if ve, ok := vfEntries[name]; ok {
 			fileRID = ve.rid
-		} else {
-			// File is in parent but not in vfile (shouldn't happen in normal flow)
-			// Find it from parent manifest
-			for _, pf := range parentFiles {
-				if pf.Name == name {
-					// Look up RID by UUID
-					var rid int64
-					err := c.repo.DB().QueryRow("SELECT rid FROM blob WHERE uuid = ?", pf.UUID).Scan(&rid)
-					if err != nil {
-						result.Err = fmt.Errorf("checkout.Commit: resolve RID for %s: %w", name, err)
-						return 0, "", result.Err
-					}
-					fileRID = rid
-					break
-				}
+		} else if pf, ok := parentFileMap[name]; ok {
+			// File is in parent but not in vfile — look up RID by UUID
+			var rid int64
+			err := c.repo.DB().QueryRow("SELECT rid FROM blob WHERE uuid = ?", pf.UUID).Scan(&rid)
+			if err != nil {
+				return nil, fmt.Errorf("checkout.Commit: resolve RID for %s: %w", name, err)
 			}
+			fileRID = rid
 		}
 
 		if fileRID == 0 {
-			result.Err = fmt.Errorf("checkout.Commit: no RID for unchanged file %s", name)
-			return 0, "", result.Err
+			return nil, fmt.Errorf("checkout.Commit: no RID for unchanged file %s", name)
 		}
 
-		// Read content from repo
-		content, err := content.Expand(c.repo.DB(), libfossil.FslID(fileRID))
+		fileData, err := content.Expand(c.repo.DB(), libfossil.FslID(fileRID))
 		if err != nil {
-			result.Err = fmt.Errorf("checkout.Commit: expand %s: %w", name, err)
-			return 0, "", result.Err
+			return nil, fmt.Errorf("checkout.Commit: expand %s: %w", name, err)
 		}
 
 		fileMap[name] = manifest.File{
 			Name:    name,
-			Content: content,
+			Content: fileData,
 			Perm:    entry.Perm,
 		}
 	}
 
-	// Convert fileMap to slice
-	var commitFiles []manifest.File
+	// Convert to slice
+	commitFiles := make([]manifest.File, 0, len(fileMap))
 	for _, f := range fileMap {
 		commitFiles = append(commitFiles, f)
 	}
+	return commitFiles, nil
+}
 
-	// Determine commit time
+// finalizeCommit updates vvar, reloads vfile, and clears the checkin queue
+// after a successful manifest.Checkin.
+func (c *Checkout) finalizeCommit(newRID libfossil.FslID, newUUID string) error {
+	if err := setVVar(c.db, "checkout", strconv.FormatInt(int64(newRID), 10)); err != nil {
+		return fmt.Errorf("checkout.Commit: set checkout vvar: %w", err)
+	}
+	if err := setVVar(c.db, "checkout-hash", newUUID); err != nil {
+		return fmt.Errorf("checkout.Commit: set checkout-hash vvar: %w", err)
+	}
+	if _, err := c.LoadVFile(newRID, true); err != nil {
+		return fmt.Errorf("checkout.Commit: reload vfile: %w", err)
+	}
+	c.checkinQueue = nil
+	return nil
+}
+
+// Commit creates a new checkin from staged files in the checkout.
+// Returns the new manifest RID and UUID.
+func (c *Checkout) Commit(opts CommitOpts) (libfossil.FslID, string, error) {
+	if c == nil {
+		panic("checkout.Commit: c must not be nil")
+	}
+
+	parentRID, _, err := c.Version()
+	if err != nil {
+		return 0, "", fmt.Errorf("checkout.Commit: %w", err)
+	}
+
+	if err := c.ScanChanges(ScanHash); err != nil {
+		return 0, "", fmt.Errorf("checkout.Commit: scan: %w", err)
+	}
+
+	vfEntries, changedFiles, deletedFiles, err := c.collectVFileEntries(parentRID)
+	if err != nil {
+		return 0, "", err
+	}
+
+	queueActive := c.checkinQueue != nil && len(c.checkinQueue) > 0
+	shouldInclude := func(name string) bool {
+		if !queueActive {
+			return true
+		}
+		return c.checkinQueue[name]
+	}
+
+	enqueuedCount := len(changedFiles)
+	if queueActive {
+		enqueuedCount = len(c.checkinQueue)
+	}
+
+	ctx := c.obs.CommitStarted(context.Background(), CommitStart{
+		FilesEnqueued: enqueuedCount,
+		Branch:        opts.Branch,
+		User:          opts.User,
+	})
+
+	var result CommitEnd
+	defer func() { c.obs.CommitCompleted(ctx, result) }()
+
+	commitFiles, err := c.buildCommitFiles(parentRID, vfEntries, changedFiles, deletedFiles, shouldInclude)
+	if err != nil {
+		result.Err = err
+		return 0, "", err
+	}
+
 	commitTime := opts.Time
 	if commitTime.IsZero() {
 		commitTime = c.env.Clock.Now()
 	}
 
-	// Call manifest.Checkin
 	newRID, newUUID, err := manifest.Checkin(c.repo, manifest.CheckinOpts{
-		Files:   commitFiles,
-		Comment: opts.Message,
-		User:    opts.User,
-		Parent:  parentRID,
-		Time:    commitTime,
-		Delta:   opts.Delta,
-		Tags:    nil, // TODO: handle opts.Branch and opts.Tags
+		Files: commitFiles, Comment: opts.Message, User: opts.User,
+		Parent: parentRID, Time: commitTime, Delta: opts.Delta,
 	})
 	if err != nil {
 		result.Err = fmt.Errorf("checkout.Commit: checkin: %w", err)
 		return 0, "", result.Err
 	}
 
-	// Update vvar checkout and checkout-hash
-	if err := setVVar(c.db, "checkout", strconv.FormatInt(int64(newRID), 10)); err != nil {
-		result.Err = fmt.Errorf("checkout.Commit: set checkout vvar: %w", err)
-		return 0, "", result.Err
-	}
-	if err := setVVar(c.db, "checkout-hash", newUUID); err != nil {
-		result.Err = fmt.Errorf("checkout.Commit: set checkout-hash vvar: %w", err)
-		return 0, "", result.Err
+	if err := c.finalizeCommit(newRID, newUUID); err != nil {
+		result.Err = err
+		return 0, "", err
 	}
 
-	// Reload vfile to reflect the new version
-	if _, err := c.LoadVFile(newRID, true); err != nil {
-		result.Err = fmt.Errorf("checkout.Commit: reload vfile: %w", err)
-		return 0, "", result.Err
-	}
-
-	// Clear the checkin queue
-	c.checkinQueue = nil
-
-	// Set result for observer
 	result.RID = newRID
 	result.UUID = newUUID
 	result.FilesCommit = len(commitFiles)
-	result.Err = nil
-
 	return newRID, newUUID, nil
 }

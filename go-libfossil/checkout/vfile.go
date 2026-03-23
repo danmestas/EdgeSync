@@ -89,6 +89,57 @@ func (c *Checkout) UnloadVFile(rid libfossil.FslID) error {
 	return nil
 }
 
+// scanVFileEntry holds a single vfile row for scan processing.
+type scanVFileEntry struct {
+	id       int64
+	pathname string
+	blobRid  int64
+	mhash    string
+	chnged   int64
+	deleted  int64
+}
+
+// scanSingleEntry checks a single vfile entry against the file on disk,
+// updating vfile.chnged as needed. Returns (changed, missing) booleans.
+func (c *Checkout) scanSingleEntry(e scanVFileEntry, flags ScanFlags) (changed, missing bool, err error) {
+	if e.deleted != 0 {
+		return false, false, nil
+	}
+
+	fullPath := filepath.Join(c.dir, e.pathname)
+
+	data, err := c.env.Storage.ReadFile(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, true, nil
+		}
+		return false, false, fmt.Errorf("checkout.ScanChanges: read %s: %w", fullPath, err)
+	}
+
+	if flags&ScanHash == 0 {
+		return false, false, nil
+	}
+
+	diskHash := hash.ContentHash(data, e.mhash)
+
+	if diskHash != e.mhash {
+		if e.chnged == 0 {
+			if _, err := c.db.Exec("UPDATE vfile SET chnged = 1 WHERE id = ?", e.id); err != nil {
+				return false, false, fmt.Errorf("checkout.ScanChanges: update chnged for %s: %w", e.pathname, err)
+			}
+			return true, false, nil
+		}
+	} else {
+		if e.chnged != 0 {
+			if _, err := c.db.Exec("UPDATE vfile SET chnged = 0 WHERE id = ?", e.id); err != nil {
+				return false, false, fmt.Errorf("checkout.ScanChanges: reset chnged for %s: %w", e.pathname, err)
+			}
+		}
+	}
+
+	return false, false, nil
+}
+
 // ScanChanges detects modified and missing files in the checkout.
 // Walks the vfile table, checks each file on disk, and updates vfile.chnged accordingly.
 //
@@ -101,7 +152,6 @@ func (c *Checkout) ScanChanges(flags ScanFlags) error {
 		panic("checkout.ScanChanges: nil *Checkout")
 	}
 
-	// Start observer
 	ctx := c.obs.ScanStarted(context.Background())
 
 	var filesScanned, filesChanged, filesMissing int
@@ -114,13 +164,11 @@ func (c *Checkout) ScanChanges(flags ScanFlags) error {
 		})
 	}()
 
-	// Get current checkout version
 	rid, _, err := c.Version()
 	if err != nil {
 		return fmt.Errorf("checkout.ScanChanges: %w", err)
 	}
 
-	// Query all vfile rows for this version
 	rows, err := c.db.Query(`
 		SELECT id, pathname, rid, mhash, chnged, deleted FROM vfile WHERE vid = ?
 	`, int64(rid))
@@ -128,19 +176,10 @@ func (c *Checkout) ScanChanges(flags ScanFlags) error {
 		return fmt.Errorf("checkout.ScanChanges: query vfile: %w", err)
 	}
 
-	// Collect all vfile entries first (to avoid database lock during iteration)
-	type vfileEntry struct {
-		id       int64
-		pathname string
-		blobRid  int64
-		mhash    string
-		chnged   int64
-		deleted  int64
-	}
-	var entries []vfileEntry
+	var entries []scanVFileEntry
 
 	for rows.Next() {
-		var e vfileEntry
+		var e scanVFileEntry
 		if err := rows.Scan(&e.id, &e.pathname, &e.blobRid, &e.mhash, &e.chnged, &e.deleted); err != nil {
 			rows.Close()
 			return fmt.Errorf("checkout.ScanChanges: scan vfile row: %w", err)
@@ -153,64 +192,39 @@ func (c *Checkout) ScanChanges(flags ScanFlags) error {
 		return fmt.Errorf("checkout.ScanChanges: iterate vfile rows: %w", err)
 	}
 
-	// Process each vfile entry
 	for _, e := range entries {
 		filesScanned++
 
-		// Skip if already deleted
-		if e.deleted != 0 {
-			continue
-		}
-
-		// Full path for file
-		fullPath := filepath.Join(c.dir, e.pathname)
-
-		// Check if file exists on disk
-		data, err := c.env.Storage.ReadFile(fullPath)
+		changed, missing, err := c.scanSingleEntry(e, flags)
 		if err != nil {
-			if os.IsNotExist(err) {
-				// File is missing — note it but don't update chnged
-				filesMissing++
-				continue
-			}
-			// Other read error
-			return fmt.Errorf("checkout.ScanChanges: read %s: %w", fullPath, err)
+			return err
 		}
-
-		// If ScanHash flag is set, hash the file content
-		if flags&ScanHash != 0 {
-			// Compute content hash using the same algorithm as mhash
-			diskHash := hash.ContentHash(data, e.mhash)
-
-			// Compare hashes
-			if diskHash != e.mhash {
-				// File has been modified
-				if e.chnged == 0 {
-					// Mark as changed
-					_, err := c.db.Exec("UPDATE vfile SET chnged = 1 WHERE id = ?", e.id)
-					if err != nil {
-						return fmt.Errorf("checkout.ScanChanges: update chnged for %s: %w", e.pathname, err)
-					}
-					filesChanged++
-				}
-			} else {
-				// File matches — reset chnged if it was set
-				if e.chnged != 0 {
-					_, err := c.db.Exec("UPDATE vfile SET chnged = 0 WHERE id = ?", e.id)
-					if err != nil {
-						return fmt.Errorf("checkout.ScanChanges: reset chnged for %s: %w", e.pathname, err)
-					}
-				}
-			}
+		if changed {
+			filesChanged++
+		}
+		if missing {
+			filesMissing++
 		}
 	}
 
 	return nil
 }
 
-// walkDir recursively lists all files under a directory via Storage.ReadDir.
+// maxWalkDepth is the maximum directory nesting depth walkDir will traverse.
+const maxWalkDepth = 256
+
+// walkDirEntry is a stack element for iterative directory traversal.
+type walkDirEntry struct {
+	path  string
+	depth int
+}
+
+// walkDir iteratively lists all files under a directory via Storage.ReadDir.
 // Returns a map of relative paths (relative to c.dir) to true.
 // This helper prepares for detecting EXTRA files (files on disk not in vfile).
+//
+// Uses an explicit stack instead of recursion (TigerStyle: no recursion).
+// Enforces a maximum traversal depth of maxWalkDepth.
 //
 // Panics if c is nil (TigerStyle precondition).
 func (c *Checkout) walkDir(dir string) (map[string]bool, error) {
@@ -219,46 +233,45 @@ func (c *Checkout) walkDir(dir string) (map[string]bool, error) {
 	}
 
 	result := make(map[string]bool)
+	stack := []walkDirEntry{{path: dir, depth: 0}}
 
-	var walk func(string) error
-	walk = func(currentPath string) error {
-		entries, err := c.env.Storage.ReadDir(currentPath)
+	for len(stack) > 0 {
+		// Pop from stack
+		top := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		if top.depth > maxWalkDepth {
+			return nil, fmt.Errorf("walkDir: exceeded max depth %d at %s", maxWalkDepth, top.path)
+		}
+
+		entries, err := c.env.Storage.ReadDir(top.path)
 		if err != nil {
 			if os.IsNotExist(err) {
-				// Directory doesn't exist — not an error
-				return nil
+				continue
 			}
-			return fmt.Errorf("walkDir: read %s: %w", currentPath, err)
+			return nil, fmt.Errorf("walkDir: read %s: %w", top.path, err)
 		}
 
 		for _, entry := range entries {
-			fullPath := filepath.Join(currentPath, entry.Name())
+			name := entry.Name()
 
-			// Skip checkout database
-			if entry.Name() == ".fslckout" {
+			// Skip checkout databases
+			if name == ".fslckout" || name == "_FOSSIL_" {
 				continue
 			}
 
+			fullPath := filepath.Join(top.path, name)
+
 			if entry.IsDir() {
-				// Recurse into subdirectory
-				if err := walk(fullPath); err != nil {
-					return fmt.Errorf("walkDir: %w", err)
-				}
+				stack = append(stack, walkDirEntry{path: fullPath, depth: top.depth + 1})
 			} else {
-				// Regular file — compute relative path
 				relPath, err := filepath.Rel(c.dir, fullPath)
 				if err != nil {
-					return fmt.Errorf("walkDir: compute relative path for %s: %w", fullPath, err)
+					return nil, fmt.Errorf("walkDir: compute relative path for %s: %w", fullPath, err)
 				}
 				result[relPath] = true
 			}
 		}
-
-		return nil
-	}
-
-	if err := walk(dir); err != nil {
-		return nil, err
 	}
 
 	return result, nil

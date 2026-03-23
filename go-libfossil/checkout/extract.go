@@ -11,6 +11,37 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/content"
 )
 
+// extractSingleFile expands a blob and writes it to the checkout directory.
+// Skips writing if dryRun is true.
+func (c *Checkout) extractSingleFile(pathname string, blobRid int64, isexe int64, dryRun bool) error {
+	if dryRun {
+		return nil
+	}
+
+	data, err := content.Expand(c.repo.DB(), libfossil.FslID(blobRid))
+	if err != nil {
+		return fmt.Errorf("checkout.Extract: expand blob for %s: %w", pathname, err)
+	}
+
+	fullPath := filepath.Join(c.dir, pathname)
+
+	parentDir := filepath.Dir(fullPath)
+	if err := c.env.Storage.MkdirAll(parentDir, 0o755); err != nil {
+		return fmt.Errorf("checkout.Extract: mkdir %s: %w", parentDir, err)
+	}
+
+	perm := os.FileMode(0o644)
+	if isexe != 0 {
+		perm = 0o755
+	}
+
+	if err := c.env.Storage.WriteFile(fullPath, data, perm); err != nil {
+		return fmt.Errorf("checkout.Extract: write %s: %w", fullPath, err)
+	}
+
+	return nil
+}
+
 // Extract writes files from the specified checkin to disk via simio.Storage.
 // Populates vfile, updates vvar checkout/checkout-hash to rid.
 //
@@ -31,7 +62,6 @@ func (c *Checkout) Extract(rid libfossil.FslID, opts ExtractOpts) error {
 
 	var filesWritten int
 	var extractErr error
-
 	defer func() {
 		c.obs.ExtractCompleted(ctx, ExtractEnd{
 			Operation:    "extract",
@@ -41,13 +71,11 @@ func (c *Checkout) Extract(rid libfossil.FslID, opts ExtractOpts) error {
 		})
 	}()
 
-	// Load vfile for this checkin
 	if _, err := c.LoadVFile(rid, true); err != nil {
 		extractErr = fmt.Errorf("checkout.Extract: %w", err)
 		return extractErr
 	}
 
-	// Query all vfile rows for this version
 	rows, err := c.db.Query(`
 		SELECT id, pathname, rid, isexe FROM vfile WHERE vid = ?
 	`, int64(rid))
@@ -57,7 +85,6 @@ func (c *Checkout) Extract(rid libfossil.FslID, opts ExtractOpts) error {
 	}
 	defer rows.Close()
 
-	// Process each file
 	for rows.Next() {
 		var id, blobRid, isexe int64
 		var pathname string
@@ -66,42 +93,13 @@ func (c *Checkout) Extract(rid libfossil.FslID, opts ExtractOpts) error {
 			return extractErr
 		}
 
-		// Skip writing if DryRun
-		if !opts.DryRun {
-			// Expand blob content
-			data, err := content.Expand(c.repo.DB(), libfossil.FslID(blobRid))
-			if err != nil {
-				extractErr = fmt.Errorf("checkout.Extract: expand blob for %s: %w", pathname, err)
-				return extractErr
-			}
-
-			// Full path for file
-			fullPath := filepath.Join(c.dir, pathname)
-
-			// Ensure parent directory exists
-			parentDir := filepath.Dir(fullPath)
-			if err := c.env.Storage.MkdirAll(parentDir, 0o755); err != nil {
-				extractErr = fmt.Errorf("checkout.Extract: mkdir %s: %w", parentDir, err)
-				return extractErr
-			}
-
-			// Determine file permissions
-			perm := os.FileMode(0o644)
-			if isexe != 0 {
-				perm = 0o755
-			}
-
-			// Write file to disk
-			if err := c.env.Storage.WriteFile(fullPath, data, perm); err != nil {
-				extractErr = fmt.Errorf("checkout.Extract: write %s: %w", fullPath, err)
-				return extractErr
-			}
+		if err := c.extractSingleFile(pathname, blobRid, isexe, opts.DryRun); err != nil {
+			extractErr = err
+			return extractErr
 		}
 
-		// Notify observer
 		c.obs.ExtractFileCompleted(ctx, pathname, UpdateAdded)
 
-		// Call user callback
 		if opts.Callback != nil {
 			if err := opts.Callback(pathname, UpdateAdded); err != nil {
 				extractErr = fmt.Errorf("checkout.Extract: callback for %s: %w", pathname, err)
@@ -117,23 +115,25 @@ func (c *Checkout) Extract(rid libfossil.FslID, opts ExtractOpts) error {
 		return extractErr
 	}
 
-	// Look up UUID from repo blob table
+	// Finalize: look up UUID and update vvar
+	extractErr = c.finalizeExtract(rid)
+	return extractErr
+}
+
+// finalizeExtract looks up the blob UUID for rid and updates the vvar
+// checkout/checkout-hash entries.
+func (c *Checkout) finalizeExtract(rid libfossil.FslID) error {
 	var uuid string
-	err = c.repo.DB().QueryRow("SELECT uuid FROM blob WHERE rid = ?", int64(rid)).Scan(&uuid)
+	err := c.repo.DB().QueryRow("SELECT uuid FROM blob WHERE rid = ?", int64(rid)).Scan(&uuid)
 	if err != nil {
-		extractErr = fmt.Errorf("checkout.Extract: query blob uuid: %w", err)
-		return extractErr
+		return fmt.Errorf("checkout.Extract: query blob uuid: %w", err)
 	}
 
-	// Update vvar checkout and checkout-hash
 	if err := setVVar(c.db, "checkout", strconv.FormatInt(int64(rid), 10)); err != nil {
-		extractErr = fmt.Errorf("checkout.Extract: %w", err)
-		return extractErr
+		return fmt.Errorf("checkout.Extract: %w", err)
 	}
 	if err := setVVar(c.db, "checkout-hash", uuid); err != nil {
-		extractErr = fmt.Errorf("checkout.Extract: %w", err)
-		return extractErr
+		return fmt.Errorf("checkout.Extract: %w", err)
 	}
-
 	return nil
 }

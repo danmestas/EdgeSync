@@ -7,6 +7,43 @@ import (
 	"path/filepath"
 )
 
+// moveFile reads a file from oldPath, writes it to newPath with the given
+// permissions, and removes the original. Ignores NotExist on remove.
+func (c *Checkout) moveFile(oldPath, newPath string, perm os.FileMode) error {
+	data, err := c.env.Storage.ReadFile(oldPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", oldPath, err)
+	}
+
+	newParentDir := filepath.Dir(newPath)
+	if err := c.env.Storage.MkdirAll(newParentDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", newParentDir, err)
+	}
+
+	if err := c.env.Storage.WriteFile(newPath, data, perm); err != nil {
+		return fmt.Errorf("write %s: %w", newPath, err)
+	}
+
+	if err := c.env.Storage.Remove(oldPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove %s: %w", oldPath, err)
+	}
+
+	return nil
+}
+
+// vfilePerm queries the isexe flag for a vfile row and returns the file mode.
+func (c *Checkout) vfilePerm(vfileID int64) (os.FileMode, error) {
+	var isexe int64
+	err := c.db.QueryRow("SELECT isexe FROM vfile WHERE id=?", vfileID).Scan(&isexe)
+	if err != nil {
+		return 0, fmt.Errorf("query vfile permissions: %w", err)
+	}
+	if isexe != 0 {
+		return 0o755, nil
+	}
+	return 0o644, nil
+}
+
 // Rename marks a file as renamed in vfile by updating pathname and origname.
 // Sets chnged=1 to indicate the file has been modified.
 //
@@ -61,41 +98,15 @@ func (c *Checkout) Rename(opts RenameOpts) error {
 
 	// If DoFsMove, move the file in Storage
 	if opts.DoFsMove {
+		perm, err := c.vfilePerm(vfileID)
+		if err != nil {
+			return fmt.Errorf("checkout.Rename: %w", err)
+		}
+
 		oldPath := filepath.Join(c.dir, opts.From)
 		newPath := filepath.Join(c.dir, opts.To)
-
-		// Read old file
-		data, err := c.env.Storage.ReadFile(oldPath)
-		if err != nil {
-			return fmt.Errorf("checkout.Rename: read old file %s: %w", oldPath, err)
-		}
-
-		// Ensure parent directory exists for new path
-		newParentDir := filepath.Dir(newPath)
-		if err := c.env.Storage.MkdirAll(newParentDir, 0o755); err != nil {
-			return fmt.Errorf("checkout.Rename: mkdir %s: %w", newParentDir, err)
-		}
-
-		// Write to new path
-		// Query file permissions from vfile
-		var isexe int64
-		err = c.db.QueryRow("SELECT isexe FROM vfile WHERE id=?", vfileID).Scan(&isexe)
-		if err != nil {
-			return fmt.Errorf("checkout.Rename: query vfile permissions: %w", err)
-		}
-
-		perm := os.FileMode(0o644)
-		if isexe != 0 {
-			perm = 0o755
-		}
-
-		if err := c.env.Storage.WriteFile(newPath, data, perm); err != nil {
-			return fmt.Errorf("checkout.Rename: write new file %s: %w", newPath, err)
-		}
-
-		// Remove old file
-		if err := c.env.Storage.Remove(oldPath); err != nil {
-			// Best effort — don't fail if removal fails
+		if err := c.moveFile(oldPath, newPath, perm); err != nil {
+			return fmt.Errorf("checkout.Rename: %w", err)
 		}
 	}
 
@@ -156,41 +167,15 @@ func (c *Checkout) RevertRename(name string, doFsMove bool) (bool, error) {
 
 	// If doFsMove, move the file back in Storage
 	if doFsMove {
+		perm, err := c.vfilePerm(vfileID)
+		if err != nil {
+			return false, fmt.Errorf("checkout.RevertRename: %w", err)
+		}
+
 		currentPath := filepath.Join(c.dir, name)
 		originalPath := filepath.Join(c.dir, oldOrigName)
-
-		// Read current file
-		data, err := c.env.Storage.ReadFile(currentPath)
-		if err != nil {
-			return false, fmt.Errorf("checkout.RevertRename: read current file %s: %w", currentPath, err)
-		}
-
-		// Ensure parent directory exists for original path
-		originalParentDir := filepath.Dir(originalPath)
-		if err := c.env.Storage.MkdirAll(originalParentDir, 0o755); err != nil {
-			return false, fmt.Errorf("checkout.RevertRename: mkdir %s: %w", originalParentDir, err)
-		}
-
-		// Write to original path
-		// Query file permissions from vfile
-		var isexe int64
-		err = c.db.QueryRow("SELECT isexe FROM vfile WHERE id=?", vfileID).Scan(&isexe)
-		if err != nil {
-			return false, fmt.Errorf("checkout.RevertRename: query vfile permissions: %w", err)
-		}
-
-		perm := os.FileMode(0o644)
-		if isexe != 0 {
-			perm = 0o755
-		}
-
-		if err := c.env.Storage.WriteFile(originalPath, data, perm); err != nil {
-			return false, fmt.Errorf("checkout.RevertRename: write original file %s: %w", originalPath, err)
-		}
-
-		// Remove current file
-		if err := c.env.Storage.Remove(currentPath); err != nil {
-			// Best effort — don't fail if removal fails
+		if err := c.moveFile(currentPath, originalPath, perm); err != nil {
+			return false, fmt.Errorf("checkout.RevertRename: %w", err)
 		}
 	}
 

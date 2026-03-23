@@ -25,6 +25,35 @@ type Checkout struct {
 	checkinQueue map[string]bool // in-memory staging queue (session-scoped)
 }
 
+// initCheckoutVersion finds the tip checkin from the repo and sets
+// vvar checkout/checkout-hash in the checkout DB. Returns an error
+// if no checkins exist in the repo.
+func initCheckoutVersion(ckdb *sql.DB, r *repo.Repo) error {
+	var tipRID int64
+	var tipUUID string
+	err := r.DB().QueryRow(`
+		SELECT l.rid, b.uuid FROM leaf l
+		JOIN event e ON e.objid=l.rid
+		JOIN blob b ON b.rid=l.rid
+		WHERE e.type='ci'
+		ORDER BY e.mtime DESC LIMIT 1
+	`).Scan(&tipRID, &tipUUID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("checkout.Create: no checkin found in repo")
+		}
+		return fmt.Errorf("checkout.Create: query tip: %w", err)
+	}
+
+	if err := setVVar(ckdb, "checkout", strconv.FormatInt(tipRID, 10)); err != nil {
+		return fmt.Errorf("checkout.Create: %w", err)
+	}
+	if err := setVVar(ckdb, "checkout-hash", tipUUID); err != nil {
+		return fmt.Errorf("checkout.Create: %w", err)
+	}
+	return nil
+}
+
 // Create creates a new checkout database at dir/.fslckout (or dir/_FOSSIL_ on Windows),
 // finds the tip checkin from the repo, and sets vvar checkout/checkout-hash.
 //
@@ -73,32 +102,10 @@ func Create(r *repo.Repo, dir string, opts CreateOpts) (*Checkout, error) {
 		return nil, fmt.Errorf("checkout.Create: %w", err)
 	}
 
-	// Find the tip checkin
-	var tipRID int64
-	var tipUUID string
-	err = r.DB().QueryRow(`
-		SELECT l.rid, b.uuid FROM leaf l
-		JOIN event e ON e.objid=l.rid
-		JOIN blob b ON b.rid=l.rid
-		WHERE e.type='ci'
-		ORDER BY e.mtime DESC LIMIT 1
-	`).Scan(&tipRID, &tipUUID)
-	if err != nil {
+	// Find the tip checkin and set vvar checkout/checkout-hash
+	if err := initCheckoutVersion(ckdb, r); err != nil {
 		ckdb.Close()
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("checkout.Create: no checkin found in repo")
-		}
-		return nil, fmt.Errorf("checkout.Create: query tip: %w", err)
-	}
-
-	// Set vvar checkout and checkout-hash
-	if err := setVVar(ckdb, "checkout", strconv.FormatInt(tipRID, 10)); err != nil {
-		ckdb.Close()
-		return nil, fmt.Errorf("checkout.Create: %w", err)
-	}
-	if err := setVVar(ckdb, "checkout-hash", tipUUID); err != nil {
-		ckdb.Close()
-		return nil, fmt.Errorf("checkout.Create: %w", err)
+		return nil, err
 	}
 
 	return &Checkout{
@@ -258,6 +265,9 @@ func (c *Checkout) ValidateFingerprint() error {
 	return nil
 }
 
+// maxParentSearchDepth is the maximum number of parent directories to search.
+const maxParentSearchDepth = 256
+
 // FindCheckoutDB searches for a checkout database (.fslckout or _FOSSIL_) in dir,
 // and optionally in parent directories if searchParents is true.
 // Returns the full path to the DB file.
@@ -270,7 +280,7 @@ func FindCheckoutDB(storage simio.Storage, dir string, searchParents bool) (stri
 	}
 
 	currentDir := dir
-	for {
+	for depth := 0; depth <= maxParentSearchDepth; depth++ {
 		// Try each DB name
 		for _, name := range DBNames() {
 			dbPath := filepath.Join(currentDir, name)
