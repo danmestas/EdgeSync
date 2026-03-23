@@ -7,10 +7,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"time"
 
+	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/hash"
@@ -35,6 +34,12 @@ type FileChange struct {
 }
 
 func NewCheckout(r *repo.Repo, tip libfossil.FslID) *Checkout {
+	if r == nil {
+		panic("NewCheckout: repo must not be nil")
+	}
+	if tip <= 0 {
+		panic("NewCheckout: tip must be positive")
+	}
 	return &Checkout{repo: r, tipRID: tip}
 }
 
@@ -168,6 +173,9 @@ func (co *Checkout) Status() ([]FileChange, error) {
 		}
 		fileContent, err := co.ReadFile(name)
 		if err != nil {
+			// File exists in OPFS listing but can't be read — treat as modified
+			// since we can't verify content matches the manifest.
+			changes = append(changes, FileChange{Name: name, Status: "modified"})
 			continue
 		}
 		computed := hash.ContentHash([]byte(fileContent), uuid)
@@ -274,8 +282,8 @@ func ReadCheckoutTipRID() (libfossil.FslID, error) {
 		return 0, err
 	}
 	var rid int64
-	fmt.Sscanf(strings.TrimSpace(data), "%d", &rid)
-	if rid <= 0 {
+	n, _ := fmt.Sscanf(strings.TrimSpace(data), "%d", &rid)
+	if n != 1 || rid <= 0 {
 		return 0, fmt.Errorf("invalid tip RID in .fossil-checkout")
 	}
 	return libfossil.FslID(rid), nil

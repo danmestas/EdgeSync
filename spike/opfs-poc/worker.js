@@ -33,6 +33,8 @@ async function init() {
         log("Starting Go WASM...");
         go.run(result.instance);
 
+        // _opfs_init is registered by the go-sqlite3-opfs package during Go's
+        // init(). It accepts a map of filename→FileSystemSyncAccessHandle.
         log("Registering OPFS handles...");
         _opfs_init(handles);
 
@@ -215,6 +217,7 @@ self.onmessage = function(e) {
             case "startAgent": _startAgent(msg.url || ""); break;
             case "stopAgent":  _stopAgent(); break;
             case "syncNow":    _syncNow(); break;
+            case "sendChat":   _sendChat(msg.text || "", msg.user || ""); break;
             case "checkout":  _checkout(); break;
             case "coFiles":   _co_files(msg.path || ""); break;
             case "coRead":    _co_read(msg.path); break;

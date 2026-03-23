@@ -379,9 +379,21 @@
             </div>
         </div>
 
-        <!-- Right Panel: Remote Timeline + Log -->
+        <!-- Right Panel: Peers + Chat + Remote + Log -->
         <div class="right-panel">
-            <div class="sidebar-section" id="remoteSection" style="max-height:45%;display:none">
+            <div class="sidebar-section" id="peersSection" style="display:none">
+                <div class="section-head">Peers <span id="peerCount" style="color:var(--green)"></span></div>
+                <div id="peerList" style="padding:4px 12px;font-size:11px;color:var(--text-1)"></div>
+            </div>
+            <div class="sidebar-section" id="chatSection" style="max-height:35%;display:none">
+                <div class="section-head">Chat</div>
+                <div id="chatMessages" style="overflow-y:auto;flex:1;padding:4px 12px;font-size:11px;line-height:1.6"></div>
+                <div style="display:flex;gap:4px;padding:4px 8px;border-top:1px solid var(--border)">
+                    <input id="chatInput" placeholder="Type a message..." style="flex:1;background:var(--bg-0);border:1px solid var(--border);color:var(--text-0);padding:4px 8px;border-radius:4px;font-family:var(--mono);font-size:11px" onkeydown="if(event.key==='Enter')sendChatMsg()" />
+                    <button class="btn sm" onclick="sendChatMsg()">Send</button>
+                </div>
+            </div>
+            <div class="sidebar-section" id="remoteSection" style="max-height:30%;display:none">
                 <div class="section-head">Remote</div>
                 <ul id="remoteTimeline" class="timeline-list"></ul>
             </div>
@@ -495,6 +507,14 @@
             document.getElementById("agentDot").className = "dot " + (agentRunning ? "ok" : "off");
             document.getElementById("s-agent").textContent = agentRunning ? "running" : "off";
             document.getElementById("syncNowBtn").disabled = !agentRunning;
+            // Show/hide social panels.
+            document.getElementById("chatSection").style.display = agentRunning ? "" : "none";
+            document.getElementById("peersSection").style.display = agentRunning ? "" : "none";
+            if (data.peerId) document.title = "EdgeSync [" + data.peerId + "]";
+        } else if (kind === "chatMsg") {
+            appendChatMessage(data);
+        } else if (kind === "peers") {
+            renderPeers(data);
         } else if (kind === "agentLog") {
             // Agent logs already appear via Logger. Refresh status after syncs.
             if (agentRunning && data.msg && data.msg.includes("sync done")) {
@@ -562,7 +582,7 @@
 
             if (e.isDir) {
                 li.className = "dir";
-                li.innerHTML = '<span class="icon">▸</span><span class="name">' + e.name + '</span>';
+                li.innerHTML = '<span class="icon">▸</span><span class="name">' + escapeHtml(e.name) + '</span>';
                 li.onclick = () => navigateTo(fullPath);
             } else {
                 li.className = "file";
@@ -572,7 +592,7 @@
                     const letter = status === "added" ? "A" : status === "modified" ? "M" : "D";
                     badge = '<span class="badge ' + letter + '">' + letter + '</span>';
                 }
-                li.innerHTML = '<span class="icon">·</span><span class="name">' + e.name + '</span>' + badge + '<span class="meta">' + e.size + '</span>';
+                li.innerHTML = '<span class="icon">·</span><span class="name">' + escapeHtml(e.name) + '</span>' + badge + '<span class="meta">' + e.size + '</span>';
                 li.onclick = () => openFile(fullPath);
                 if (editingPath === fullPath) li.classList.add("active");
             }
@@ -638,10 +658,10 @@
             const li = document.createElement("li");
             const date = new Date(e.time).toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
             li.innerHTML =
-                '<span class="hash">' + e.uuid.substring(0,8) + '</span> ' +
-                '<span class="author">' + e.user + '</span> ' +
-                '<span class="time">' + date + '</span><br>' +
-                '<span class="msg">' + (e.comment || "") + '</span>';
+                '<span class="hash">' + escapeHtml(e.uuid.substring(0,8)) + '</span> ' +
+                '<span class="author">' + escapeHtml(e.user) + '</span> ' +
+                '<span class="time">' + escapeHtml(date) + '</span><br>' +
+                '<span class="msg">' + escapeHtml(e.comment || "") + '</span>';
             ul.appendChild(li);
         });
     }
@@ -662,6 +682,36 @@
         cmd("coCommit", { comment, user });
     }
 
+    function appendChatMessage(msg) {
+        const el = document.getElementById("chatMessages");
+        const t = new Date(msg.time).toLocaleTimeString(undefined, {hour:'2-digit',minute:'2-digit'});
+        const color = msg.from.includes(document.title.match(/\[(\w+)\]/)?.[1] || "???") ? "var(--accent)" : "var(--blue)";
+        el.innerHTML += '<div><span style="color:' + color + '">' + msg.from + '</span> <span style="color:var(--text-2)">' + t + '</span><br>' + escapeHtml(msg.text) + '</div>';
+        el.scrollTop = el.scrollHeight;
+    }
+
+    function escapeHtml(s) {
+        return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    }
+
+    function renderPeers(peers) {
+        const el = document.getElementById("peerList");
+        document.getElementById("peerCount").textContent = peers.length;
+        el.innerHTML = peers.map(p =>
+            '<span style="color:' + (p.isMe ? 'var(--accent)' : 'var(--green)') + '">' +
+            (p.isMe ? '● ' + p.id + ' (you)' : '● ' + p.id) + '</span>'
+        ).join(' &nbsp; ');
+    }
+
+    function sendChatMsg() {
+        const input = document.getElementById("chatInput");
+        const text = input.value.trim();
+        if (!text) return;
+        const user = document.getElementById("commitUser").value || "browser";
+        cmd("sendChat", { text, user });
+        input.value = "";
+    }
+
     async function fetchRemoteInfo() {
         try {
             const resp = await fetch("/remote-info");
@@ -679,10 +729,10 @@
             (data.timeline || []).forEach(e => {
                 const li = document.createElement("li");
                 li.innerHTML =
-                    '<span class="hash">' + e.uuid.substring(0,8) + '</span> ' +
-                    '<span class="author">' + e.user + '</span> ' +
-                    '<span class="time">' + e.time + '</span><br>' +
-                    '<span class="msg">' + (e.comment || "") + '</span>';
+                    '<span class="hash">' + escapeHtml(e.uuid.substring(0,8)) + '</span> ' +
+                    '<span class="author">' + escapeHtml(e.user) + '</span> ' +
+                    '<span class="time">' + escapeHtml(e.time) + '</span><br>' +
+                    '<span class="msg">' + escapeHtml(e.comment || "") + '</span>';
                 ul.appendChild(li);
             });
         } catch (e) {

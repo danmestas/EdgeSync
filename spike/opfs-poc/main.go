@@ -56,7 +56,10 @@ func postError(text string) {
 }
 
 func toJSON(v any) string {
-	out, _ := json.Marshal(v)
+	out, err := json.Marshal(v)
+	if err != nil {
+		panic(fmt.Sprintf("toJSON: marshal failed: %v", err))
+	}
 	return string(out)
 }
 
@@ -87,72 +90,66 @@ func tipRID() (libfossil.FslID, error) {
 	return libfossil.FslID(rid), nil
 }
 
+// dropAllTables clears the OPFS repo so re-clone works.
+func dropAllTables() {
+	r, err := repo.Open(repoPath)
+	if err != nil {
+		return
+	}
+	defer r.Close()
+	rows, err := r.DB().Query("SELECT name FROM sqlite_master WHERE type='table'")
+	if err != nil {
+		return
+	}
+	var tables []string
+	for rows.Next() {
+		var name string
+		_ = rows.Scan(&name)
+		tables = append(tables, name)
+	}
+	rows.Close()
+	for _, t := range tables {
+		_, _ = r.DB().Exec("DROP TABLE IF EXISTS [" + t + "]")
+	}
+}
+
+// autoCheckout materializes the tip checkin into the OPFS working tree.
+func autoCheckout(r *repo.Repo) {
+	tip, tipErr := tipRID()
+	if tipErr != nil {
+		log(fmt.Sprintf("auto-checkout skipped: %v", tipErr))
+		return
+	}
+	log(fmt.Sprintf("auto-checkout: materializing tip rid=%d...", tip))
+	co := NewCheckout(r, tip)
+	n, coErr := co.Materialize()
+	if coErr != nil {
+		log(fmt.Sprintf("auto-checkout failed: %v", coErr))
+		return
+	}
+	currentCheckout = co
+	log(fmt.Sprintf("checked out %d files to OPFS", n))
+}
+
 func doClone() {
 	if currentRepo != nil {
 		currentRepo.Close()
 		currentRepo = nil
 	}
 	currentCheckout = nil
-
-	// Drop all tables so re-clone works without clearing OPFS.
-	func() {
-		r, err := repo.Open(repoPath)
-		if err != nil {
-			return
-		}
-		rows, err := r.DB().Query("SELECT name FROM sqlite_master WHERE type='table'")
-		if err != nil {
-			r.Close()
-			return
-		}
-		var tables []string
-		for rows.Next() {
-			var name string
-			rows.Scan(&name)
-			tables = append(tables, name)
-		}
-		rows.Close()
-		for _, t := range tables {
-			r.DB().Exec("DROP TABLE IF EXISTS [" + t + "]")
-		}
-		r.Close()
-	}()
+	dropAllTables()
 
 	log("cloning from remote via proxy...")
-	transport := &sync.HTTPTransport{URL: "/proxy"}
-
-	r, result, err := sync.Clone(context.Background(), repoPath, transport, sync.CloneOpts{
-		Env: simio.RealEnv(),
-	})
+	r, result, err := sync.Clone(context.Background(), repoPath,
+		&sync.HTTPTransport{URL: "/proxy"}, sync.CloneOpts{Env: simio.RealEnv()})
 	if err != nil {
 		postError(fmt.Sprintf("clone failed: %v", err))
 		return
 	}
 	currentRepo = r
 
-	// Clone crosslinks automatically. Log the result.
 	log(fmt.Sprintf("crosslinked %d checkin(s)", result.CheckinsLinked))
-
-	// Debug: check event table directly.
-	var eventCount int
-	currentRepo.DB().QueryRow("SELECT count(*) FROM event WHERE type='ci'").Scan(&eventCount)
-	log(fmt.Sprintf("debug: event table has %d checkins", eventCount))
-
-	// Auto-checkout tip to OPFS.
-	tip, tipErr := tipRID()
-	if tipErr != nil {
-		log(fmt.Sprintf("auto-checkout skipped: %v", tipErr))
-	} else {
-		log(fmt.Sprintf("auto-checkout: materializing tip rid=%d...", tip))
-		co := NewCheckout(r, tip)
-		n, coErr := co.Materialize()
-		if coErr != nil {
-			log(fmt.Sprintf("auto-checkout failed: %v", coErr))
-		} else {
-			currentCheckout = co
-			log(fmt.Sprintf("checked out %d files to OPFS", n))
-		}
-	}
+	autoCheckout(r)
 
 	log(fmt.Sprintf("clone complete: %d rounds, %d blobs", result.Rounds, result.BlobsRecvd))
 	postResult("clone", toJSON(map[string]any{
@@ -172,8 +169,8 @@ func doSync() {
 	transport := &sync.HTTPTransport{URL: "/proxy"}
 
 	var projectCode, serverCode string
-	currentRepo.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projectCode)
-	currentRepo.DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&serverCode)
+	_ = currentRepo.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projectCode)
+	_ = currentRepo.DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&serverCode)
 
 	result, err := sync.Sync(context.Background(), currentRepo, transport, sync.SyncOpts{
 		Pull:        true,
@@ -211,11 +208,11 @@ func doStatus() {
 	}
 
 	var blobCount, checkinCount int
-	currentRepo.DB().QueryRow("SELECT count(*) FROM blob").Scan(&blobCount)
-	currentRepo.DB().QueryRow("SELECT count(*) FROM event WHERE type='ci'").Scan(&checkinCount)
+	_ = currentRepo.DB().QueryRow("SELECT count(*) FROM blob").Scan(&blobCount)
+	_ = currentRepo.DB().QueryRow("SELECT count(*) FROM event WHERE type='ci'").Scan(&checkinCount)
 
 	var projectCode string
-	currentRepo.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projectCode)
+	_ = currentRepo.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projectCode)
 
 	postResult("status", toJSON(map[string]any{
 		"open":        true,
@@ -381,6 +378,46 @@ func doCoCommit(comment, user string) {
 
 // --- Agent Handlers ---
 
+// postSyncHook crosslinks pulled manifests and re-materializes checkout.
+func postSyncHook(result *sync.SyncResult) {
+	if result.FilesRecvd == 0 {
+		return
+	}
+	linked, err := manifest.Crosslink(currentRepo)
+	if err != nil {
+		log(fmt.Sprintf("[agent] crosslink error: %v", err))
+		return
+	}
+	if linked == 0 {
+		return
+	}
+	log(fmt.Sprintf("[agent] crosslinked %d new checkin(s)", linked))
+	if currentCheckout == nil {
+		return
+	}
+	tip, tipErr := tipRID()
+	if tipErr != nil || tip == currentCheckout.tipRID {
+		return
+	}
+	log(fmt.Sprintf("[agent] new tip rid=%d, re-materializing checkout...", tip))
+	currentCheckout.tipRID = tip
+	n, coErr := currentCheckout.Materialize()
+	if coErr != nil {
+		log(fmt.Sprintf("[agent] re-checkout failed: %v", coErr))
+		return
+	}
+	log(fmt.Sprintf("[agent] checked out %d files from new tip", n))
+	postResult("checkout", toJSON(map[string]any{"files": n}))
+}
+
+// connectNATS establishes a WebSocket NATS connection.
+func connectNATS(wsURL string) (*nats.Conn, error) {
+	return nats.Connect("nats://browser",
+		nats.Name("edgesync-browser-leaf"),
+		nats.SetCustomDialer(&wsdialer.WSDialer{URL: wsURL}),
+	)
+}
+
 func doStartAgent(natsWsURL string) {
 	if currentAgent != nil {
 		postError("agent already running")
@@ -393,32 +430,22 @@ func doStartAgent(natsWsURL string) {
 
 	log(fmt.Sprintf("[agent] connecting to %s...", natsWsURL))
 
-	// Read project-code and server-code from the shared repo.
 	var projectCode, serverCode string
-	currentRepo.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projectCode)
-	currentRepo.DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&serverCode)
+	_ = currentRepo.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projectCode)
+	_ = currentRepo.DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&serverCode)
 	if projectCode == "" {
 		postError("agent init failed: no project-code in repo")
 		return
 	}
 
-	// Connect to NATS via WebSocket.
-	natsOpts := []nats.Option{
-		nats.Name("edgesync-browser-leaf"),
-		nats.SetCustomDialer(&wsdialer.WSDialer{URL: natsWsURL}),
-	}
-	nc, err := nats.Connect("nats://browser", natsOpts...)
+	nc, err := connectNATS(natsWsURL)
 	if err != nil {
 		postError(fmt.Sprintf("agent NATS connect failed: %v", err))
 		return
 	}
 	log("[agent] connected to NATS")
 
-	// Build transport using the project code.
 	transport := agent.NewNATSTransport(nc, projectCode, 0, "fossil")
-
-	// Use NewFromParts with the SHARED repo — so commits made via the
-	// checkout are visible to the agent's sync loop (same *sql.DB).
 	cfg := agent.Config{
 		RepoPath:     repoPath,
 		NATSUrl:      "nats://browser",
@@ -429,31 +456,7 @@ func doStartAgent(natsWsURL string) {
 			log("[agent] " + msg)
 			postResult("agentLog", toJSON(map[string]any{"msg": msg}))
 		},
-		PostSyncHook: func(result *sync.SyncResult) {
-			if result.FilesRecvd > 0 {
-				linked, err := manifest.Crosslink(currentRepo)
-				if err != nil {
-					log(fmt.Sprintf("[agent] crosslink error: %v", err))
-				} else if linked > 0 {
-					log(fmt.Sprintf("[agent] crosslinked %d new checkin(s)", linked))
-					// Re-materialize checkout from new tip.
-					if currentCheckout != nil {
-						tip, tipErr := tipRID()
-						if tipErr == nil && tip != currentCheckout.tipRID {
-							log(fmt.Sprintf("[agent] new tip rid=%d, re-materializing checkout...", tip))
-							currentCheckout.tipRID = tip
-							n, coErr := currentCheckout.Materialize()
-							if coErr != nil {
-								log(fmt.Sprintf("[agent] re-checkout failed: %v", coErr))
-							} else {
-								log(fmt.Sprintf("[agent] checked out %d files from new tip", n))
-								postResult("checkout", toJSON(map[string]any{"files": n}))
-							}
-						}
-					}
-				}
-			}
-		},
+		PostSyncHook: postSyncHook,
 	}
 	a := agent.NewFromParts(cfg, currentRepo, transport, projectCode, serverCode)
 
@@ -465,8 +468,17 @@ func doStartAgent(natsWsURL string) {
 
 	currentAgent = a
 	currentNATS = nc
+
+	user := "browser-" + myPeerID
+	if err := startChat(nc, user); err != nil {
+		log(fmt.Sprintf("[social] chat start failed: %v", err))
+	}
+	if err := startPresence(nc, user); err != nil {
+		log(fmt.Sprintf("[social] presence start failed: %v", err))
+	}
+
 	log("[agent] running — auto-sync every 10s")
-	postResult("agentState", toJSON(map[string]any{"state": "running"}))
+	postResult("agentState", toJSON(map[string]any{"state": "running", "peerId": myPeerID}))
 }
 
 func doStopAgent() {
@@ -474,8 +486,10 @@ func doStopAgent() {
 		postError("agent not running")
 		return
 	}
-	// Don't call agent.Stop() — it closes the shared repo.
-	// Just close NATS (which cancels in-flight requests) and nil out.
+	stopSocial()
+	// Close NATS first — this causes in-flight syncs to fail, unblocking
+	// the poll loop. We don't call agent.Stop() because it closes the
+	// shared repo. Closing NATS is sufficient to halt all sync activity.
 	if currentNATS != nil {
 		currentNATS.Close()
 		currentNATS = nil
@@ -493,75 +507,61 @@ func doSyncNow() {
 	currentAgent.SyncNow()
 }
 
-func main() {
-	ready := make(chan struct{})
-	js.Global().Set("_poc_ready", js.FuncOf(func(_ js.Value, _ []js.Value) any {
-		close(ready)
+// jsFunc wraps a Go handler as a js.Func that runs in a goroutine.
+func jsFunc(fn func()) js.Func {
+	return js.FuncOf(func(_ js.Value, _ []js.Value) any {
+		go fn()
 		return nil
-	}))
+	})
+}
 
-	<-ready
+// jsFuncArgs wraps a Go handler that takes js.Value args.
+func jsFuncArgs(fn func([]js.Value)) js.Func {
+	return js.FuncOf(func(_ js.Value, args []js.Value) any {
+		go fn(args)
+		return nil
+	})
+}
 
-	// Repo operations.
-	js.Global().Set("_clone", js.FuncOf(func(_ js.Value, _ []js.Value) any {
-		go doClone()
-		return nil
-	}))
-	js.Global().Set("_sync", js.FuncOf(func(_ js.Value, _ []js.Value) any {
-		go doSync()
-		return nil
-	}))
-	js.Global().Set("_status", js.FuncOf(func(_ js.Value, _ []js.Value) any {
-		go doStatus()
-		return nil
-	}))
-	js.Global().Set("_timeline", js.FuncOf(func(_ js.Value, _ []js.Value) any {
-		go doTimeline()
-		return nil
-	}))
+func registerRepoCallbacks() {
+	js.Global().Set("_clone", jsFunc(doClone))
+	js.Global().Set("_sync", jsFunc(doSync))
+	js.Global().Set("_status", jsFunc(doStatus))
+	js.Global().Set("_timeline", jsFunc(doTimeline))
+}
 
-	// OPFS checkout operations.
-	js.Global().Set("_checkout", js.FuncOf(func(_ js.Value, _ []js.Value) any {
-		go doCheckout()
-		return nil
-	}))
-	js.Global().Set("_co_files", js.FuncOf(func(_ js.Value, args []js.Value) any {
+func registerCheckoutCallbacks() {
+	js.Global().Set("_checkout", jsFunc(doCheckout))
+	js.Global().Set("_co_files", jsFuncArgs(func(args []js.Value) {
 		path := ""
 		if len(args) > 0 {
 			path = args[0].String()
 		}
-		go doCoFiles(path)
-		return nil
+		doCoFiles(path)
 	}))
-	js.Global().Set("_co_read", js.FuncOf(func(_ js.Value, args []js.Value) any {
+	js.Global().Set("_co_read", jsFuncArgs(func(args []js.Value) {
 		if len(args) < 1 {
 			postError("_co_read requires path")
-			return nil
+			return
 		}
-		go doCoRead(args[0].String())
-		return nil
+		doCoRead(args[0].String())
 	}))
-	js.Global().Set("_co_write", js.FuncOf(func(_ js.Value, args []js.Value) any {
+	js.Global().Set("_co_write", jsFuncArgs(func(args []js.Value) {
 		if len(args) < 2 {
 			postError("_co_write requires path, content")
-			return nil
+			return
 		}
-		go doCoWrite(args[0].String(), args[1].String())
-		return nil
+		doCoWrite(args[0].String(), args[1].String())
 	}))
-	js.Global().Set("_co_delete", js.FuncOf(func(_ js.Value, args []js.Value) any {
+	js.Global().Set("_co_delete", jsFuncArgs(func(args []js.Value) {
 		if len(args) < 1 {
 			postError("_co_delete requires path")
-			return nil
+			return
 		}
-		go doCoDelete(args[0].String())
-		return nil
+		doCoDelete(args[0].String())
 	}))
-	js.Global().Set("_co_status", js.FuncOf(func(_ js.Value, _ []js.Value) any {
-		go doCoStatus()
-		return nil
-	}))
-	js.Global().Set("_co_commit", js.FuncOf(func(_ js.Value, args []js.Value) any {
+	js.Global().Set("_co_status", jsFunc(doCoStatus))
+	js.Global().Set("_co_commit", jsFuncArgs(func(args []js.Value) {
 		comment, user := "", ""
 		if len(args) > 0 {
 			comment = args[0].String()
@@ -569,30 +569,36 @@ func main() {
 		if len(args) > 1 {
 			user = args[1].String()
 		}
-		go doCoCommit(comment, user)
-		return nil
+		doCoCommit(comment, user)
 	}))
+}
 
-	// Agent operations.
-	js.Global().Set("_startAgent", js.FuncOf(func(_ js.Value, args []js.Value) any {
+func registerAgentCallbacks() {
+	js.Global().Set("_startAgent", jsFuncArgs(func(args []js.Value) {
 		url := "ws://localhost:8222"
 		if len(args) > 0 && args[0].String() != "" {
 			url = args[0].String()
 		}
-		go doStartAgent(url)
+		doStartAgent(url)
+	}))
+	js.Global().Set("_stopAgent", jsFunc(doStopAgent))
+	js.Global().Set("_syncNow", jsFunc(doSyncNow))
+}
+
+func main() {
+	ready := make(chan struct{})
+	js.Global().Set("_poc_ready", js.FuncOf(func(_ js.Value, _ []js.Value) any {
+		close(ready)
 		return nil
 	}))
-	js.Global().Set("_stopAgent", js.FuncOf(func(_ js.Value, _ []js.Value) any {
-		go doStopAgent()
-		return nil
-	}))
-	js.Global().Set("_syncNow", js.FuncOf(func(_ js.Value, _ []js.Value) any {
-		go doSyncNow()
-		return nil
-	}))
+	<-ready
+
+	registerRepoCallbacks()
+	registerCheckoutCallbacks()
+	registerAgentCallbacks()
+	registerSocialCallbacks()
 
 	log("Fossil OPFS playground ready.")
 	js.Global().Call("postMessage", map[string]any{"type": "ready"})
-
 	select {}
 }
