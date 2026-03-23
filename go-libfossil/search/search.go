@@ -1,0 +1,102 @@
+package search
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/dmestas/edgesync/go-libfossil/repo"
+)
+
+// Index manages the FTS5 trigram index in a repo DB.
+type Index struct {
+	repo *repo.Repo
+}
+
+// Open creates an Index from an open repo. Creates FTS5 tables if they don't exist.
+//
+// Panics if r is nil (TigerStyle precondition).
+func Open(r *repo.Repo) (*Index, error) {
+	if r == nil {
+		panic("search.Open: nil *repo.Repo")
+	}
+
+	if err := ensureSchema(r); err != nil {
+		return nil, fmt.Errorf("search.Open: %w", err)
+	}
+
+	return &Index{repo: r}, nil
+}
+
+// Drop removes the FTS tables entirely.
+func (idx *Index) Drop() error {
+	if idx == nil {
+		panic("search.Drop: nil *Index")
+	}
+	db := idx.repo.DB()
+	for _, stmt := range []string{
+		"DROP TABLE IF EXISTS fts_content",
+		"DROP TABLE IF EXISTS fts_meta",
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("search.Drop: %w", err)
+		}
+	}
+	return nil
+}
+
+func ensureSchema(r *repo.Repo) error {
+	db := r.DB()
+	stmts := []string{
+		`CREATE VIRTUAL TABLE IF NOT EXISTS fts_content USING fts5(
+			path,
+			content,
+			tokenize='trigram'
+		)`,
+		`CREATE TABLE IF NOT EXISTS fts_meta(
+			key TEXT PRIMARY KEY,
+			value TEXT
+		)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("ensureSchema: %w", err)
+		}
+	}
+	return nil
+}
+
+// Query configures a search request.
+type Query struct {
+	Term         string // search term (min 3 chars, FTS5 special chars escaped internally)
+	MaxResults   int    // 0 → default (50)
+	ContextLines int    // lines of surrounding context (0 → just the match line)
+}
+
+// Result is a single search hit.
+type Result struct {
+	Path     string // file pathname
+	Line     int    // 1-based line number
+	Column   int    // 0-based byte offset within the line
+	MatchLen int    // length of matched substring
+	LineText string // the matching line
+	Context  string // surrounding lines including match line, newline-separated. Empty if ContextLines=0.
+}
+
+// escapeFTS5 wraps term in double quotes for literal matching,
+// escaping internal double quotes per FTS5 syntax.
+func escapeFTS5(term string) string {
+	escaped := strings.ReplaceAll(term, `"`, `""`)
+	return `"` + escaped + `"`
+}
+
+// Search is a stub — will be implemented in query.go.
+// For now it returns empty results (used by schema tests).
+func (idx *Index) Search(q Query) ([]Result, error) {
+	if idx == nil {
+		panic("search.Search: nil *Index")
+	}
+	if len(q.Term) < 3 {
+		return nil, nil
+	}
+	return nil, nil
+}
