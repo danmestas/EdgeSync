@@ -1,184 +1,90 @@
 //go:build js
 
-// Package main provides UV-based draft sync for collaborative editing.
+// Package main provides NATS-based draft sync for collaborative editing.
 // When multiple peers have the same file open, edits propagate via
-// Fossil UV files (mtime-wins, auto-sync). Manual or auto-commit
-// promotes drafts to versioned checkins.
+// NATS pub/sub on edgesync.draft.<path>. This is faster than UV sync
+// (direct pub/sub, no protocol overhead) and avoids UV convergence issues.
 package main
 
 import (
+	"encoding/json"
 	"fmt"
-	"strings"
-	"time"
 
-	"github.com/dmestas/edgesync/go-libfossil/manifest"
-	"github.com/dmestas/edgesync/go-libfossil/uv"
+	"github.com/nats-io/nats.go"
 )
 
-const draftPrefix = "draft/"
+const draftSubjectPrefix = "edgesync.draft."
 
-// saveDraft writes file content to a UV draft entry.
+// DraftMessage is published when a peer saves a file they're co-editing.
+type DraftMessage struct {
+	From    string `json:"from"`
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+var draftSub *nats.Subscription
+
+// startDraftSync subscribes to all draft messages from peers.
+func startDraftSync(nc *nats.Conn) error {
+	if nc == nil {
+		panic("startDraftSync: nc must not be nil")
+	}
+	var err error
+	draftSub, err = nc.Subscribe(draftSubjectPrefix+">", func(msg *nats.Msg) {
+		var dm DraftMessage
+		if err := json.Unmarshal(msg.Data, &dm); err != nil {
+			return // Malformed — discard.
+		}
+		// Ignore our own drafts (we already wrote to OPFS).
+		if dm.From == myPeerID {
+			return
+		}
+		// Write the peer's content to our OPFS checkout.
+		if currentCheckout != nil {
+			if err := currentCheckout.WriteFile(dm.Path, dm.Content); err != nil {
+				log(fmt.Sprintf("[draft] apply %s failed: %v", dm.Path, err))
+				return
+			}
+			postResult("draftReceived", toJSON(map[string]any{
+				"path": dm.Path,
+				"size": len(dm.Content),
+			}))
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("draft subscribe: %w", err)
+	}
+	return nil
+}
+
+// publishDraft sends file content to all peers via NATS pub/sub.
 // Only called when co-editors are present for this file.
-func saveDraft(path, content string) error {
+func publishDraft(path, content string) {
 	if path == "" {
-		panic("saveDraft: path must not be empty")
+		panic("publishDraft: path must not be empty")
 	}
-	if currentRepo == nil {
-		return fmt.Errorf("no repo open")
-	}
-	name := draftPrefix + path
-	now := time.Now().Unix()
-	return uv.Write(currentRepo.DB(), name, []byte(content), now)
-}
-
-// listDrafts returns all UV entries with the draft/ prefix.
-func listDrafts() (map[string][]byte, error) {
-	if currentRepo == nil {
-		return nil, fmt.Errorf("no repo open")
-	}
-	entries, err := uv.List(currentRepo.DB())
-	if err != nil {
-		return nil, fmt.Errorf("list UV: %w", err)
-	}
-	drafts := make(map[string][]byte)
-	for _, e := range entries {
-		if !strings.HasPrefix(e.Name, draftPrefix) {
-			continue
-		}
-		path := strings.TrimPrefix(e.Name, draftPrefix)
-		content, _, _, err := uv.Read(currentRepo.DB(), e.Name)
-		if err != nil {
-			continue
-		}
-		if content != nil {
-			drafts[path] = content
-		}
-	}
-	return drafts, nil
-}
-
-// commitDrafts reads all UV drafts, creates a Fossil checkin, and
-// deletes the draft UV entries. Returns the number of files committed.
-func commitDrafts(comment, user string) (int, string, error) {
-	if currentRepo == nil {
-		return 0, "", fmt.Errorf("no repo open")
-	}
-	if currentCheckout == nil {
-		return 0, "", fmt.Errorf("no checkout")
-	}
-
-	drafts, err := listDrafts()
-	if err != nil {
-		return 0, "", err
-	}
-	if len(drafts) == 0 {
-		return 0, "", nil // Nothing to commit.
-	}
-
-	// Apply drafts to OPFS before committing so CommitAll sees them.
-	for path, content := range drafts {
-		if err := currentCheckout.WriteFile(path, string(content)); err != nil {
-			log(fmt.Sprintf("[drafts] write %s to OPFS failed: %v", path, err))
-		}
-	}
-
-	// Commit from OPFS (includes drafts + any other changes).
-	if user == "" {
-		user = "browser-" + myPeerID
-	}
-	if comment == "" {
-		comment = fmt.Sprintf("auto: %d file(s) from collaboration", len(drafts))
-	}
-	_, uuid, err := currentCheckout.CommitAll(comment, user)
-	if err != nil {
-		return 0, "", fmt.Errorf("checkin: %w", err)
-	}
-
-	// Delete UV draft entries so they don't persist.
-	now := time.Now().Unix()
-	for path := range drafts {
-		name := draftPrefix + path
-		if err := uv.Delete(currentRepo.DB(), name, now); err != nil {
-			log(fmt.Sprintf("[drafts] delete UV %s failed: %v", name, err))
-		}
-	}
-
-	return len(drafts), uuid, nil
-}
-
-// applyReceivedDrafts checks for new UV drafts after a sync pull
-// and updates OPFS checkout files + UI accordingly.
-func applyReceivedDrafts() {
-	if currentRepo == nil || currentCheckout == nil {
+	if currentNATS == nil {
 		return
 	}
-	drafts, err := listDrafts()
+	dm := DraftMessage{
+		From:    myPeerID,
+		Path:    path,
+		Content: content,
+	}
+	data, err := json.Marshal(dm)
 	if err != nil {
+		log(fmt.Sprintf("[draft] marshal error: %v", err))
 		return
 	}
-	for path, content := range drafts {
-		if err := currentCheckout.WriteFile(path, string(content)); err != nil {
-			log(fmt.Sprintf("[drafts] apply %s failed: %v", path, err))
-			continue
-		}
-		// Notify UI that a file was updated by a peer.
-		postResult("draftReceived", toJSON(map[string]any{
-			"path": path,
-			"size": len(content),
-		}))
+	subject := draftSubjectPrefix + path
+	if err := currentNATS.Publish(subject, data); err != nil {
+		log(fmt.Sprintf("[draft] publish %s error: %v", path, err))
 	}
 }
 
-// hasDrafts returns true if there are any UV draft entries.
-func hasDrafts() bool {
-	if currentRepo == nil {
-		return false
-	}
-	entries, err := uv.List(currentRepo.DB())
-	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name, draftPrefix) {
-			return true
-		}
-	}
-	return false
-}
-
-// ensureUVSchema makes sure the unversioned table exists.
-func ensureUVSchema() {
-	if currentRepo == nil {
-		return
-	}
-	if err := uv.EnsureSchema(currentRepo.DB()); err != nil {
-		log(fmt.Sprintf("[drafts] ensure UV schema: %v", err))
+func stopDraftSync() {
+	if draftSub != nil {
+		draftSub.Unsubscribe()
+		draftSub = nil
 	}
 }
-
-// autoCommitDrafts is called when collaboration ends (peers left).
-// Waits a grace period, then commits remaining drafts.
-func autoCommitDrafts() {
-	if !hasDrafts() {
-		return
-	}
-	log("[drafts] collaboration ended, auto-committing drafts...")
-	n, uuid, err := commitDrafts("", "")
-	if err != nil {
-		log(fmt.Sprintf("[drafts] auto-commit failed: %v", err))
-		return
-	}
-	if n > 0 {
-		short := uuid
-		if len(short) > 12 {
-			short = short[:12]
-		}
-		log(fmt.Sprintf("[drafts] auto-committed %d file(s): %s", n, short))
-		postResult("coCommit", toJSON(map[string]any{"rid": 0, "uuid": uuid}))
-		publishNotify(currentNATS, uuid)
-	}
-}
-
-// Ensure uv and manifest are used.
-var _ = uv.Write
-var _ = manifest.Checkin

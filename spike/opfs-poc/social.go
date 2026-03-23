@@ -181,9 +181,30 @@ func evictStalePeers() {
 	hasCoEditors := fileHasCoEditorsLocked(myOpenFile)
 	peerMu.Unlock()
 
-	// If we lost our last co-editor, auto-commit any UV drafts.
+	// If we lost our last co-editor, auto-commit the OPFS working tree.
 	if hadCoEditors && !hasCoEditors {
-		go autoCommitDrafts()
+		go func() {
+			if currentCheckout == nil {
+				return
+			}
+			changes, err := currentCheckout.Status()
+			if err != nil || len(changes) == 0 {
+				return
+			}
+			log("[drafts] collaboration ended, auto-committing...")
+			_, uuid, err := currentCheckout.CommitAll("auto: collaboration ended", "browser-"+myPeerID)
+			if err != nil {
+				log(fmt.Sprintf("[drafts] auto-commit failed: %v", err))
+				return
+			}
+			short := uuid
+			if len(short) > 12 {
+				short = short[:12]
+			}
+			log(fmt.Sprintf("[drafts] auto-committed: %s", short))
+			postResult("coCommit", toJSON(map[string]any{"rid": 0, "uuid": uuid}))
+			publishNotify(currentNATS, uuid)
+		}()
 	}
 }
 
@@ -324,22 +345,18 @@ func registerSocialCallbacks() {
 		return nil
 	}))
 
-	// _saveDraft writes content to a UV draft (only when co-editing).
+	// _saveDraft publishes content to co-editors via NATS (only when co-editing).
 	js.Global().Set("_saveDraft", js.FuncOf(func(_ js.Value, args []js.Value) any {
 		if len(args) < 2 {
 			return nil
 		}
 		path := args[0].String()
 		content := args[1].String()
-		// Only save UV draft if another peer has this file open.
+		// Only publish draft if another peer has this file open.
 		if !fileHasCoEditors(path) {
 			return nil
 		}
-		go func() {
-			if err := saveDraft(path, content); err != nil {
-				log(fmt.Sprintf("[drafts] save %s failed: %v", path, err))
-			}
-		}()
+		go publishDraft(path, content)
 		return nil
 	}))
 

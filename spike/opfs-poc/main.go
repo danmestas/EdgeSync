@@ -383,9 +383,6 @@ func doCoCommit(comment, user string) {
 
 // postSyncHook crosslinks pulled manifests and re-materializes checkout.
 func postSyncHook(result *sync.SyncResult) {
-	// Apply any UV drafts received from peers.
-	applyReceivedDrafts()
-
 	if result.FilesRecvd == 0 {
 		return
 	}
@@ -452,14 +449,13 @@ func doStartAgent(natsWsURL string) {
 	log("[agent] connected to NATS")
 
 	transport := agent.NewNATSTransport(nc, projectCode, 0, "fossil")
-	ensureUVSchema()
 	cfg := agent.Config{
 		RepoPath:     repoPath,
 		NATSUrl:      "nats://browser",
 		PollInterval: 24 * time.Hour, // Notify-driven — poll is just a fallback.
 		Push:         true,
 		Pull:         true,
-		UV:           true, // Enable UV sync for draft propagation.
+		UV:           false, // UV drafts use NATS pub/sub, not UV sync protocol.
 		Logger: func(msg string) {
 			log("[agent] " + msg)
 			postResult("agentLog", toJSON(map[string]any{"msg": msg}))
@@ -487,6 +483,9 @@ func doStartAgent(natsWsURL string) {
 	if err := startNotify(nc); err != nil {
 		log(fmt.Sprintf("[social] notify start failed: %v", err))
 	}
+	if err := startDraftSync(nc); err != nil {
+		log(fmt.Sprintf("[social] draft sync start failed: %v", err))
+	}
 
 	log("[agent] running — auto-sync every 10s, instant on peer commits")
 	postResult("agentState", toJSON(map[string]any{"state": "running", "peerId": myPeerID}))
@@ -498,6 +497,7 @@ func doStopAgent() {
 		return
 	}
 	stopSocial()
+	stopDraftSync()
 	// Close NATS first — this causes in-flight syncs to fail, unblocking
 	// the poll loop. We don't call agent.Stop() because it closes the
 	// shared repo. Closing NATS is sufficient to halt all sync activity.
