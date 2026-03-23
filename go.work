@@ -9,4 +9,5 @@ use (
 	./go-libfossil/db/driver/modernc
 	./go-libfossil/db/driver/ncruces
 	./leaf
+	./spike/opfs-poc
 )
