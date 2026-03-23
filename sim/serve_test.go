@@ -17,6 +17,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/simio"
 	"github.com/dmestas/edgesync/go-libfossil/sync"
 	"github.com/dmestas/edgesync/leaf/agent"
+	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
 )
 
 // TestServeHTTPFossilClone starts a leaf serving HTTP, then uses a real

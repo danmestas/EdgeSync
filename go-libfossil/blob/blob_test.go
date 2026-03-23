@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dmestas/edgesync/go-libfossil/db"
+	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
 )
 
 func setupTestDB(t *testing.T) *db.DB {

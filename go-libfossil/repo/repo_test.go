@@ -7,6 +7,7 @@ import (
 
 	"github.com/dmestas/edgesync/go-libfossil/db"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
+	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
 )
 
 func TestCreate(t *testing.T) {

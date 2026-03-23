@@ -12,6 +12,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
 	"github.com/dmestas/edgesync/go-libfossil/testutil"
+	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
 )
 
 func setupTestRepo(t *testing.T) *repo.Repo {

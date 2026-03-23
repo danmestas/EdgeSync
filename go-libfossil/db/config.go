@@ -1,10 +1,8 @@
 package db
 
-import "os"
-
 // OpenConfig allows callers to customize driver selection and pragmas.
 type OpenConfig struct {
-	Driver  string            // override driver name (empty = build-tag default or env var)
+	Driver  string            // override driver name (empty = use registered driver)
 	Pragmas map[string]string // additional/override pragmas (merged with defaults)
 }
 
@@ -24,11 +22,4 @@ func DefaultPragmas() map[string]string {
 
 func defaultPragmas() map[string]string {
 	return DefaultPragmas()
-}
-
-func driverFromEnv() string {
-	if d := os.Getenv("EDGESYNC_SQLITE_DRIVER"); d != "" {
-		return d
-	}
-	return driverName()
 }

@@ -13,7 +13,7 @@ type DB struct {
 	driver string
 }
 
-// Open opens a SQLite database with the build-tag-selected driver and default pragmas.
+// Open opens a SQLite database with the registered driver and default pragmas.
 func Open(path string) (*DB, error) {
 	return OpenWith(path, OpenConfig{})
 }
@@ -23,9 +23,12 @@ func OpenWith(path string, cfg OpenConfig) (*DB, error) {
 	if path == "" {
 		panic("db.OpenWith: path must not be empty")
 	}
+	if registered == nil {
+		panic("db.OpenWith: no driver registered — import a driver package (e.g., _ \"github.com/dmestas/edgesync/go-libfossil/db/driver/modernc\")")
+	}
 	driver := cfg.Driver
 	if driver == "" {
-		driver = driverFromEnv()
+		driver = registered.Name
 	}
 
 	pragmas := defaultPragmas()
@@ -44,7 +47,7 @@ func OpenWith(path string, cfg OpenConfig) (*DB, error) {
 			dsn = path
 		}
 	} else {
-		dsn = buildDSN(path, pragmas)
+		dsn = registered.BuildDSN(path, pragmas)
 	}
 	conn, err := sql.Open(driver, dsn)
 	if err != nil {
