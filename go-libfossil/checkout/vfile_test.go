@@ -256,6 +256,54 @@ func TestScanChangesMissing(t *testing.T) {
 	}
 }
 
+func TestScanChangesNoHash(t *testing.T) {
+	r, cleanup := newTestRepoWithCheckin(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	co, err := Create(r, dir, CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer co.Close()
+
+	rid, _, _ := co.Version()
+	mem := simio.NewMemStorage()
+	co.env = &simio.Env{
+		Storage: mem, Clock: simio.RealClock{}, Rand: simio.CryptoRand{},
+	}
+	co.dir = "/checkout"
+	if err := co.Extract(rid, ExtractOpts{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Modify a file on disk.
+	if err := mem.WriteFile(
+		"/checkout/hello.txt", []byte("changed"), 0644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// ScanChanges(0) — no ScanHash flag — should NOT detect content
+	// changes (only mtime-based, which is not yet implemented, so
+	// chnged should remain 0).
+	if err := co.ScanChanges(0); err != nil {
+		t.Fatal(err)
+	}
+
+	var chnged int
+	err = co.db.QueryRow(
+		"SELECT chnged FROM vfile WHERE vid=? AND pathname='hello.txt'",
+		int64(rid),
+	).Scan(&chnged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chnged != 0 {
+		t.Fatalf("without ScanHash, chnged = %d, want 0", chnged)
+	}
+}
+
 func TestScanChangesObserver(t *testing.T) {
 	r, cleanup := newTestRepoWithCheckin(t)
 	defer cleanup()

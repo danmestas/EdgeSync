@@ -139,6 +139,96 @@ func TestCommitWithEnqueue(t *testing.T) {
 	}
 }
 
+func TestCommitNoChanges(t *testing.T) {
+	r, cleanup := newTestRepoWithCheckin(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	co, err := Create(r, dir, CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer co.Close()
+
+	rid, _, _ := co.Version()
+	mem := simio.NewMemStorage()
+	co.env = &simio.Env{
+		Storage: mem, Clock: simio.RealClock{}, Rand: simio.CryptoRand{},
+	}
+	co.dir = "/checkout"
+	if err := co.Extract(rid, ExtractOpts{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Commit with no modifications — manifest.Checkin panics with
+	// empty Files list, so buildCommitFiles returns the full
+	// unchanged set. The commit succeeds but produces an identical
+	// manifest. This documents current behavior.
+	_, _, err = co.Commit(CommitOpts{
+		Message: "empty commit", User: "test",
+	})
+	// The commit should succeed (all files are still present,
+	// just unchanged). If the project later decides to reject
+	// no-change commits, this test should be updated.
+	if err != nil {
+		t.Fatalf("commit with no changes failed: %v", err)
+	}
+}
+
+func TestCommitWithDelete(t *testing.T) {
+	r, cleanup := newTestRepoWithCheckin(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	co, err := Create(r, dir, CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer co.Close()
+
+	rid1, _, _ := co.Version()
+	mem := simio.NewMemStorage()
+	co.env = &simio.Env{
+		Storage: mem, Clock: simio.RealClock{}, Rand: simio.CryptoRand{},
+	}
+	co.dir = "/checkout"
+	if err := co.Extract(rid1, ExtractOpts{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Unmanage hello.txt (marks deleted=1)
+	if err := co.Unmanage(UnmanageOpts{
+		Paths: []string{"hello.txt"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Commit — hello.txt should not appear in the new manifest.
+	rid2, _, err := co.Commit(CommitOpts{
+		Message: "delete hello.txt", User: "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify hello.txt is absent from the new checkin's mlink entries.
+	var count int
+	err = r.DB().QueryRow(`
+		SELECT count(*) FROM mlink m
+		JOIN filename f ON f.fnid = m.fnid
+		WHERE m.mid = ? AND f.name = 'hello.txt'
+	`, rid2).Scan(&count)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf(
+			"hello.txt should be absent from new checkin, got %d mlink rows",
+			count,
+		)
+	}
+}
+
 func TestDequeueAll(t *testing.T) {
 	r, cleanup := newTestRepoWithCheckin(t)
 	defer cleanup()

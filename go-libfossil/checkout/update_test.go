@@ -382,6 +382,101 @@ func TestUpdateDryRun(t *testing.T) {
 	}
 }
 
+func TestUpdateWithFileRemoval(t *testing.T) {
+	// Create a repo where the second checkin removes a file.
+	dir := t.TempDir()
+	path := dir + "/test.fossil"
+	r, err := repo.CreateWithEnv(path, "test", simio.RealEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	// First checkin: three files.
+	rid1, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files: []manifest.File{
+			{Name: "keep.txt", Content: []byte("keep\n")},
+			{Name: "remove.txt", Content: []byte("bye\n")},
+		},
+		Comment: "initial",
+		User:    "test",
+		Parent:  0,
+		Time:    time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Second checkin: remove.txt omitted.
+	rid2, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files: []manifest.File{
+			{Name: "keep.txt", Content: []byte("keep\n")},
+		},
+		Comment: "remove file",
+		User:    "test",
+		Parent:  rid1,
+		Time:    time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create checkout at rid1.
+	ckDir := t.TempDir()
+	co, err := Create(r, ckDir, CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer co.Close()
+
+	// Point checkout to rid1.
+	if err := setVVar(co.db, "checkout", itoa(int64(rid1))); err != nil {
+		t.Fatal(err)
+	}
+	var uuid1 string
+	r.DB().QueryRow(
+		"SELECT uuid FROM blob WHERE rid=?", rid1,
+	).Scan(&uuid1)
+	if err := setVVar(co.db, "checkout-hash", uuid1); err != nil {
+		t.Fatal(err)
+	}
+
+	mem := simio.NewMemStorage()
+	co.env = &simio.Env{
+		Storage: mem, Clock: simio.RealClock{}, Rand: simio.CryptoRand{},
+	}
+	co.dir = "/checkout"
+	if err := co.Extract(rid1, ExtractOpts{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify remove.txt exists before update.
+	if _, err := mem.ReadFile("/checkout/remove.txt"); err != nil {
+		t.Fatal("remove.txt should exist before update:", err)
+	}
+
+	// Update to rid2.
+	if err := co.Update(UpdateOpts{TargetRID: rid2}); err != nil {
+		t.Fatal(err)
+	}
+
+	// remove.txt should be deleted from Storage.
+	if _, err := mem.ReadFile("/checkout/remove.txt"); err == nil {
+		t.Fatal("remove.txt should be deleted after update")
+	}
+
+	// keep.txt should still exist.
+	data, err := mem.ReadFile("/checkout/keep.txt")
+	if err != nil {
+		t.Fatal("keep.txt not found:", err)
+	}
+	if string(data) != "keep\n" {
+		t.Fatalf("keep.txt = %q, want %q", data, "keep\n")
+	}
+
+	_ = rid2 // used above
+}
+
 // itoa is a helper to avoid importing strconv in tests.
 func itoa(n int64) string {
 	return strconv.FormatInt(n, 10)

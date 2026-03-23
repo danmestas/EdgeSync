@@ -2,6 +2,7 @@ package checkout
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -86,6 +87,33 @@ func TestValidateFingerprint(t *testing.T) {
 
 	if err := c.ValidateFingerprint(); err != nil {
 		t.Errorf("ValidateFingerprint failed: %v", err)
+	}
+}
+
+func TestValidateFingerprintMismatch(t *testing.T) {
+	r, cleanup := newTestRepoWithCheckin(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	c, err := Create(r, dir, CreateOpts{})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	defer c.Close()
+
+	// Tamper with the checkout-hash vvar.
+	if err := setVVar(c.db, "checkout-hash", "deadbeef"); err != nil {
+		t.Fatal(err)
+	}
+
+	err = c.ValidateFingerprint()
+	if err == nil {
+		t.Fatal("ValidateFingerprint should fail with tampered hash")
+	}
+	if !strings.Contains(err.Error(), "mismatch") {
+		t.Fatalf(
+			"error should mention mismatch, got: %v", err,
+		)
 	}
 }
 

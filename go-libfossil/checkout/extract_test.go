@@ -2,10 +2,13 @@ package checkout
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/dmestas/edgesync/go-libfossil/simio"
 )
+
+func contains(s, substr string) bool { return strings.Contains(s, substr) }
 
 func TestExtract(t *testing.T) {
 	r, cleanup := newTestRepoWithCheckin(t)
@@ -93,6 +96,52 @@ func TestExtractDryRun(t *testing.T) {
 	// But callback should have been called
 	if len(callbackFiles) != 3 {
 		t.Fatalf("expected 3 callback calls, got %d", len(callbackFiles))
+	}
+}
+
+func TestExtractForceProtection(t *testing.T) {
+	r, cleanup := newTestRepoWithCheckin(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	co, err := Create(r, dir, CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer co.Close()
+
+	rid, _, _ := co.Version()
+	mem := simio.NewMemStorage()
+	co.env = &simio.Env{
+		Storage: mem, Clock: simio.RealClock{}, Rand: simio.CryptoRand{},
+	}
+	co.dir = "/checkout"
+
+	// Extract files first.
+	if err := co.Extract(rid, ExtractOpts{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Modify hello.txt on disk so it differs from vfile mhash.
+	if err := mem.WriteFile(
+		"/checkout/hello.txt", []byte("local edit\n"), 0644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// Extract again WITHOUT Force — should fail because hello.txt
+	// has local changes.
+	err = co.Extract(rid, ExtractOpts{Force: false})
+	if err == nil {
+		t.Fatal("Extract without Force should fail over modified files")
+	}
+	if !contains(err.Error(), "local changes") {
+		t.Fatalf("error should mention local changes, got: %v", err)
+	}
+
+	// Extract with Force=true should succeed.
+	if err := co.Extract(rid, ExtractOpts{Force: true}); err != nil {
+		t.Fatalf("Extract with Force should succeed: %v", err)
 	}
 }
 
