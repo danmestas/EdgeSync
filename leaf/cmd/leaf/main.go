@@ -13,6 +13,8 @@ import (
 
 	"github.com/dmestas/edgesync/leaf/agent"
 	"github.com/dmestas/edgesync/leaf/telemetry"
+
+	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
 )
 
 func main() {

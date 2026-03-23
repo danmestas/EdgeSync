@@ -7,7 +7,8 @@ import (
 	"path/filepath"
 
 	"github.com/dmestas/edgesync/go-libfossil/manifest"
-	_ "modernc.org/sqlite"
+
+	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
 )
 
 type RepoOpenCmd struct {
