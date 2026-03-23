@@ -101,14 +101,19 @@ type scanVFileEntry struct {
 
 // scanSingleEntry checks a single vfile entry against the file on disk,
 // updating vfile.chnged as needed. Returns (changed, missing) booleans.
-func (c *Checkout) scanSingleEntry(e scanVFileEntry, flags ScanFlags) (changed, missing bool, err error) {
+func (c *Checkout) scanSingleEntry(
+	e scanVFileEntry, flags ScanFlags,
+) (changed, missing bool, err error) {
 	if e.deleted != 0 {
 		return false, false, nil
 	}
 
 	fullPath, err := c.safePath(e.pathname)
 	if err != nil {
-		return false, false, fmt.Errorf("checkout.ScanChanges: path traversal in %s: %w", e.pathname, err)
+		return false, false, fmt.Errorf(
+			"checkout.ScanChanges: path traversal in %s: %w",
+			e.pathname, err,
+		)
 	}
 
 	data, err := c.env.Storage.ReadFile(fullPath)
@@ -116,7 +121,9 @@ func (c *Checkout) scanSingleEntry(e scanVFileEntry, flags ScanFlags) (changed, 
 		if os.IsNotExist(err) {
 			return false, true, nil
 		}
-		return false, false, fmt.Errorf("checkout.ScanChanges: read %s: %w", fullPath, err)
+		return false, false, fmt.Errorf(
+			"checkout.ScanChanges: read %s: %w", fullPath, err,
+		)
 	}
 
 	if flags&ScanHash == 0 {
@@ -127,15 +134,25 @@ func (c *Checkout) scanSingleEntry(e scanVFileEntry, flags ScanFlags) (changed, 
 
 	if diskHash != e.mhash {
 		if e.chnged == 0 {
-			if _, err := c.db.Exec("UPDATE vfile SET chnged = 1 WHERE id = ?", e.id); err != nil {
-				return false, false, fmt.Errorf("checkout.ScanChanges: update chnged for %s: %w", e.pathname, err)
+			if _, err := c.db.Exec(
+				"UPDATE vfile SET chnged = 1 WHERE id = ?", e.id,
+			); err != nil {
+				return false, false, fmt.Errorf(
+					"checkout.ScanChanges: update chnged for %s: %w",
+					e.pathname, err,
+				)
 			}
 			return true, false, nil
 		}
 	} else {
 		if e.chnged != 0 {
-			if _, err := c.db.Exec("UPDATE vfile SET chnged = 0 WHERE id = ?", e.id); err != nil {
-				return false, false, fmt.Errorf("checkout.ScanChanges: reset chnged for %s: %w", e.pathname, err)
+			if _, err := c.db.Exec(
+				"UPDATE vfile SET chnged = 0 WHERE id = ?", e.id,
+			); err != nil {
+				return false, false, fmt.Errorf(
+					"checkout.ScanChanges: reset chnged for %s: %w",
+					e.pathname, err,
+				)
 			}
 		}
 	}
@@ -157,13 +174,14 @@ func (c *Checkout) ScanChanges(flags ScanFlags) error {
 
 	ctx := c.obs.ScanStarted(context.Background())
 
-	var filesScanned, filesChanged, filesMissing int
+	var filesScanned, filesChanged, filesMissing, filesExtra int
 
 	defer func() {
 		c.obs.ScanCompleted(ctx, ScanEnd{
 			FilesScanned: filesScanned,
 			FilesChanged: filesChanged,
 			FilesMissing: filesMissing,
+			FilesExtra:   filesExtra,
 		})
 	}()
 
@@ -195,18 +213,37 @@ func (c *Checkout) ScanChanges(flags ScanFlags) error {
 		return fmt.Errorf("checkout.ScanChanges: iterate vfile rows: %w", err)
 	}
 
+	// Build a set of tracked pathnames for extra-file detection.
+	tracked := make(map[string]bool, len(entries))
 	for _, e := range entries {
+		tracked[e.pathname] = true
 		filesScanned++
 
-		changed, missing, err := c.scanSingleEntry(e, flags)
-		if err != nil {
-			return err
+		changed, missing, scanErr := c.scanSingleEntry(e, flags)
+		if scanErr != nil {
+			return scanErr
 		}
 		if changed {
 			filesChanged++
 		}
 		if missing {
 			filesMissing++
+			c.obs.Error(ctx, fmt.Errorf(
+				"checkout.ScanChanges: file missing: %s", e.pathname,
+			))
+		}
+	}
+
+	// Walk the checkout directory to detect EXTRA files (on disk but
+	// not in vfile). Errors are non-fatal: log via observer and continue.
+	diskFiles, walkErr := c.walkDir(c.dir)
+	if walkErr != nil {
+		c.obs.Error(ctx, walkErr)
+	} else {
+		for relPath := range diskFiles {
+			if !tracked[relPath] {
+				filesExtra++
+			}
 		}
 	}
 

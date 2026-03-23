@@ -1,3 +1,10 @@
+// Package checkout provides working directory management for Fossil repositories.
+// It implements file extraction, change tracking, staging, and commit operations,
+// ported from libfossil's checkout API. All filesystem operations go through
+// simio.Env for platform-agnostic operation (native, WASI, browser WASM).
+//
+// A Checkout is not safe for concurrent use. Callers must serialize
+// access to a single Checkout instance.
 package checkout
 
 import (
@@ -106,6 +113,12 @@ func Create(r *repo.Repo, dir string, opts CreateOpts) (*Checkout, error) {
 	if err := initCheckoutVersion(ckdb, r); err != nil {
 		ckdb.Close()
 		return nil, err
+	}
+
+	// Set the repository vvar so tools can find the repo.
+	if err := setVVar(ckdb, "repository", r.Path()); err != nil {
+		ckdb.Close()
+		return nil, fmt.Errorf("checkout.Create: %w", err)
 	}
 
 	return &Checkout{
@@ -259,7 +272,10 @@ func (c *Checkout) ValidateFingerprint() error {
 	}
 
 	if repoUUID != uuid {
-		return fmt.Errorf("checkout.ValidateFingerprint: mismatch (checkout: %s, repo: %s)", uuid, repoUUID)
+		return fmt.Errorf(
+			"checkout.ValidateFingerprint: mismatch (checkout: %s, repo: %s)",
+			uuid, repoUUID,
+		)
 	}
 
 	return nil

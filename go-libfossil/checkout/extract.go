@@ -9,11 +9,14 @@ import (
 
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"github.com/dmestas/edgesync/go-libfossil/content"
+	"github.com/dmestas/edgesync/go-libfossil/hash"
 )
 
 // extractSingleFile expands a blob and writes it to the checkout directory.
 // Skips writing if dryRun is true.
-func (c *Checkout) extractSingleFile(pathname string, blobRid int64, isexe int64, dryRun bool) error {
+func (c *Checkout) extractSingleFile(
+	pathname string, blobRid int64, isexe int64, dryRun bool,
+) error {
 	if dryRun {
 		return nil
 	}
@@ -79,43 +82,97 @@ func (c *Checkout) Extract(rid libfossil.FslID, opts ExtractOpts) error {
 		return extractErr
 	}
 
-	rows, err := c.db.Query(`
-		SELECT id, pathname, rid, isexe FROM vfile WHERE vid = ?
-	`, int64(rid))
+	// Collect all rows before processing to avoid holding the cursor
+	// open during I/O and DB writes.
+	type vfileRow struct {
+		id       int64
+		pathname string
+		blobRid  int64
+		isexe    int64
+	}
+	var vfRows []vfileRow
+
+	rows, err := c.db.Query(
+		"SELECT id, pathname, rid, isexe FROM vfile WHERE vid = ?",
+		int64(rid),
+	)
 	if err != nil {
 		extractErr = fmt.Errorf("checkout.Extract: query vfile: %w", err)
 		return extractErr
 	}
-	defer rows.Close()
-
 	for rows.Next() {
-		var id, blobRid, isexe int64
-		var pathname string
-		if err := rows.Scan(&id, &pathname, &blobRid, &isexe); err != nil {
-			extractErr = fmt.Errorf("checkout.Extract: scan vfile row: %w", err)
+		var row vfileRow
+		if err := rows.Scan(
+			&row.id, &row.pathname, &row.blobRid, &row.isexe,
+		); err != nil {
+			rows.Close()
+			extractErr = fmt.Errorf(
+				"checkout.Extract: scan vfile row: %w", err,
+			)
 			return extractErr
 		}
+		vfRows = append(vfRows, row)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		extractErr = fmt.Errorf(
+			"checkout.Extract: iterate vfile rows: %w", err,
+		)
+		return extractErr
+	}
 
-		if err := c.extractSingleFile(pathname, blobRid, isexe, opts.DryRun); err != nil {
+	// If Force is false, check for locally modified files before writing.
+	if !opts.Force && !opts.DryRun {
+		for _, row := range vfRows {
+			var storedHash string
+			_ = c.db.QueryRow(
+				"SELECT mhash FROM vfile WHERE id = ?", row.id,
+			).Scan(&storedHash)
+			if storedHash == "" {
+				continue // no hash to compare against
+			}
+
+			fullPath, pathErr := c.safePath(row.pathname)
+			if pathErr != nil {
+				continue // will be caught during extraction
+			}
+			data, readErr := c.env.Storage.ReadFile(fullPath)
+			if readErr != nil {
+				continue // file doesn't exist on disk, safe to write
+			}
+			diskHash := hash.ContentHash(data, storedHash)
+			if diskHash != storedHash {
+				extractErr = fmt.Errorf(
+					"checkout.Extract: file %s has local changes; "+
+						"use Force to overwrite",
+					row.pathname,
+				)
+				return extractErr
+			}
+		}
+	}
+
+	for _, row := range vfRows {
+		if err := c.extractSingleFile(
+			row.pathname, row.blobRid, row.isexe, opts.DryRun,
+		); err != nil {
 			extractErr = err
 			return extractErr
 		}
 
-		c.obs.ExtractFileCompleted(ctx, pathname, UpdateAdded)
+		c.obs.ExtractFileCompleted(ctx, row.pathname, UpdateAdded)
 
 		if opts.Callback != nil {
-			if err := opts.Callback(pathname, UpdateAdded); err != nil {
-				extractErr = fmt.Errorf("checkout.Extract: callback for %s: %w", pathname, err)
+			if err := opts.Callback(row.pathname, UpdateAdded); err != nil {
+				extractErr = fmt.Errorf(
+					"checkout.Extract: callback for %s: %w",
+					row.pathname, err,
+				)
 				return extractErr
 			}
 		}
 
 		filesWritten++
-	}
-
-	if err := rows.Err(); err != nil {
-		extractErr = fmt.Errorf("checkout.Extract: iterate vfile rows: %w", err)
-		return extractErr
 	}
 
 	// Finalize: look up UUID and update vvar

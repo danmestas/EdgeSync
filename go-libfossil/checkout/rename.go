@@ -69,7 +69,10 @@ func (c *Checkout) Rename(opts RenameOpts) error {
 
 	// Verify From exists in vfile
 	var vfileID int64
-	err = c.db.QueryRow("SELECT id FROM vfile WHERE vid=? AND pathname=?", int64(vid), opts.From).Scan(&vfileID)
+	err = c.db.QueryRow(
+		"SELECT id FROM vfile WHERE vid=? AND pathname=?",
+		int64(vid), opts.From,
+	).Scan(&vfileID)
 	if err == sql.ErrNoRows {
 		return fmt.Errorf("checkout.Rename: file %s not found in vfile", opts.From)
 	}
@@ -79,7 +82,10 @@ func (c *Checkout) Rename(opts RenameOpts) error {
 
 	// Verify To does NOT exist in vfile (uniqueness check)
 	var existingID int64
-	err = c.db.QueryRow("SELECT id FROM vfile WHERE vid=? AND pathname=?", int64(vid), opts.To).Scan(&existingID)
+	err = c.db.QueryRow(
+		"SELECT id FROM vfile WHERE vid=? AND pathname=?",
+		int64(vid), opts.To,
+	).Scan(&existingID)
 	if err != nil && err != sql.ErrNoRows {
 		return fmt.Errorf("checkout.Rename: query vfile for %s: %w", opts.To, err)
 	}
@@ -147,7 +153,10 @@ func (c *Checkout) RevertRename(name string, doFsMove bool) (bool, error) {
 	// Look up vfile entry
 	var vfileID int64
 	var origname sql.NullString
-	err = c.db.QueryRow("SELECT id, origname FROM vfile WHERE vid=? AND pathname=?", int64(vid), name).Scan(&vfileID, &origname)
+	err = c.db.QueryRow(
+		"SELECT id, origname FROM vfile WHERE vid=? AND pathname=?",
+		int64(vid), name,
+	).Scan(&vfileID, &origname)
 	if err == sql.ErrNoRows {
 		return false, fmt.Errorf("checkout.RevertRename: file %s not found in vfile", name)
 	}

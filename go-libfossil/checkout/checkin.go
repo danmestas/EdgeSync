@@ -8,6 +8,7 @@ import (
 
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"github.com/dmestas/edgesync/go-libfossil/content"
+	"github.com/dmestas/edgesync/go-libfossil/deck"
 	"github.com/dmestas/edgesync/go-libfossil/manifest"
 )
 
@@ -16,7 +17,7 @@ import (
 // explicitly enqueued files will be committed.
 func (c *Checkout) Enqueue(opts EnqueueOpts) error {
 	if c == nil {
-		panic("checkout.Enqueue: c must not be nil")
+		panic("checkout.Enqueue: nil *Checkout")
 	}
 	if c.checkinQueue == nil {
 		c.checkinQueue = make(map[string]bool)
@@ -34,9 +35,10 @@ func (c *Checkout) Enqueue(opts EnqueueOpts) error {
 
 // Dequeue removes files from the commit staging queue. If opts.Paths is empty,
 // clears the entire queue (restoring implicit all-files behavior).
+// Returns error for API consistency / future-proofing.
 func (c *Checkout) Dequeue(opts DequeueOpts) error {
 	if c == nil {
-		panic("checkout.Dequeue: c must not be nil")
+		panic("checkout.Dequeue: nil *Checkout")
 	}
 	if len(opts.Paths) == 0 {
 		c.checkinQueue = nil // dequeue all
@@ -51,9 +53,10 @@ func (c *Checkout) Dequeue(opts DequeueOpts) error {
 // IsEnqueued returns true if the named file will be included in the next commit.
 // If the queue is nil (never initialized), all changed files are implicitly enqueued.
 // If the queue exists but is empty (len == 0), nothing is enqueued.
+// Returns error for API consistency / future-proofing.
 func (c *Checkout) IsEnqueued(name string) (bool, error) {
 	if c == nil {
-		panic("checkout.IsEnqueued: c must not be nil")
+		panic("checkout.IsEnqueued: nil *Checkout")
 	}
 	if c.checkinQueue == nil {
 		return true, nil // nil queue = all changed files implicitly enqueued
@@ -62,9 +65,10 @@ func (c *Checkout) IsEnqueued(name string) (bool, error) {
 }
 
 // DiscardQueue clears the commit staging queue, restoring implicit all-files behavior.
+// Returns error for API consistency / future-proofing.
 func (c *Checkout) DiscardQueue() error {
 	if c == nil {
-		panic("checkout.DiscardQueue: c must not be nil")
+		panic("checkout.DiscardQueue: nil *Checkout")
 	}
 	c.checkinQueue = nil
 	return nil
@@ -253,7 +257,7 @@ func (c *Checkout) finalizeCommit(newRID libfossil.FslID, newUUID string) error 
 // Returns the new manifest RID and UUID.
 func (c *Checkout) Commit(opts CommitOpts) (libfossil.FslID, string, error) {
 	if c == nil {
-		panic("checkout.Commit: c must not be nil")
+		panic("checkout.Commit: nil *Checkout")
 	}
 
 	parentRID, _, err := c.Version()
@@ -292,7 +296,10 @@ func (c *Checkout) Commit(opts CommitOpts) (libfossil.FslID, string, error) {
 	var result CommitEnd
 	defer func() { c.obs.CommitCompleted(ctx, result) }()
 
-	commitFiles, err := c.buildCommitFiles(parentRID, vfEntries, changedFiles, deletedFiles, shouldInclude)
+	commitFiles, err := c.buildCommitFiles(
+		parentRID, vfEntries, changedFiles,
+		deletedFiles, shouldInclude,
+	)
 	if err != nil {
 		result.Err = err
 		return 0, "", err
@@ -303,10 +310,38 @@ func (c *Checkout) Commit(opts CommitOpts) (libfossil.FslID, string, error) {
 		commitTime = c.env.Clock.Now()
 	}
 
-	newRID, newUUID, err := manifest.Checkin(c.repo, manifest.CheckinOpts{
-		Files: commitFiles, Comment: opts.Message, User: opts.User,
-		Parent: parentRID, Time: commitTime, Delta: opts.Delta,
-	})
+	// Build T-cards from CommitOpts.Branch and Tags.
+	var tagCards []deck.TagCard
+	if opts.Branch != "" {
+		tagCards = append(tagCards, deck.TagCard{
+			Type: deck.TagPropagating, Name: "branch",
+			UUID: "*", Value: opts.Branch,
+		})
+		tagCards = append(tagCards, deck.TagCard{
+			Type:  deck.TagSingleton,
+			Name:  "sym-" + opts.Branch,
+			UUID:  "*",
+		})
+	}
+	for _, t := range opts.Tags {
+		tagCards = append(tagCards, deck.TagCard{
+			Type: deck.TagSingleton, Name: t, UUID: "*",
+		})
+	}
+
+	checkinOpts := manifest.CheckinOpts{
+		Files:   commitFiles,
+		Comment: opts.Message,
+		User:    opts.User,
+		Parent:  parentRID,
+		Time:    commitTime,
+		Delta:   opts.Delta,
+	}
+	if len(tagCards) > 0 {
+		checkinOpts.Tags = tagCards
+	}
+
+	newRID, newUUID, err := manifest.Checkin(c.repo, checkinOpts)
 	if err != nil {
 		result.Err = fmt.Errorf("checkout.Commit: checkin: %w", err)
 		return 0, "", result.Err

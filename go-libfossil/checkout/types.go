@@ -103,16 +103,16 @@ type CreateOpts struct {
 // ExtractOpts configures file extraction from a checkin.
 type ExtractOpts struct {
 	Callback func(name string, change UpdateChange) error // per-file notification
-	SetMTime bool
+	SetMTime bool                                         // TODO: not yet implemented
 	DryRun   bool
 	Force    bool // overwrite locally modified files
 }
 
 // UpdateOpts configures updating to a new version with merge.
 type UpdateOpts struct {
-	TargetRID libfossil.FslID                              // 0 → auto-calculate via CalcUpdateVersion
+	TargetRID libfossil.FslID // 0 → auto-calculate via CalcUpdateVersion
 	Callback  func(name string, change UpdateChange) error
-	SetMTime  bool
+	SetMTime  bool // TODO: not yet implemented
 	DryRun    bool
 }
 

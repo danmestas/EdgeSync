@@ -84,7 +84,10 @@ func (c *Checkout) Revert(opts RevertOpts) error {
 }
 
 // revertSinglePath reverts a specific path.
-func (c *Checkout) revertSinglePath(vid libfossil.FslID, pathname string, callback func(string, RevertChange) error) error {
+func (c *Checkout) revertSinglePath(
+	vid libfossil.FslID, pathname string,
+	callback func(string, RevertChange) error,
+) error {
 	var id, rid, chnged, deleted int64
 	err := c.db.QueryRow(`
 		SELECT id, rid, chnged, deleted
@@ -110,7 +113,10 @@ func (c *Checkout) revertSinglePath(vid libfossil.FslID, pathname string, callba
 }
 
 // revertFile handles the revert logic for a single file.
-func (c *Checkout) revertFile(id int64, pathname string, rid int64, callback func(string, RevertChange) error) error {
+func (c *Checkout) revertFile(
+	id int64, pathname string, rid int64,
+	callback func(string, RevertChange) error,
+) error {
 	fullPath, err := c.safePath(pathname)
 	if err != nil {
 		return fmt.Errorf("checkout.Revert: path traversal in %s: %w", pathname, err)

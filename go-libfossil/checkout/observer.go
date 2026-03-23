@@ -72,14 +72,18 @@ type Observer interface {
 // nopObserver is the default observer that does nothing.
 type nopObserver struct{}
 
-func (nopObserver) ExtractStarted(ctx context.Context, _ ExtractStart) context.Context { return ctx }
-func (nopObserver) ExtractFileCompleted(_ context.Context, _ string, _ UpdateChange)   {}
-func (nopObserver) ExtractCompleted(_ context.Context, _ ExtractEnd)                   {}
-func (nopObserver) ScanStarted(ctx context.Context) context.Context                    { return ctx }
-func (nopObserver) ScanCompleted(_ context.Context, _ ScanEnd)                         {}
-func (nopObserver) CommitStarted(ctx context.Context, _ CommitStart) context.Context   { return ctx }
-func (nopObserver) CommitCompleted(_ context.Context, _ CommitEnd)                     {}
-func (nopObserver) Error(_ context.Context, _ error)                                   {}
+func (nopObserver) ExtractStarted(ctx context.Context, _ ExtractStart) context.Context {
+	return ctx
+}
+func (nopObserver) ExtractFileCompleted(_ context.Context, _ string, _ UpdateChange) {}
+func (nopObserver) ExtractCompleted(_ context.Context, _ ExtractEnd)                 {}
+func (nopObserver) ScanStarted(ctx context.Context) context.Context                  { return ctx }
+func (nopObserver) ScanCompleted(_ context.Context, _ ScanEnd)                       {}
+func (nopObserver) CommitStarted(ctx context.Context, _ CommitStart) context.Context {
+	return ctx
+}
+func (nopObserver) CommitCompleted(_ context.Context, _ CommitEnd) {}
+func (nopObserver) Error(_ context.Context, _ error)              {}
 
 // resolveObserver returns obs if non-nil, otherwise nopObserver{}.
 func resolveObserver(obs Observer) Observer {

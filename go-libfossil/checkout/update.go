@@ -94,7 +94,10 @@ func (c *Checkout) processFileUpdates(
 		tgtUUID, inTarget := maps.target[name]
 		ancUUID := maps.ancestor[name]
 
-		change, ferr := c.updateFile(name, curUUID, tgtUUID, ancUUID, inCurrent, inTarget, strategy, opts.DryRun)
+		change, ferr := c.updateFile(
+			name, curUUID, tgtUUID, ancUUID,
+			inCurrent, inTarget, strategy, opts.DryRun,
+		)
 		if ferr != nil {
 			return filesWritten, filesRemoved, conflicts, fmt.Errorf("checkout.Update: %w", ferr)
 		}
@@ -109,6 +112,9 @@ func (c *Checkout) processFileUpdates(
 		case UpdateConflictMerged:
 			filesWritten++
 			conflicts++
+			c.obs.Error(ctx, fmt.Errorf(
+				"checkout.Update: merge conflict in %s", name,
+			))
 		case UpdateRemoved:
 			filesRemoved++
 		}
@@ -117,7 +123,9 @@ func (c *Checkout) processFileUpdates(
 
 		if opts.Callback != nil {
 			if cerr := opts.Callback(name, change); cerr != nil {
-				return filesWritten, filesRemoved, conflicts, fmt.Errorf("checkout.Update: callback for %s: %w", name, cerr)
+				return filesWritten, filesRemoved, conflicts, fmt.Errorf(
+					"checkout.Update: callback for %s: %w", name, cerr,
+				)
 			}
 		}
 	}

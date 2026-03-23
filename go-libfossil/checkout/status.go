@@ -78,7 +78,10 @@ func (c *Checkout) VisitChanges(vid libfossil.FslID, scan bool, fn ChangeVisitor
 		var pathname string
 		var origname sql.NullString
 
-		if err := rows.Scan(&id, &pathname, &chnged, &deleted, &isexe, &islink, &origname, &rid); err != nil {
+		if err := rows.Scan(
+			&id, &pathname, &chnged, &deleted,
+			&isexe, &islink, &origname, &rid,
+		); err != nil {
 			return fmt.Errorf("checkout.VisitChanges: scan: %w", err)
 		}
 

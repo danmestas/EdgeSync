@@ -29,7 +29,10 @@ func (c *Checkout) Manage(opts ManageOpts) (*ManageCounts, error) {
 	for _, path := range opts.Paths {
 		// Check if already tracked
 		var existingID int64
-		err := c.db.QueryRow("SELECT id FROM vfile WHERE vid=? AND pathname=?", int64(vid), path).Scan(&existingID)
+		err := c.db.QueryRow(
+			"SELECT id FROM vfile WHERE vid=? AND pathname=?",
+			int64(vid), path,
+		).Scan(&existingID)
 		if err != nil && err != sql.ErrNoRows {
 			return counts, fmt.Errorf("checkout.Manage: query vfile: %w", err)
 		}
@@ -54,8 +57,15 @@ func (c *Checkout) Manage(opts ManageOpts) (*ManageCounts, error) {
 			return counts, fmt.Errorf("checkout.Manage: read %s: %w", path, err)
 		}
 
-		// Compute hash (use SHA1 for consistency with Fossil legacy repos)
+		// Detect repo hash mode (SHA3 for 64-char UUIDs, SHA1 otherwise).
 		mhash := hash.SHA1(data)
+		var sampleUUID string
+		_ = c.repo.DB().QueryRow(
+			"SELECT uuid FROM blob WHERE size >= 0 LIMIT 1",
+		).Scan(&sampleUUID)
+		if len(sampleUUID) > 40 {
+			mhash = hash.SHA3(data)
+		}
 
 		// Insert into vfile with rid=0 (newly added), chnged=1 (modified)
 		_, err = c.db.Exec(
@@ -97,7 +107,10 @@ func (c *Checkout) Unmanage(opts UnmanageOpts) error {
 		for _, vfileID := range opts.VFileIDs {
 			var rid int64
 			var pathname string
-			err := c.db.QueryRow("SELECT rid, pathname FROM vfile WHERE id=?", int64(vfileID)).Scan(&rid, &pathname)
+			err := c.db.QueryRow(
+				"SELECT rid, pathname FROM vfile WHERE id=?",
+				int64(vfileID),
+			).Scan(&rid, &pathname)
 			if err == sql.ErrNoRows {
 				continue // ID not found, skip
 			}
@@ -116,7 +129,10 @@ func (c *Checkout) Unmanage(opts UnmanageOpts) error {
 	for _, path := range opts.Paths {
 		var vfileID libfossil.FslID
 		var rid int64
-		err := c.db.QueryRow("SELECT id, rid FROM vfile WHERE vid=? AND pathname=?", int64(vid), path).Scan(&vfileID, &rid)
+		err := c.db.QueryRow(
+			"SELECT id, rid FROM vfile WHERE vid=? AND pathname=?",
+			int64(vid), path,
+		).Scan(&vfileID, &rid)
 		if err == sql.ErrNoRows {
 			// Not tracked, skip silently
 			continue
@@ -136,7 +152,10 @@ func (c *Checkout) Unmanage(opts UnmanageOpts) error {
 // unmanageFile handles the logic for a single file:
 // - rid=0: DELETE (newly added, never committed)
 // - rid>0: UPDATE deleted=1 (existing file from repo)
-func (c *Checkout) unmanageFile(vfileID libfossil.FslID, rid int64, pathname string, callback func(string) error) error {
+func (c *Checkout) unmanageFile(
+	vfileID libfossil.FslID, rid int64,
+	pathname string, callback func(string) error,
+) error {
 	if rid == 0 {
 		// Newly added, never committed — remove completely
 		_, err := c.db.Exec("DELETE FROM vfile WHERE id=?", int64(vfileID))
