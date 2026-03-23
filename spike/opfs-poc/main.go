@@ -374,6 +374,9 @@ func doCoCommit(comment, user string) {
 	}
 	log(fmt.Sprintf("committed from OPFS: rid=%d uuid=%s", rid, short))
 	postResult("coCommit", toJSON(map[string]any{"rid": int64(rid), "uuid": uuid}))
+
+	// Notify peers so they pull immediately instead of waiting for poll.
+	publishNotify(currentNATS, uuid)
 }
 
 // --- Agent Handlers ---
@@ -476,8 +479,11 @@ func doStartAgent(natsWsURL string) {
 	if err := startPresence(nc, user); err != nil {
 		log(fmt.Sprintf("[social] presence start failed: %v", err))
 	}
+	if err := startNotify(nc); err != nil {
+		log(fmt.Sprintf("[social] notify start failed: %v", err))
+	}
 
-	log("[agent] running — auto-sync every 10s")
+	log("[agent] running — auto-sync every 10s, instant on peer commits")
 	postResult("agentState", toJSON(map[string]any{"state": "running", "peerId": myPeerID}))
 }
 

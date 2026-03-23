@@ -16,6 +16,7 @@ import (
 const (
 	chatSubject       = "edgesync.chat"
 	presenceSubject   = "edgesync.presence"
+	notifySubject     = "edgesync.notify" // Published after commit, triggers instant pull.
 	heartbeatInterval = 5 * time.Second
 	presenceTimeout   = 15 * time.Second // Evict peers silent longer than this.
 )
@@ -39,6 +40,7 @@ var (
 
 	chatSub       *nats.Subscription
 	presenceSub   *nats.Subscription
+	notifySub     *nats.Subscription
 	heartbeatStop chan struct{}
 
 	// peerLastSeen tracks when each peer last sent a heartbeat.
@@ -186,6 +188,39 @@ func broadcastPeers() {
 	postResult("peers", toJSON(list))
 }
 
+// startNotify subscribes to commit notifications from other peers.
+// When a notification arrives, it triggers an immediate sync via SyncNow.
+func startNotify(nc *nats.Conn) error {
+	if nc == nil {
+		panic("startNotify: nc must not be nil")
+	}
+	var err error
+	notifySub, err = nc.Subscribe(notifySubject, func(msg *nats.Msg) {
+		// Another peer committed — trigger immediate sync instead of
+		// waiting for the 10s poll timer.
+		if currentAgent != nil {
+			log("[notify] peer committed, syncing now...")
+			currentAgent.SyncNow()
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("notify subscribe: %w", err)
+	}
+	return nil
+}
+
+// publishNotify announces a new commit to all connected peers.
+// Called after CommitAll succeeds.
+func publishNotify(nc *nats.Conn, uuid string) {
+	if nc == nil {
+		return
+	}
+	data := []byte(fmt.Sprintf(`{"from":"%s","uuid":"%s"}`, myPeerID, uuid))
+	if err := nc.Publish(notifySubject, data); err != nil {
+		log(fmt.Sprintf("[notify] publish error: %v", err))
+	}
+}
+
 func stopSocial() {
 	if chatSub != nil {
 		chatSub.Unsubscribe()
@@ -194,6 +229,10 @@ func stopSocial() {
 	if presenceSub != nil {
 		presenceSub.Unsubscribe()
 		presenceSub = nil
+	}
+	if notifySub != nil {
+		notifySub.Unsubscribe()
+		notifySub = nil
 	}
 	if heartbeatStop != nil {
 		close(heartbeatStop)

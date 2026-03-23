@@ -29,7 +29,6 @@ f.txt
 .agents/
 skills-lock.json
 .DS_Store
+# WASM build artifacts (built by serve.go at runtime)
 spike/opfs-poc/poc.wasm
 spike/opfs-poc/wasm_exec.js
-*.wasm
-opfs-poc
