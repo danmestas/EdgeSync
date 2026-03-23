@@ -1,11 +1,15 @@
 package checkout
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"github.com/dmestas/edgesync/go-libfossil/blob"
+	"github.com/dmestas/edgesync/go-libfossil/hash"
 	"github.com/dmestas/edgesync/go-libfossil/manifest"
 )
 
@@ -83,4 +87,179 @@ func (c *Checkout) UnloadVFile(rid libfossil.FslID) error {
 	}
 
 	return nil
+}
+
+// ScanChanges detects modified and missing files in the checkout.
+// Walks the vfile table, checks each file on disk, and updates vfile.chnged accordingly.
+//
+// If flags includes ScanHash, hashes file content and compares to vfile.mhash.
+// Otherwise, uses mtime-based detection (future enhancement).
+//
+// Panics if c is nil (TigerStyle precondition).
+func (c *Checkout) ScanChanges(flags ScanFlags) error {
+	if c == nil {
+		panic("checkout.ScanChanges: nil *Checkout")
+	}
+
+	// Start observer
+	ctx := c.obs.ScanStarted(context.Background())
+
+	var filesScanned, filesChanged, filesMissing int
+
+	defer func() {
+		c.obs.ScanCompleted(ctx, ScanEnd{
+			FilesScanned: filesScanned,
+			FilesChanged: filesChanged,
+			FilesMissing: filesMissing,
+		})
+	}()
+
+	// Get current checkout version
+	rid, _, err := c.Version()
+	if err != nil {
+		return fmt.Errorf("checkout.ScanChanges: %w", err)
+	}
+
+	// Query all vfile rows for this version
+	rows, err := c.db.Query(`
+		SELECT id, pathname, rid, mhash, chnged, deleted FROM vfile WHERE vid = ?
+	`, int64(rid))
+	if err != nil {
+		return fmt.Errorf("checkout.ScanChanges: query vfile: %w", err)
+	}
+
+	// Collect all vfile entries first (to avoid database lock during iteration)
+	type vfileEntry struct {
+		id       int64
+		pathname string
+		blobRid  int64
+		mhash    string
+		chnged   int64
+		deleted  int64
+	}
+	var entries []vfileEntry
+
+	for rows.Next() {
+		var e vfileEntry
+		if err := rows.Scan(&e.id, &e.pathname, &e.blobRid, &e.mhash, &e.chnged, &e.deleted); err != nil {
+			rows.Close()
+			return fmt.Errorf("checkout.ScanChanges: scan vfile row: %w", err)
+		}
+		entries = append(entries, e)
+	}
+	rows.Close()
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("checkout.ScanChanges: iterate vfile rows: %w", err)
+	}
+
+	// Process each vfile entry
+	for _, e := range entries {
+		filesScanned++
+
+		// Skip if already deleted
+		if e.deleted != 0 {
+			continue
+		}
+
+		// Full path for file
+		fullPath := filepath.Join(c.dir, e.pathname)
+
+		// Check if file exists on disk
+		data, err := c.env.Storage.ReadFile(fullPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// File is missing — note it but don't update chnged
+				filesMissing++
+				continue
+			}
+			// Other read error
+			return fmt.Errorf("checkout.ScanChanges: read %s: %w", fullPath, err)
+		}
+
+		// If ScanHash flag is set, hash the file content
+		if flags&ScanHash != 0 {
+			// Compute content hash using the same algorithm as mhash
+			diskHash := hash.ContentHash(data, e.mhash)
+
+			// Compare hashes
+			if diskHash != e.mhash {
+				// File has been modified
+				if e.chnged == 0 {
+					// Mark as changed
+					_, err := c.db.Exec("UPDATE vfile SET chnged = 1 WHERE id = ?", e.id)
+					if err != nil {
+						return fmt.Errorf("checkout.ScanChanges: update chnged for %s: %w", e.pathname, err)
+					}
+					filesChanged++
+				}
+			} else {
+				// File matches — reset chnged if it was set
+				if e.chnged != 0 {
+					_, err := c.db.Exec("UPDATE vfile SET chnged = 0 WHERE id = ?", e.id)
+					if err != nil {
+						return fmt.Errorf("checkout.ScanChanges: reset chnged for %s: %w", e.pathname, err)
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// walkDir recursively lists all files under a directory via Storage.ReadDir.
+// Returns a map of relative paths (relative to c.dir) to true.
+// This helper prepares for detecting EXTRA files (files on disk not in vfile).
+//
+// Panics if c is nil (TigerStyle precondition).
+func (c *Checkout) walkDir(dir string) (map[string]bool, error) {
+	if c == nil {
+		panic("checkout.walkDir: nil *Checkout")
+	}
+
+	result := make(map[string]bool)
+
+	var walk func(string) error
+	walk = func(currentPath string) error {
+		entries, err := c.env.Storage.ReadDir(currentPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// Directory doesn't exist — not an error
+				return nil
+			}
+			return fmt.Errorf("walkDir: read %s: %w", currentPath, err)
+		}
+
+		for _, entry := range entries {
+			fullPath := filepath.Join(currentPath, entry.Name())
+
+			// Skip checkout database
+			if entry.Name() == ".fslckout" {
+				continue
+			}
+
+			if entry.IsDir() {
+				// Recurse into subdirectory
+				if err := walk(fullPath); err != nil {
+					return err
+				}
+			} else {
+				// Regular file — compute relative path
+				relPath, err := filepath.Rel(c.dir, fullPath)
+				if err != nil {
+					return fmt.Errorf("walkDir: compute relative path for %s: %w", fullPath, err)
+				}
+				result[relPath] = true
+			}
+		}
+
+		return nil
+	}
+
+	if err := walk(dir); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }

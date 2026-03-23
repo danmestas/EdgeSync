@@ -1,7 +1,10 @@
 package checkout
 
 import (
+	"context"
 	"testing"
+
+	"github.com/dmestas/edgesync/go-libfossil/simio"
 )
 
 func TestLoadVFile(t *testing.T) {
@@ -171,5 +174,131 @@ func TestLoadVFileRIDAndMRIDSet(t *testing.T) {
 		if ridVal != mridVal {
 			t.Errorf("file %s: rid=%d != mrid=%d (expected equal)", name, ridVal, mridVal)
 		}
+	}
+}
+
+func TestScanChangesModified(t *testing.T) {
+	r, cleanup := newTestRepoWithCheckin(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	co, err := Create(r, dir, CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer co.Close()
+
+	rid, _, _ := co.Version()
+
+	// Extract files to MemStorage
+	mem := simio.NewMemStorage()
+	co.env = &simio.Env{Storage: mem, Clock: simio.RealClock{}, Rand: simio.CryptoRand{}}
+	co.dir = "/checkout"
+	if err := co.Extract(rid, ExtractOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Modify a file
+	if err := mem.WriteFile("/checkout/hello.txt", []byte("modified content\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Scan
+	if err := co.ScanChanges(ScanHash); err != nil {
+		t.Fatal(err)
+	}
+
+	// Check vfile.chnged for hello.txt
+	var chnged int
+	if err := co.db.QueryRow("SELECT chnged FROM vfile WHERE vid=? AND pathname='hello.txt'", int64(rid)).Scan(&chnged); err != nil {
+		t.Fatal(err)
+	}
+	if chnged != 1 {
+		t.Fatalf("hello.txt chnged = %d, want 1", chnged)
+	}
+
+	// Unmodified files should remain chnged=0
+	if err := co.db.QueryRow("SELECT chnged FROM vfile WHERE vid=? AND pathname='README.md'", int64(rid)).Scan(&chnged); err != nil {
+		t.Fatal(err)
+	}
+	if chnged != 0 {
+		t.Fatalf("README.md chnged = %d, want 0", chnged)
+	}
+}
+
+func TestScanChangesMissing(t *testing.T) {
+	r, cleanup := newTestRepoWithCheckin(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	co, err := Create(r, dir, CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer co.Close()
+
+	rid, _, _ := co.Version()
+	mem := simio.NewMemStorage()
+	co.env = &simio.Env{Storage: mem, Clock: simio.RealClock{}, Rand: simio.CryptoRand{}}
+	co.dir = "/checkout"
+	if err := co.Extract(rid, ExtractOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete a file from MemStorage
+	if err := mem.Remove("/checkout/hello.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Scan should not error (missing files are noted, not fatal)
+	if err := co.ScanChanges(ScanHash); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestScanChangesObserver(t *testing.T) {
+	r, cleanup := newTestRepoWithCheckin(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	co, err := Create(r, dir, CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer co.Close()
+
+	rid, _, _ := co.Version()
+	mem := simio.NewMemStorage()
+
+	var scanEnd *ScanEnd
+	co.obs = &testObserver{
+		onScanStarted: func(ctx context.Context) context.Context {
+			return ctx
+		},
+		onScanCompleted: func(ctx context.Context, e ScanEnd) {
+			scanEnd = &e
+		},
+	}
+	co.env = &simio.Env{Storage: mem, Clock: simio.RealClock{}, Rand: simio.CryptoRand{}}
+	co.dir = "/checkout"
+	if err := co.Extract(rid, ExtractOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mem.WriteFile("/checkout/hello.txt", []byte("changed"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := co.ScanChanges(ScanHash); err != nil {
+		t.Fatal(err)
+	}
+
+	if scanEnd == nil {
+		t.Fatal("observer ScanCompleted not called")
+	}
+	if scanEnd.FilesScanned != 3 {
+		t.Fatalf("scanned = %d, want 3", scanEnd.FilesScanned)
+	}
+	if scanEnd.FilesChanged != 1 {
+		t.Fatalf("changed = %d, want 1", scanEnd.FilesChanged)
 	}
 }
