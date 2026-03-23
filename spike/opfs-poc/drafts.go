@@ -40,6 +40,7 @@ func startDraftSync(nc *nats.Conn) error {
 			return
 		}
 		// Write the peer's content to our OPFS checkout.
+		log(fmt.Sprintf("[draft] received %s from %s (%d bytes)", dm.Path, dm.From, len(dm.Content)))
 		if currentCheckout != nil {
 			if err := currentCheckout.WriteFile(dm.Path, dm.Content); err != nil {
 				log(fmt.Sprintf("[draft] apply %s failed: %v", dm.Path, err))
