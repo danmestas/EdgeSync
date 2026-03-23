@@ -31,3 +31,5 @@ skills-lock.json
 .DS_Store
 spike/opfs-poc/poc.wasm
 spike/opfs-poc/wasm_exec.js
+*.wasm
+opfs-poc
