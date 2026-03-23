@@ -17,7 +17,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/simio"
 	"github.com/dmestas/edgesync/go-libfossil/stash"
 	"github.com/dmestas/edgesync/go-libfossil/undo"
-	_ "modernc.org/sqlite"
+	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
 )
 
 // setupCheckoutDB creates a .fslckout database with vvar, vfile, and vmerge tables.

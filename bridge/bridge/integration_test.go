@@ -15,6 +15,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
 	"github.com/dmestas/edgesync/go-libfossil/testutil"
+	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
 )
 
 // startFossilServer starts a fossil server on a free port and returns the URL

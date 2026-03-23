@@ -14,10 +14,10 @@ bridge:
 	cd bridge && go build -buildvcs=false -o ../bin/bridge ./cmd/bridge
 
 wasm-wasi:
-	GOOS=wasip1 GOARCH=wasm go build -buildvcs=false -tags ncruces -o bin/leaf.wasm ./leaf/cmd/leaf/
+	GOOS=wasip1 GOARCH=wasm go build -buildvcs=false -o bin/leaf.wasm ./leaf/cmd/leaf/
 
 wasm-browser:
-	GOOS=js GOARCH=wasm go build -buildvcs=false -tags ncruces -o bin/leaf-browser.wasm ./leaf/cmd/wasm/
+	GOOS=js GOARCH=wasm go build -buildvcs=false -o bin/leaf-browser.wasm ./leaf/cmd/wasm/
 	cp "$$(go env GOROOT)/lib/wasm/wasm_exec.js" bin/
 
 wasm: wasm-wasi wasm-browser
@@ -79,7 +79,7 @@ dst-hostile:
 dst-drivers:
 	@echo "=== DST driver sweep (4 seeds x hostile x 3 drivers) ==="
 	@fail=0; \
-	for driver in "default:" "ncruces:-tags=ncruces" "mattn:-tags=mattn"; do \
+	for driver in "default:" "ncruces:-tags=test_ncruces" "mattn:-tags=test_mattn"; do \
 		name=$${driver%%:*}; \
 		tags=$${driver#*:}; \
 		cgo=0; \
@@ -113,9 +113,9 @@ sim-full:
 
 drivers:
 	@echo "=== modernc (default) ==="
-	go test ./go-libfossil/... -count=1
+	go test -buildvcs=false ./go-libfossil/... -count=1
 	@echo "=== ncruces ==="
-	go test -tags ncruces ./go-libfossil/... -count=1
+	go test -buildvcs=false -tags test_ncruces ./go-libfossil/... -count=1
 	@echo "=== mattn ==="
-	CGO_ENABLED=1 go test -tags mattn ./go-libfossil/... -count=1
+	CGO_ENABLED=1 go test -buildvcs=false -tags test_mattn ./go-libfossil/... -count=1
 	@echo "=== all drivers passed ==="

@@ -9,6 +9,8 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/db"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
+
+	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
 )
 
 func createMasterRepo(t *testing.T) *repo.Repo {

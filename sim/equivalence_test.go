@@ -17,6 +17,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/simio"
 	"github.com/dmestas/edgesync/go-libfossil/sync"
 	"github.com/dmestas/edgesync/go-libfossil/tag"
+	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
 )
 
 // checkinFiles is a convenience type for test data.

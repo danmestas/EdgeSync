@@ -18,6 +18,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/testutil"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
 	"github.com/nats-io/nats.go"
+	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
 )
 
 // startFossilServer starts a fossil server on a free port and returns the URL

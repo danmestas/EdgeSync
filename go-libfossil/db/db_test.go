@@ -1,4 +1,4 @@
-package db
+package db_test
 
 import (
 	"fmt"
@@ -7,12 +7,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dmestas/edgesync/go-libfossil/db"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
+	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
 )
 
 func TestOpenClose(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
-	d, err := Open(path)
+	d, err := db.Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -30,7 +32,7 @@ func TestOpenClose(t *testing.T) {
 
 func TestExec(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
-	d, err := Open(path)
+	d, err := db.Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -58,7 +60,7 @@ func TestExec(t *testing.T) {
 
 func TestApplicationID(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
-	d, err := Open(path)
+	d, err := db.Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -80,16 +82,18 @@ func TestApplicationID(t *testing.T) {
 
 func TestTransaction(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
-	d, err := Open(path)
+	d, err := db.Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	defer d.Close()
 
-	d.Exec("CREATE TABLE test(id INTEGER PRIMARY KEY, val TEXT)")
+	if _, err := d.Exec("CREATE TABLE test(id INTEGER PRIMARY KEY, val TEXT)"); err != nil {
+		t.Fatalf("Exec CREATE: %v", err)
+	}
 
 	// Commit case
-	err = d.WithTx(func(tx *Tx) error {
+	err = d.WithTx(func(tx *db.Tx) error {
 		_, err := tx.Exec("INSERT INTO test(val) VALUES(?)", "committed")
 		return err
 	})
@@ -98,21 +102,27 @@ func TestTransaction(t *testing.T) {
 	}
 
 	var count int
-	d.QueryRow("SELECT count(*) FROM test").Scan(&count)
+	if err := d.QueryRow("SELECT count(*) FROM test").Scan(&count); err != nil {
+		t.Fatalf("count query: %v", err)
+	}
 	if count != 1 {
 		t.Fatalf("count after commit = %d, want 1", count)
 	}
 
 	// Rollback case
-	err = d.WithTx(func(tx *Tx) error {
-		tx.Exec("INSERT INTO test(val) VALUES(?)", "rolled-back")
+	err = d.WithTx(func(tx *db.Tx) error {
+		if _, err := tx.Exec("INSERT INTO test(val) VALUES(?)", "rolled-back"); err != nil {
+			return err
+		}
 		return fmt.Errorf("deliberate error")
 	})
 	if err == nil {
 		t.Fatal("WithTx should return error")
 	}
 
-	d.QueryRow("SELECT count(*) FROM test").Scan(&count)
+	if err := d.QueryRow("SELECT count(*) FROM test").Scan(&count); err != nil {
+		t.Fatalf("count query after rollback: %v", err)
+	}
 	if count != 1 {
 		t.Fatalf("count after rollback = %d, want 1", count)
 	}
@@ -120,13 +130,13 @@ func TestTransaction(t *testing.T) {
 
 func TestCreateRepoSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.fossil")
-	d, err := Open(path)
+	d, err := db.Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	defer d.Close()
 
-	err = CreateRepoSchema(d)
+	err = db.CreateRepoSchema(d)
 	if err != nil {
 		t.Fatalf("CreateRepoSchema: %v", err)
 	}
@@ -194,22 +204,22 @@ func TestCreateRepoSchema_FossilValidation(t *testing.T) {
 	}
 
 	path := filepath.Join(t.TempDir(), "test.fossil")
-	d, err := Open(path)
+	d, err := db.Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 
-	err = CreateRepoSchema(d)
+	err = db.CreateRepoSchema(d)
 	if err != nil {
 		t.Fatalf("CreateRepoSchema: %v", err)
 	}
 
-	err = SeedConfig(d, simio.CryptoRand{})
+	err = db.SeedConfig(d, simio.CryptoRand{})
 	if err != nil {
 		t.Fatalf("SeedConfig: %v", err)
 	}
 
-	err = SeedUser(d, "testuser")
+	err = db.SeedUser(d, "testuser")
 	if err != nil {
 		t.Fatalf("SeedUser: %v", err)
 	}
@@ -224,14 +234,18 @@ func TestCreateRepoSchema_FossilValidation(t *testing.T) {
 	}
 }
 
-func TestDriverConfig(t *testing.T) {
-	name := driverName()
-	t.Logf("active driver: %s", name)
-	if name == "" {
-		t.Fatal("driverName() returned empty string")
+func TestRegisterDriver(t *testing.T) {
+	// Driver should already be registered by testdriver import (added in Task 3).
+	cfg := db.RegisteredDriver()
+	if cfg == nil {
+		t.Fatal("no driver registered")
 	}
+	if cfg.Name == "" {
+		t.Fatal("registered driver name is empty")
+	}
+	t.Logf("active driver: %s", cfg.Name)
 
-	dsn := buildDSN("/tmp/test.db", defaultPragmas())
+	dsn := cfg.BuildDSN("/tmp/test.db", db.DefaultPragmas())
 	t.Logf("DSN: %s", dsn)
 	if !strings.Contains(dsn, "journal_mode") {
 		t.Fatal("DSN missing journal_mode pragma")
@@ -243,7 +257,7 @@ func TestDriverConfig(t *testing.T) {
 
 func TestOpenWithDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
-	d, err := Open(path)
+	d, err := db.Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -255,7 +269,9 @@ func TestOpenWithDefaults(t *testing.T) {
 	t.Logf("opened with driver: %s", d.Driver())
 
 	var mode string
-	d.QueryRow("PRAGMA journal_mode").Scan(&mode)
+	if err := d.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatalf("journal_mode query: %v", err)
+	}
 	if mode != "wal" {
 		t.Fatalf("journal_mode = %q, want wal", mode)
 	}
@@ -263,7 +279,7 @@ func TestOpenWithDefaults(t *testing.T) {
 
 func TestOpenWithCustomPragmas(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
-	d, err := OpenWith(path, OpenConfig{
+	d, err := db.OpenWith(path, db.OpenConfig{
 		Pragmas: map[string]string{
 			"cache_size": "-2000",
 		},
@@ -274,7 +290,9 @@ func TestOpenWithCustomPragmas(t *testing.T) {
 	defer d.Close()
 
 	var mode string
-	d.QueryRow("PRAGMA journal_mode").Scan(&mode)
+	if err := d.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatalf("journal_mode query: %v", err)
+	}
 	if mode != "wal" {
 		t.Fatalf("journal_mode = %q, want wal (default should still apply)", mode)
 	}

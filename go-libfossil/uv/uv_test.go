@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dmestas/edgesync/go-libfossil/db"
+	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
 )
 
 // openTestDB creates a temporary repo DB with schema for testing.

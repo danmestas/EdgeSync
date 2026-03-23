@@ -10,7 +10,8 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/manifest"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
-	_ "modernc.org/sqlite"
+
+	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
 )
 
 func TestRepoCoUpdatesCheckoutDB(t *testing.T) {

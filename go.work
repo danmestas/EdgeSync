@@ -5,5 +5,8 @@ use (
 	./bridge
 	./dst
 	./go-libfossil
+	./go-libfossil/db/driver/mattn
+	./go-libfossil/db/driver/modernc
+	./go-libfossil/db/driver/ncruces
 	./leaf
 )

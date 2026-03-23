@@ -9,6 +9,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/manifest"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
+	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
 	"github.com/dmestas/edgesync/go-libfossil/tag"
 )
 

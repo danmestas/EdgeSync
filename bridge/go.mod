@@ -1,17 +1,22 @@
 module github.com/dmestas/edgesync/bridge
 
-go 1.25.4
+go 1.26.0
 
 require (
 	github.com/dmestas/edgesync/go-libfossil v0.0.0
+	github.com/dmestas/edgesync/go-libfossil/db/driver/modernc v0.0.0-00010101000000-000000000000
 	github.com/dmestas/edgesync/leaf v0.0.0
 	github.com/nats-io/nats-server/v2 v2.12.5
 	github.com/nats-io/nats.go v1.49.0
 )
 
-replace github.com/dmestas/edgesync/go-libfossil => ../go-libfossil
-
-replace github.com/dmestas/edgesync/leaf => ../leaf
+replace (
+	github.com/dmestas/edgesync/go-libfossil => ../go-libfossil
+	github.com/dmestas/edgesync/go-libfossil/db/driver/mattn => ../go-libfossil/db/driver/mattn
+	github.com/dmestas/edgesync/go-libfossil/db/driver/modernc => ../go-libfossil/db/driver/modernc
+	github.com/dmestas/edgesync/go-libfossil/db/driver/ncruces => ../go-libfossil/db/driver/ncruces
+	github.com/dmestas/edgesync/leaf => ../leaf
+)
 
 require (
 	github.com/antithesishq/antithesis-sdk-go v0.6.0-default-no-op // indirect

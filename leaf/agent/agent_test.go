@@ -10,6 +10,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/simio"
 	"github.com/dmestas/edgesync/go-libfossil/sync"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
+	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
 )
 
 func TestConfigDefaults(t *testing.T) {
