@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"strconv"
 
+	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/content"
+	"github.com/dmestas/edgesync/go-libfossil/db"
 	"github.com/dmestas/edgesync/go-libfossil/manifest"
+	"github.com/dmestas/edgesync/go-libfossil/repo"
 )
 
 // maxBinaryProbe is the number of bytes checked for null bytes to detect binary files.
@@ -15,6 +18,9 @@ const maxBinaryProbe = 8192
 
 // isBinary returns true if data contains a null byte in the first maxBinaryProbe bytes.
 func isBinary(data []byte) bool {
+	if data == nil {
+		panic("isBinary: nil data")
+	}
 	probe := data
 	if len(probe) > maxBinaryProbe {
 		probe = probe[:maxBinaryProbe]
@@ -32,9 +38,9 @@ func (idx *Index) RebuildIndex() error {
 		panic("search.RebuildIndex: nil *Index")
 	}
 
-	db := idx.repo.DB()
+	d := idx.repo.DB()
 
-	tip, err := trunkTip(db)
+	tip, err := trunkTip(d)
 	if err != nil {
 		return fmt.Errorf("search.RebuildIndex: %w", err)
 	}
@@ -42,7 +48,7 @@ func (idx *Index) RebuildIndex() error {
 		return nil // empty repo, nothing to index
 	}
 
-	current, err := indexedRID(db)
+	current, err := indexedRID(d)
 	if err != nil {
 		return fmt.Errorf("search.RebuildIndex: %w", err)
 	}
@@ -50,33 +56,50 @@ func (idx *Index) RebuildIndex() error {
 		return nil // already up to date
 	}
 
-	// Full replace: delete all, re-insert
-	if _, err := db.Exec("DELETE FROM fts_content"); err != nil {
+	if err := rebuildPopulate(idx.repo, d, tip); err != nil {
+		return err
+	}
+
+	// Postcondition: verify the meta update took hold.
+	stored, err := indexedRID(d)
+	if err != nil {
+		return fmt.Errorf("search.RebuildIndex: verify meta: %w", err)
+	}
+	if stored != tip {
+		panic("search.RebuildIndex: postcondition: indexed_rid != tip after update")
+	}
+
+	return nil
+}
+
+// rebuildPopulate clears fts_content, walks the manifest at tip,
+// expands each text blob, and inserts into the FTS index.
+func rebuildPopulate(r *repo.Repo, d db.Querier, tip libfossil.FslID) error {
+	if _, err := d.Exec("DELETE FROM fts_content"); err != nil {
 		return fmt.Errorf("search.RebuildIndex: clear: %w", err)
 	}
 
-	files, err := manifest.ListFiles(idx.repo, tip)
+	files, err := manifest.ListFiles(r, tip)
 	if err != nil {
 		return fmt.Errorf("search.RebuildIndex: list files: %w", err)
 	}
 
 	for _, f := range files {
-		rid, ok := blob.Exists(db, f.UUID)
+		rid, ok := blob.Exists(d, f.UUID)
 		if !ok {
 			continue // phantom — blob not yet received
 		}
 
-		data, err := content.Expand(db, rid)
+		data, err := content.Expand(d, rid)
 		if err != nil {
-			// Phantom or corrupt — skip
-			continue
+			continue // phantom or corrupt — skip
 		}
 
 		if isBinary(data) {
 			continue
 		}
 
-		if _, err := db.Exec(
+		if _, err := d.Exec(
 			"INSERT INTO fts_content(path, content) VALUES(?, ?)",
 			f.Name, string(data),
 		); err != nil {
@@ -84,8 +107,7 @@ func (idx *Index) RebuildIndex() error {
 		}
 	}
 
-	// Update indexed_rid
-	if _, err := db.Exec(
+	if _, err := d.Exec(
 		"INSERT OR REPLACE INTO fts_meta(key, value) VALUES('indexed_rid', ?)",
 		strconv.FormatInt(int64(tip), 10),
 	); err != nil {

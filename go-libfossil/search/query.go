@@ -57,8 +57,24 @@ func (idx *Index) Search(q Query) ([]Result, error) {
 	return results, nil
 }
 
+// maxHitsPerFile caps the number of matches returned from a single file.
+// Prevents unbounded growth when a term appears on every line.
+const maxHitsPerFile = 1000
+
 // findMatches locates all occurrences of term within fileContent and returns Results.
+// Case-insensitive because FTS5 trigram matching is case-insensitive — post-filtering
+// must match the same semantics to avoid false negatives.
 func findMatches(path, fileContent, term string, contextLines int) []Result {
+	if path == "" {
+		panic("findMatches: empty path")
+	}
+	if term == "" {
+		panic("findMatches: empty term")
+	}
+	if contextLines < 0 {
+		panic("findMatches: negative contextLines")
+	}
+
 	lines := strings.Split(fileContent, "\n")
 	lowerTerm := strings.ToLower(term)
 	var results []Result
@@ -91,6 +107,9 @@ func findMatches(path, fileContent, term string, contextLines int) []Result {
 		}
 
 		results = append(results, r)
+		if len(results) >= maxHitsPerFile {
+			break
+		}
 	}
 
 	return results

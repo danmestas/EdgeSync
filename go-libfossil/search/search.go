@@ -43,6 +43,9 @@ func (idx *Index) Drop() error {
 	return nil
 }
 
+// ensureSchema creates FTS5 and metadata tables if they don't already exist.
+// Idempotent — safe to call on every Open because CREATE IF NOT EXISTS is a no-op
+// when tables are present, avoiding the need for a separate migration path.
 func ensureSchema(r *repo.Repo) error {
 	db := r.DB()
 	stmts := []string{

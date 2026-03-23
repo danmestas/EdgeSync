@@ -31,6 +31,9 @@ func trunkTip(q db.Querier) (libfossil.FslID, error) {
 	if err != nil {
 		return 0, fmt.Errorf("trunkTip: %w", err)
 	}
+	if rid <= 0 {
+		panic("search.trunkTip: postcondition: rid must be positive when row found")
+	}
 
 	return libfossil.FslID(rid), nil
 }
