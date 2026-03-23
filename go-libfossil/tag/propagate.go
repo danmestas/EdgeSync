@@ -26,9 +26,19 @@ func propagate(q db.Querier, tagid int64, tagType int, origID libfossil.FslID, m
 	heap.Init(pq)
 	heap.Push(pq, &queueItem{rid: pid, mtime: 0.0})
 
+	// Guard against DAG cycles or pathologically deep chains.
+	// Fossil repos typically have <100K checkins; 1M is a safe upper bound.
+	const maxIterations = 1_000_000
+
+	// Visited set prevents re-processing nodes reachable via multiple paths.
 	visited := make(map[libfossil.FslID]bool)
 
+	iterations := 0
 	for pq.Len() > 0 {
+		iterations++
+		if iterations > maxIterations {
+			return fmt.Errorf("tag.propagate: exceeded %d iterations (possible cycle)", maxIterations)
+		}
 		item := heap.Pop(pq).(*queueItem)
 		currentRid := item.rid
 
@@ -156,14 +166,14 @@ func (pq mtimeQueue) Swap(i, j int) {
 	pq[j].index = j
 }
 
-func (pq *mtimeQueue) Push(x interface{}) {
+func (pq *mtimeQueue) Push(x any) {
 	n := len(*pq)
 	item := x.(*queueItem)
 	item.index = n
 	*pq = append(*pq, item)
 }
 
-func (pq *mtimeQueue) Pop() interface{} {
+func (pq *mtimeQueue) Pop() any {
 	old := *pq
 	n := len(old)
 	item := old[n-1]

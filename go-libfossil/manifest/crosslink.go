@@ -95,14 +95,14 @@ func Crosslink(r *repo.Repo) (int, error) {
 	for _, rid := range ctrlCandidates {
 		data, err := content.Expand(r.DB(), rid)
 		if err != nil {
-			continue
+			continue // raw data blob or phantom — not a manifest
 		}
 		d, err := deck.Parse(data)
 		if err != nil {
-			continue
+			continue // not a valid manifest card format
 		}
 		if d.Type != deck.Control {
-			continue
+			continue // checkin or other type — handled in first pass
 		}
 		if err := crosslinkControl(r, rid, d); err != nil {
 			return linked, fmt.Errorf("manifest.Crosslink ctrl rid=%d: %w", rid, err)
@@ -152,7 +152,9 @@ func crosslinkOne(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
 			if err := tx.QueryRow("SELECT rid FROM blob WHERE uuid=?", parentUUID).Scan(&parentRid); err != nil {
 				continue
 			}
-			tx.Exec("DELETE FROM leaf WHERE rid=?", parentRid)
+			if _, err := tx.Exec("DELETE FROM leaf WHERE rid=?", parentRid); err != nil {
+				return fmt.Errorf("leaf delete parent %d: %w", parentRid, err)
+			}
 		}
 
 		// mlink — file mappings

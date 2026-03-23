@@ -47,6 +47,9 @@ func AddTag(r *repo.Repo, opts TagOpts) (libfossil.FslID, error) {
 	if opts.TagName == "" {
 		panic("tag.AddTag: opts.TagName must not be empty")
 	}
+	if opts.TargetRID <= 0 {
+		panic("tag.AddTag: opts.TargetRID must be positive")
+	}
 	if opts.Time.IsZero() {
 		opts.Time = time.Now().UTC()
 	}
@@ -164,7 +167,9 @@ func ApplyTag(r *repo.Repo, opts ApplyOpts) error {
 
 		// Special: bgcolor updates event table.
 		if opts.TagName == "bgcolor" && opts.TagType == TagPropagating {
-			tx.Exec("UPDATE event SET bgcolor=? WHERE objid=?", opts.Value, opts.TargetRID)
+			if _, err := tx.Exec("UPDATE event SET bgcolor=? WHERE objid=?", opts.Value, opts.TargetRID); err != nil {
+				return fmt.Errorf("bgcolor update: %w", err)
+			}
 		}
 
 		if opts.TagType == TagPropagating || opts.TagType == TagCancel {
