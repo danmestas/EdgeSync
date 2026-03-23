@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dmestas/edgesync/go-libfossil/deck"
 	"github.com/dmestas/edgesync/go-libfossil/manifest"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/search"
@@ -476,5 +477,88 @@ func TestSearch_MaxResults(t *testing.T) {
 	}
 	if len(results) > 3 {
 		t.Fatalf("expected at most 3 results, got %d", len(results))
+	}
+}
+
+func TestStaleAfterNewCheckin(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Search implementation (Task 4)")
+	}
+	r := newTestRepo(t)
+
+	// First checkin
+	rid1, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "a.txt", Content: []byte("alpha content")}},
+		Comment: "first",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := search.Open(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.RebuildIndex(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify "alpha" is searchable
+	results, err := idx.Search(search.Query{Term: "alpha"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for alpha, got %d", len(results))
+	}
+
+	// Second checkin adds new file with sym-trunk tag to advance the trunk pointer
+	_, _, err = manifest.Checkin(r, manifest.CheckinOpts{
+		Files: []manifest.File{
+			{Name: "a.txt", Content: []byte("alpha content")},
+			{Name: "b.txt", Content: []byte("bravo content")},
+		},
+		Comment: "second",
+		User:    "test",
+		Parent:  rid1,
+		Tags: []deck.TagCard{
+			{Type: deck.TagSingleton, Name: "sym-trunk", UUID: "*"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should be stale now
+	needs, err := idx.NeedsReindex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !needs {
+		t.Fatal("expected NeedsReindex=true after second checkin")
+	}
+
+	// Reindex
+	if err := idx.RebuildIndex(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Now "bravo" should be searchable
+	results, err = idx.Search(search.Query{Term: "bravo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for bravo, got %d", len(results))
+	}
+
+	// And NeedsReindex is false again
+	needs, err = idx.NeedsReindex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if needs {
+		t.Fatal("expected NeedsReindex=false after reindex")
 	}
 }
