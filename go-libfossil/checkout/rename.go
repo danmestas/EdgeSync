@@ -102,7 +102,7 @@ func (c *Checkout) Rename(opts RenameOpts) error {
 	// Call callback if provided
 	if opts.Callback != nil {
 		if err := opts.Callback(opts.From, opts.To); err != nil {
-			return err
+			return fmt.Errorf("checkout.Rename: callback: %w", err)
 		}
 	}
 

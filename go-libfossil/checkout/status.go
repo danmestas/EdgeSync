@@ -109,7 +109,7 @@ func (c *Checkout) VisitChanges(vid libfossil.FslID, scan bool, fn ChangeVisitor
 
 		// Call visitor function
 		if err := fn(entry); err != nil {
-			return err
+			return fmt.Errorf("checkout.VisitChanges: visitor for %s: %w", pathname, err)
 		}
 	}
 

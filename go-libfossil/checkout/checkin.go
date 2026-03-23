@@ -26,7 +26,7 @@ func (c *Checkout) Enqueue(opts EnqueueOpts) error {
 		c.checkinQueue[p] = true
 		if opts.Callback != nil {
 			if err := opts.Callback(p); err != nil {
-				return err
+				return fmt.Errorf("checkout.Enqueue: callback for %s: %w", p, err)
 			}
 		}
 	}

@@ -35,7 +35,7 @@ func (c *Checkout) Revert(opts RevertOpts) error {
 		// We'll iterate over each path to avoid complex IN clause handling
 		for _, path := range opts.Paths {
 			if err := c.revertSinglePath(vid, path, opts.Callback); err != nil {
-				return err
+				return fmt.Errorf("checkout.Revert: %w", err)
 			}
 		}
 		return nil
@@ -76,7 +76,7 @@ func (c *Checkout) Revert(opts RevertOpts) error {
 	// Now process each file (safe to DELETE now that query is closed)
 	for _, fi := range filesToRevert {
 		if err := c.revertFile(fi.id, fi.pathname, fi.rid, opts.Callback); err != nil {
-			return err
+			return fmt.Errorf("checkout.Revert: %w", err)
 		}
 	}
 
@@ -129,7 +129,7 @@ func (c *Checkout) revertFile(id int64, pathname string, rid int64, callback fun
 		// Notify callback
 		if callback != nil {
 			if err := callback(pathname, RevertUnmanage); err != nil {
-				return err
+				return fmt.Errorf("checkout.Revert: callback for %s: %w", pathname, err)
 			}
 		}
 
@@ -178,7 +178,7 @@ func (c *Checkout) revertFile(id int64, pathname string, rid int64, callback fun
 	// Notify callback
 	if callback != nil {
 		if err := callback(pathname, RevertContents); err != nil {
-			return err
+			return fmt.Errorf("checkout.Revert: callback for %s: %w", pathname, err)
 		}
 	}
 

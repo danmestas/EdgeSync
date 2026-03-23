@@ -341,7 +341,7 @@ func (c *Checkout) mergeFile(
 func (c *Checkout) writeFileFromUUID(name, uuid string) error {
 	data, err := c.expandUUID(uuid)
 	if err != nil {
-		return err
+		return fmt.Errorf("writeFileFromUUID %s: %w", name, err)
 	}
 
 	fullPath := filepath.Join(c.dir, name)

@@ -39,7 +39,7 @@ func (c *Checkout) Manage(opts ManageOpts) (*ManageCounts, error) {
 			counts.Skipped++
 			if opts.Callback != nil {
 				if err := opts.Callback(path, false); err != nil {
-					return counts, err
+					return counts, fmt.Errorf("checkout.Manage: callback for %s: %w", path, err)
 				}
 			}
 			continue
@@ -67,7 +67,7 @@ func (c *Checkout) Manage(opts ManageOpts) (*ManageCounts, error) {
 		counts.Added++
 		if opts.Callback != nil {
 			if err := opts.Callback(path, true); err != nil {
-				return counts, err
+				return counts, fmt.Errorf("checkout.Manage: callback for %s: %w", path, err)
 			}
 		}
 	}
@@ -104,7 +104,7 @@ func (c *Checkout) Unmanage(opts UnmanageOpts) error {
 			}
 
 			if err := c.unmanageFile(vfileID, rid, pathname, opts.Callback); err != nil {
-				return err
+				return fmt.Errorf("checkout.Unmanage: %w", err)
 			}
 		}
 		return nil
@@ -124,7 +124,7 @@ func (c *Checkout) Unmanage(opts UnmanageOpts) error {
 		}
 
 		if err := c.unmanageFile(vfileID, rid, path, opts.Callback); err != nil {
-			return err
+			return fmt.Errorf("checkout.Unmanage: %w", err)
 		}
 	}
 
@@ -151,7 +151,7 @@ func (c *Checkout) unmanageFile(vfileID libfossil.FslID, rid int64, pathname str
 
 	if callback != nil {
 		if err := callback(pathname); err != nil {
-			return err
+			return fmt.Errorf("checkout.Unmanage: callback for %s: %w", pathname, err)
 		}
 	}
 

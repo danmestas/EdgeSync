@@ -242,7 +242,7 @@ func (c *Checkout) walkDir(dir string) (map[string]bool, error) {
 			if entry.IsDir() {
 				// Recurse into subdirectory
 				if err := walk(fullPath); err != nil {
-					return err
+					return fmt.Errorf("walkDir: %w", err)
 				}
 			} else {
 				// Regular file — compute relative path
