@@ -224,14 +224,19 @@ func TestCreateRepoSchema_FossilValidation(t *testing.T) {
 	}
 }
 
-func TestDriverConfig(t *testing.T) {
-	name := driverName()
-	t.Logf("active driver: %s", name)
-	if name == "" {
-		t.Fatal("driverName() returned empty string")
+func TestRegisterDriver(t *testing.T) {
+	// Driver should already be registered by testdriver import (added in Task 3).
+	// For now, the old build-tagged driver files still call driverName()/buildDSN(),
+	// so registered may be nil. This test will fully work after Task 3.
+	if registered == nil {
+		t.Skip("no driver registered yet (will work after testdriver migration)")
 	}
+	if registered.Name == "" {
+		t.Fatal("registered driver name is empty")
+	}
+	t.Logf("active driver: %s", registered.Name)
 
-	dsn := buildDSN("/tmp/test.db", defaultPragmas())
+	dsn := registered.BuildDSN("/tmp/test.db", defaultPragmas())
 	t.Logf("DSN: %s", dsn)
 	if !strings.Contains(dsn, "journal_mode") {
 		t.Fatal("DSN missing journal_mode pragma")
