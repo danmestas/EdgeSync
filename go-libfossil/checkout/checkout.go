@@ -17,11 +17,12 @@ import (
 // A Checkout owns the checkout DB (*sql.DB) but NOT the repo — the caller
 // owns the repo lifecycle.
 type Checkout struct {
-	db   *sql.DB
-	repo *repo.Repo
-	env  *simio.Env
-	obs  Observer
-	dir  string
+	db           *sql.DB
+	repo         *repo.Repo
+	env          *simio.Env
+	obs          Observer
+	dir          string
+	checkinQueue map[string]bool // in-memory staging queue (session-scoped)
 }
 
 // Create creates a new checkout database at dir/.fslckout (or dir/_FOSSIL_ on Windows),
