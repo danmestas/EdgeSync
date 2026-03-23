@@ -2,7 +2,6 @@ package search
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 )
@@ -80,23 +79,4 @@ type Result struct {
 	MatchLen int    // length of matched substring
 	LineText string // the matching line
 	Context  string // surrounding lines including match line, newline-separated. Empty if ContextLines=0.
-}
-
-// escapeFTS5 wraps term in double quotes for literal matching,
-// escaping internal double quotes per FTS5 syntax.
-func escapeFTS5(term string) string {
-	escaped := strings.ReplaceAll(term, `"`, `""`)
-	return `"` + escaped + `"`
-}
-
-// Search is a stub — will be implemented in query.go.
-// For now it returns empty results (used by schema tests).
-func (idx *Index) Search(q Query) ([]Result, error) {
-	if idx == nil {
-		panic("search.Search: nil *Index")
-	}
-	if len(q.Term) < 3 {
-		return nil, nil
-	}
-	return nil, nil
 }

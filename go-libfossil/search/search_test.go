@@ -1,6 +1,8 @@
 package search_test
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/dmestas/edgesync/go-libfossil/manifest"
@@ -212,7 +214,7 @@ func TestRebuildIndex_HandlesDeltaChains(t *testing.T) {
 	r := newTestRepo(t)
 
 	// First checkin
-	rid1, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
 		Files:   []manifest.File{{Name: "data.txt", Content: []byte("original content")}},
 		Comment: "first",
 		User:    "test",
@@ -226,7 +228,6 @@ func TestRebuildIndex_HandlesDeltaChains(t *testing.T) {
 		Files:   []manifest.File{{Name: "data.txt", Content: []byte("modified content")}},
 		Comment: "second",
 		User:    "test",
-		Parent:  rid1,
 		Delta:   true,
 	})
 	if err != nil {
@@ -285,5 +286,195 @@ func TestRebuildIndex_Idempotent(t *testing.T) {
 	}
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result after double rebuild, got %d", len(results))
+	}
+}
+
+func TestSearch_SubstringMatch(t *testing.T) {
+	r := newTestRepo(t)
+
+	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files: []manifest.File{
+			{Name: "sync/client.go", Content: []byte("package sync\n\nfunc handleSync() {\n\tlog.Println(\"syncing\")\n}\n")},
+			{Name: "sync/server.go", Content: []byte("package sync\n\nfunc ServeHTTP() {\n\tlog.Println(\"serving\")\n}\n")},
+		},
+		Comment: "sync code",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := search.Open(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.RebuildIndex(); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := idx.Search(search.Query{Term: "handleSync"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for 'handleSync', got %d", len(results))
+	}
+	if results[0].Path != "sync/client.go" {
+		t.Fatalf("expected sync/client.go, got %s", results[0].Path)
+	}
+	if results[0].Line != 3 {
+		t.Fatalf("expected line 3, got %d", results[0].Line)
+	}
+	if results[0].MatchLen != 10 {
+		t.Fatalf("expected MatchLen=10, got %d", results[0].MatchLen)
+	}
+}
+
+func TestSearch_CaseInsensitive(t *testing.T) {
+	r := newTestRepo(t)
+
+	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "a.go", Content: []byte("func HandleSync() {}\n")}},
+		Comment: "case test",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := search.Open(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.RebuildIndex(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Search with different case — should still match
+	results, err := idx.Search(search.Query{Term: "handlesync"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 case-insensitive result, got %d", len(results))
+	}
+}
+
+func TestSearch_MinTermLength(t *testing.T) {
+	r := newTestRepo(t)
+	idx, err := search.Open(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Sub-3-char query returns empty
+	results, err := idx.Search(search.Query{Term: "ab"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected 0 results for 2-char query, got %d", len(results))
+	}
+}
+
+func TestSearch_WithContext(t *testing.T) {
+	r := newTestRepo(t)
+
+	fileContent := "line1\nline2\nline3 target\nline4\nline5\n"
+	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "f.txt", Content: []byte(fileContent)}},
+		Comment: "context test",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := search.Open(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.RebuildIndex(); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := idx.Search(search.Query{Term: "target", ContextLines: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Line != 3 {
+		t.Fatalf("expected line 3, got %d", results[0].Line)
+	}
+	ctx := results[0].Context
+	if !strings.Contains(ctx, "line2") || !strings.Contains(ctx, "line3 target") || !strings.Contains(ctx, "line4") {
+		t.Fatalf("context missing expected lines: %q", ctx)
+	}
+}
+
+func TestSearch_EscapesFTS5SpecialChars(t *testing.T) {
+	r := newTestRepo(t)
+
+	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "q.txt", Content: []byte(`she said "hello" to the world`)}},
+		Comment: "quotes",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := search.Open(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.RebuildIndex(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Search for a term containing a double quote — should not crash
+	results, err := idx.Search(search.Query{Term: `"hello"`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for quoted search, got %d", len(results))
+	}
+}
+
+func TestSearch_MaxResults(t *testing.T) {
+	r := newTestRepo(t)
+
+	var files []manifest.File
+	for i := 0; i < 10; i++ {
+		files = append(files, manifest.File{
+			Name:    fmt.Sprintf("file%d.txt", i),
+			Content: []byte("common search term here"),
+		})
+	}
+	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   files,
+		Comment: "many files",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := search.Open(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.RebuildIndex(); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := idx.Search(search.Query{Term: "common search", MaxResults: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) > 3 {
+		t.Fatalf("expected at most 3 results, got %d", len(results))
 	}
 }
