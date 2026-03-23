@@ -562,3 +562,79 @@ func TestStaleAfterNewCheckin(t *testing.T) {
 		t.Fatal("expected NeedsReindex=false after reindex")
 	}
 }
+
+// TestRebuildIndex_BuggifyResilience verifies that RebuildIndex behaves
+// correctly when content.Expand's BUGGIFY site is active (1% chance of
+// flipping byte 0 in expanded content). Two outcomes are acceptable:
+//
+//  1. Manifest corrupted → RebuildIndex returns error (can't read file list).
+//  2. File blob corrupted → RebuildIndex succeeds with wrong content indexed.
+//     The search index is a derived cache — corrupted content doesn't compromise
+//     the repo, just means one file's results are wrong until next reindex.
+//
+// The key property: RebuildIndex never panics, and if it succeeds, the index
+// is structurally valid and searchable.
+func TestRebuildIndex_BuggifyResilience(t *testing.T) {
+	r := newTestRepo(t)
+
+	// Create files BEFORE enabling BUGGIFY so checkin itself isn't corrupted.
+	var files []manifest.File
+	for i := 0; i < 50; i++ {
+		files = append(files, manifest.File{
+			Name:    fmt.Sprintf("src/file%d.go", i),
+			Content: []byte(fmt.Sprintf("package src\n\nfunc Function%d() { /* unique content %d */ }\n", i, i)),
+		})
+	}
+
+	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   files,
+		Comment: "buggify resilience test",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := search.Open(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Enable BUGGIFY AFTER checkin so only RebuildIndex is affected.
+	// Seed 42 gives deterministic fault injection.
+	simio.EnableBuggify(42)
+	defer simio.DisableBuggify()
+
+	rebuildErr := idx.RebuildIndex()
+	if rebuildErr != nil {
+		// Outcome 1: BUGGIFY corrupted the manifest blob itself.
+		// RebuildIndex correctly returns an error. This is acceptable —
+		// a corrupted manifest means we can't enumerate files.
+		t.Logf("BUGGIFY corrupted manifest (expected): %v", rebuildErr)
+		return
+	}
+
+	// Outcome 2: manifest was fine, but some file blobs may be corrupted.
+	// Verify the index is structurally valid.
+
+	needs, err := idx.NeedsReindex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if needs {
+		t.Fatal("expected NeedsReindex=false after successful rebuild under BUGGIFY")
+	}
+
+	// Index must be searchable — queries must not error.
+	results, err := idx.Search(search.Query{Term: "Function"})
+	if err != nil {
+		t.Fatal("Search failed after BUGGIFY rebuild:", err)
+	}
+
+	// We expect results for most files. Some may have corrupted content
+	// (byte 0 flipped by BUGGIFY), but the FTS index should still work.
+	if len(results) == 0 {
+		t.Fatal("expected at least some results after BUGGIFY rebuild, got 0")
+	}
+	t.Logf("BUGGIFY resilience: %d/%d files matched 'Function'", len(results), len(files))
+}
