@@ -316,3 +316,121 @@ func TestMemStorageMkdirAll(t *testing.T) {
 		t.Errorf("MkdirAll on existing directory failed: %v", err)
 	}
 }
+
+func TestOSStorageReadDir(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a file
+	filePath := filepath.Join(dir, "test.txt")
+	if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	// Create a subdirectory
+	subdir := filepath.Join(dir, "subdir")
+	if err := os.Mkdir(subdir, 0755); err != nil {
+		t.Fatalf("failed to create subdirectory: %v", err)
+	}
+
+	storage := OSStorage{}
+	entries, err := storage.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir failed: %v", err)
+	}
+
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+
+	// Verify entries (sorted by name)
+	names := make([]string, len(entries))
+	for i, e := range entries {
+		names[i] = e.Name()
+	}
+
+	expectedNames := []string{"subdir", "test.txt"}
+	for i, expected := range expectedNames {
+		if names[i] != expected {
+			t.Errorf("entry %d: expected name %s, got %s", i, expected, names[i])
+		}
+	}
+
+	// Verify IsDir
+	if entries[0].IsDir() != true {
+		t.Errorf("expected subdir to be directory")
+	}
+	if entries[1].IsDir() != false {
+		t.Errorf("expected test.txt to be file")
+	}
+}
+
+func TestMemStorageReadDir(t *testing.T) {
+	storage := NewMemStorage()
+
+	// Create files in root and subdirectory
+	if err := storage.WriteFile("/file1.txt", []byte("content1"), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	if err := storage.WriteFile("/subdir/file2.txt", []byte("content2"), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	if err := storage.WriteFile("/subdir/file3.txt", []byte("content3"), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Test ReadDir at root - should show file1.txt and subdir
+	entries, err := storage.ReadDir("/")
+	if err != nil {
+		t.Fatalf("ReadDir(/) failed: %v", err)
+	}
+
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries at root, got %d", len(entries))
+	}
+
+	// Verify entries are sorted by name
+	if entries[0].Name() != "file1.txt" {
+		t.Errorf("expected first entry to be file1.txt, got %s", entries[0].Name())
+	}
+	if entries[0].IsDir() {
+		t.Errorf("expected file1.txt to be file, not directory")
+	}
+
+	if entries[1].Name() != "subdir" {
+		t.Errorf("expected second entry to be subdir, got %s", entries[1].Name())
+	}
+	if !entries[1].IsDir() {
+		t.Errorf("expected subdir to be directory, not file")
+	}
+
+	// Test ReadDir in subdir
+	subdirEntries, err := storage.ReadDir("/subdir")
+	if err != nil {
+		t.Fatalf("ReadDir(/subdir) failed: %v", err)
+	}
+
+	if len(subdirEntries) != 2 {
+		t.Fatalf("expected 2 entries in subdir, got %d", len(subdirEntries))
+	}
+
+	// Verify files in subdir
+	if subdirEntries[0].Name() != "file2.txt" {
+		t.Errorf("expected file2.txt, got %s", subdirEntries[0].Name())
+	}
+	if subdirEntries[1].Name() != "file3.txt" {
+		t.Errorf("expected file3.txt, got %s", subdirEntries[1].Name())
+	}
+}
+
+func TestMemStorageReadDirNotExist(t *testing.T) {
+	storage := NewMemStorage()
+
+	_, err := storage.ReadDir("/nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent directory, got nil")
+	}
+
+	if !os.IsNotExist(err) && !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("expected IsNotExist error, got: %v", err)
+	}
+}

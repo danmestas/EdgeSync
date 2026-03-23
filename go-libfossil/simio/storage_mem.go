@@ -2,8 +2,10 @@ package simio
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -111,6 +113,108 @@ func (m *MemStorage) WriteFile(path string, data []byte, perm os.FileMode) error
 	copy(stored, data)
 	m.files[path] = stored
 	return nil
+}
+
+// ReadDir returns directory entries for the given path.
+func (m *MemStorage) ReadDir(path string) ([]fs.DirEntry, error) {
+	if path == "" {
+		panic("MemStorage.ReadDir: path must not be empty")
+	}
+
+	// Build prefix for scanning
+	prefix := path
+	if !strings.HasSuffix(prefix, string(filepath.Separator)) {
+		prefix += string(filepath.Separator)
+	}
+
+	// Track unique direct children (files and subdirectories)
+	children := make(map[string]bool)
+	childIsDir := make(map[string]bool)
+
+	// Scan files
+	for filePath := range m.files {
+		if strings.HasPrefix(filePath, prefix) {
+			remainder := strings.TrimPrefix(filePath, prefix)
+			if remainder == "" {
+				continue // Skip exact match
+			}
+			// Extract first path component
+			sepIdx := strings.Index(remainder, string(filepath.Separator))
+			var childName string
+			if sepIdx == -1 {
+				// Direct child file
+				childName = remainder
+				childIsDir[childName] = false
+			} else {
+				// File in subdirectory
+				childName = remainder[:sepIdx]
+				childIsDir[childName] = true
+			}
+			children[childName] = true
+		}
+	}
+
+	// Scan dirs for empty subdirectories
+	for dirPath := range m.dirs {
+		if strings.HasPrefix(dirPath, prefix) && dirPath != path {
+			remainder := strings.TrimPrefix(dirPath, prefix)
+			if remainder == "" {
+				continue
+			}
+			sepIdx := strings.Index(remainder, string(filepath.Separator))
+			var childName string
+			if sepIdx == -1 {
+				childName = remainder
+			} else {
+				childName = remainder[:sepIdx]
+			}
+			children[childName] = true
+			childIsDir[childName] = true
+		}
+	}
+
+	// Check if path exists (either as dir or has children)
+	if len(children) == 0 && !m.dirs[path] {
+		return nil, os.ErrNotExist
+	}
+
+	// Build sorted entry list
+	entries := make([]fs.DirEntry, 0, len(children))
+	for name := range children {
+		entries = append(entries, &memDirEntry{
+			name:  name,
+			isDir: childIsDir[name],
+		})
+	}
+
+	// Sort by name to match os.ReadDir behavior
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name() < entries[j].Name()
+	})
+
+	return entries, nil
+}
+
+// memDirEntry implements fs.DirEntry for in-memory directory entries.
+type memDirEntry struct {
+	name  string
+	isDir bool
+}
+
+func (e *memDirEntry) Name() string               { return e.name }
+func (e *memDirEntry) IsDir() bool                { return e.isDir }
+func (e *memDirEntry) Type() fs.FileMode {
+	if e.isDir {
+		return fs.ModeDir
+	}
+	return 0
+}
+func (e *memDirEntry) Info() (fs.FileInfo, error) {
+	return &memFileInfo{
+		name:  e.name,
+		size:  0,
+		isDir: e.isDir,
+	}, nil
 }
 
 // memFileInfo implements os.FileInfo for in-memory files.
