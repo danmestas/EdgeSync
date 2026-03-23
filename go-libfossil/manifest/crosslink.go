@@ -8,6 +8,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/db"
 	"github.com/dmestas/edgesync/go-libfossil/deck"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
+	"github.com/dmestas/edgesync/go-libfossil/tag"
 )
 
 // Crosslink scans all blobs not yet in the event table, tries to parse
@@ -67,11 +68,54 @@ func Crosslink(r *repo.Repo) (int, error) {
 		linked++
 	}
 
+	// Second pass: process control artifacts (tags/branches).
+	ctrlRows, err := r.DB().Query(`
+		SELECT b.rid FROM blob b
+		WHERE b.size >= 0
+		AND NOT EXISTS (SELECT 1 FROM tagxref tx WHERE tx.srcid = b.rid)
+		AND NOT EXISTS (SELECT 1 FROM event e WHERE e.objid = b.rid)
+	`)
+	if err != nil {
+		return linked, fmt.Errorf("manifest.Crosslink ctrl query: %w", err)
+	}
+	defer ctrlRows.Close()
+
+	var ctrlCandidates []libfossil.FslID
+	for ctrlRows.Next() {
+		var rid libfossil.FslID
+		if err := ctrlRows.Scan(&rid); err != nil {
+			return linked, fmt.Errorf("manifest.Crosslink ctrl scan: %w", err)
+		}
+		ctrlCandidates = append(ctrlCandidates, rid)
+	}
+	if err := ctrlRows.Err(); err != nil {
+		return linked, fmt.Errorf("manifest.Crosslink ctrl rows: %w", err)
+	}
+
+	for _, rid := range ctrlCandidates {
+		data, err := content.Expand(r.DB(), rid)
+		if err != nil {
+			continue
+		}
+		d, err := deck.Parse(data)
+		if err != nil {
+			continue
+		}
+		if d.Type != deck.Control {
+			continue
+		}
+		if err := crosslinkControl(r, rid, d); err != nil {
+			return linked, fmt.Errorf("manifest.Crosslink ctrl rid=%d: %w", rid, err)
+		}
+		linked++
+	}
+
 	return linked, nil
 }
 
 func crosslinkOne(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
-	return r.WithTx(func(tx *db.Tx) error {
+	// First, crosslink event/plink/leaf/mlink in a transaction
+	err := r.WithTx(func(tx *db.Tx) error {
 		// event
 		if _, err := tx.Exec(
 			"INSERT OR IGNORE INTO event(type, mtime, objid, user, comment) VALUES('ci', ?, ?, ?, ?)",
@@ -134,4 +178,75 @@ func crosslinkOne(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	// Process inline T-cards (UUID="*" means this checkin) after transaction completes.
+	// Each tag.ApplyTag call starts its own transaction.
+	mtime := libfossil.TimeToJulian(d.D)
+	for _, tc := range d.T {
+		if tc.UUID != "*" {
+			continue
+		}
+		var tagType int
+		switch tc.Type {
+		case deck.TagPropagating:
+			tagType = tag.TagPropagating
+		case deck.TagSingleton:
+			tagType = tag.TagSingleton
+		case deck.TagCancel:
+			tagType = tag.TagCancel
+		default:
+			continue
+		}
+
+		if err := tag.ApplyTag(r, tag.ApplyOpts{
+			TargetRID: rid,
+			SrcRID:    rid, // inline: checkin is its own source
+			TagName:   tc.Name,
+			TagType:   tagType,
+			Value:     tc.Value,
+			MTime:     mtime,
+		}); err != nil {
+			return fmt.Errorf("inline tag %q: %w", tc.Name, err)
+		}
+	}
+
+	return nil
+}
+
+func crosslinkControl(r *repo.Repo, srcRID libfossil.FslID, d *deck.Deck) error {
+	mtime := libfossil.TimeToJulian(d.D)
+	for _, tc := range d.T {
+		if tc.UUID == "*" {
+			continue // self-referencing — handled in crosslinkOne
+		}
+		var targetRID int64
+		if err := r.DB().QueryRow("SELECT rid FROM blob WHERE uuid=?", tc.UUID).Scan(&targetRID); err != nil {
+			continue // target not found
+		}
+		var tagType int
+		switch tc.Type {
+		case deck.TagPropagating:
+			tagType = tag.TagPropagating
+		case deck.TagSingleton:
+			tagType = tag.TagSingleton
+		case deck.TagCancel:
+			tagType = tag.TagCancel
+		default:
+			continue
+		}
+		if err := tag.ApplyTag(r, tag.ApplyOpts{
+			TargetRID: libfossil.FslID(targetRID),
+			SrcRID:    srcRID,
+			TagName:   tc.Name,
+			TagType:   tagType,
+			Value:     tc.Value,
+			MTime:     mtime,
+		}); err != nil {
+			return fmt.Errorf("apply tag %q to rid=%d: %w", tc.Name, targetRID, err)
+		}
+	}
+	return nil
 }

@@ -1,4 +1,4 @@
-package tag
+package tag_test
 
 import (
 	"path/filepath"
@@ -9,6 +9,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/manifest"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/dmestas/edgesync/go-libfossil/tag"
 )
 
 func setupTestRepo(t *testing.T) *repo.Repo {
@@ -37,16 +38,16 @@ func TestAddTag(t *testing.T) {
 	}
 
 	// Add a singleton tag
-	tagRid, err := AddTag(r, TagOpts{
+	tagRid, err := tag.AddTag(r, tag.TagOpts{
 		TargetRID: rid,
 		TagName:   "testlabel",
-		TagType:   TagSingleton,
+		TagType:   tag.TagSingleton,
 		Value:     "myvalue",
 		User:      "testuser",
 		Time:      time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC),
 	})
 	if err != nil {
-		t.Fatalf("AddTag: %v", err)
+		t.Fatalf("tag.AddTag: %v", err)
 	}
 	if tagRid <= 0 {
 		t.Fatalf("tagRid = %d, want > 0", tagRid)
@@ -64,8 +65,8 @@ func TestAddTag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tagxref query: %v", err)
 	}
-	if tagtype != TagSingleton {
-		t.Fatalf("tagtype = %d, want %d (singleton)", tagtype, TagSingleton)
+	if tagtype != tag.TagSingleton {
+		t.Fatalf("tagtype = %d, want %d (singleton)", tagtype, tag.TagSingleton)
 	}
 	if value != "myvalue" {
 		t.Fatalf("value = %q, want %q", value, "myvalue")
@@ -87,15 +88,15 @@ func TestCancelTag(t *testing.T) {
 	}
 
 	// Cancel the sym-trunk tag
-	cancelRid, err := AddTag(r, TagOpts{
+	cancelRid, err := tag.AddTag(r, tag.TagOpts{
 		TargetRID: rid,
 		TagName:   "sym-trunk",
-		TagType:   TagCancel,
+		TagType:   tag.TagCancel,
 		User:      "testuser",
 		Time:      time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC),
 	})
 	if err != nil {
-		t.Fatalf("AddTag cancel: %v", err)
+		t.Fatalf("tag.AddTag cancel: %v", err)
 	}
 	if cancelRid <= 0 {
 		t.Fatalf("cancelRid = %d, want > 0", cancelRid)
@@ -112,8 +113,8 @@ func TestCancelTag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tagxref query: %v", err)
 	}
-	if tagtype != TagCancel {
-		t.Fatalf("tagtype = %d, want %d (cancel)", tagtype, TagCancel)
+	if tagtype != tag.TagCancel {
+		t.Fatalf("tagtype = %d, want %d (cancel)", tagtype, tag.TagCancel)
 	}
 }
 
@@ -142,16 +143,16 @@ func TestPropagateChain(t *testing.T) {
 	ridC := makeCheckin(t, r, ridB, "c.txt", "content C", "commit C")
 
 	// Add propagating "branch" tag to A with value "feature"
-	_, err := AddTag(r, TagOpts{
+	_, err := tag.AddTag(r, tag.TagOpts{
 		TargetRID: libfossil.FslID(ridA),
 		TagName:   "branch",
-		TagType:   TagPropagating,
+		TagType:   tag.TagPropagating,
 		Value:     "feature",
 		User:      "testuser",
 		Time:      time.Now().UTC(),
 	})
 	if err != nil {
-		t.Fatalf("AddTag: %v", err)
+		t.Fatalf("tag.AddTag: %v", err)
 	}
 
 	// Verify B has the propagated tag (srcid=0, correct value)
@@ -168,8 +169,8 @@ func TestPropagateChain(t *testing.T) {
 	if srcidb != 0 {
 		t.Errorf("B srcid = %d, want 0 (propagated)", srcidb)
 	}
-	if tagtypeB != TagPropagating {
-		t.Errorf("B tagtype = %d, want %d", tagtypeB, TagPropagating)
+	if tagtypeB != tag.TagPropagating {
+		t.Errorf("B tagtype = %d, want %d", tagtypeB, tag.TagPropagating)
 	}
 	if valueB != "feature" {
 		t.Errorf("B value = %q, want %q", valueB, "feature")
@@ -189,8 +190,8 @@ func TestPropagateChain(t *testing.T) {
 	if srcidC != 0 {
 		t.Errorf("C srcid = %d, want 0 (propagated)", srcidC)
 	}
-	if tagtypeC != TagPropagating {
-		t.Errorf("C tagtype = %d, want %d", tagtypeC, TagPropagating)
+	if tagtypeC != tag.TagPropagating {
+		t.Errorf("C tagtype = %d, want %d", tagtypeC, tag.TagPropagating)
 	}
 	if valueC != "feature" {
 		t.Errorf("C value = %q, want %q", valueC, "feature")
@@ -206,28 +207,28 @@ func TestCancelPropagation(t *testing.T) {
 	ridC := makeCheckin(t, r, ridB, "c.txt", "content C", "commit C")
 
 	// Add propagating tag to A
-	_, err := AddTag(r, TagOpts{
+	_, err := tag.AddTag(r, tag.TagOpts{
 		TargetRID: libfossil.FslID(ridA),
 		TagName:   "testprop",
-		TagType:   TagPropagating,
+		TagType:   tag.TagPropagating,
 		Value:     "propvalue",
 		User:      "testuser",
 		Time:      time.Now().UTC(),
 	})
 	if err != nil {
-		t.Fatalf("AddTag propagating: %v", err)
+		t.Fatalf("tag.AddTag propagating: %v", err)
 	}
 
 	// Cancel at B
-	_, err = AddTag(r, TagOpts{
+	_, err = tag.AddTag(r, tag.TagOpts{
 		TargetRID: libfossil.FslID(ridB),
 		TagName:   "testprop",
-		TagType:   TagCancel,
+		TagType:   tag.TagCancel,
 		User:      "testuser",
 		Time:      time.Now().UTC(),
 	})
 	if err != nil {
-		t.Fatalf("AddTag cancel: %v", err)
+		t.Fatalf("tag.AddTag cancel: %v", err)
 	}
 
 	// Verify B has no active tags (count of tagtype>0 should be 0)
@@ -273,16 +274,16 @@ func TestPropagateBgcolor(t *testing.T) {
 	}
 
 	// Add propagating "bgcolor" tag to A
-	_, err = AddTag(r, TagOpts{
+	_, err = tag.AddTag(r, tag.TagOpts{
 		TargetRID: libfossil.FslID(ridA),
 		TagName:   "bgcolor",
-		TagType:   TagPropagating,
+		TagType:   tag.TagPropagating,
 		Value:     "#ff0000",
 		User:      "testuser",
 		Time:      time.Now().UTC(),
 	})
 	if err != nil {
-		t.Fatalf("AddTag bgcolor: %v", err)
+		t.Fatalf("tag.AddTag bgcolor: %v", err)
 	}
 
 	// Verify event.bgcolor updated at B
@@ -302,16 +303,16 @@ func TestApplyTag(t *testing.T) {
 	ridA := makeCheckin(t, r, 0, "a.txt", "aaa", "commit A")
 	ridB := makeCheckin(t, r, ridA, "a.txt", "bbb", "commit B")
 
-	err := ApplyTag(r, ApplyOpts{
+	err := tag.ApplyTag(r, tag.ApplyOpts{
 		TargetRID: libfossil.FslID(ridA),
 		SrcRID:    999,
 		TagName:   "sym-trunk",
-		TagType:   TagPropagating,
+		TagType:   tag.TagPropagating,
 		Value:     "",
 		MTime:     libfossil.TimeToJulian(time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)),
 	})
 	if err != nil {
-		t.Fatalf("ApplyTag: %v", err)
+		t.Fatalf("tag.ApplyTag: %v", err)
 	}
 
 	// Verify tagxref at A has srcid=999.
