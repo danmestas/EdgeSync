@@ -30,6 +30,7 @@ type ChatMessage struct {
 type PresenceHeartbeat struct {
 	ID   string `json:"id"`
 	User string `json:"user"`
+	File string `json:"file"` // Currently open file path, "" if none.
 	Time string `json:"time"`
 }
 
@@ -43,16 +44,20 @@ var (
 	notifySub     *nats.Subscription
 	heartbeatStop chan struct{}
 
-	// peerLastSeen tracks when each peer last sent a heartbeat.
-	// Protected by peerMu — accessed from NATS callback goroutine
-	// and the presence loop goroutine.
+	// peerMu protects peerLastSeen and peerFiles.
+	// Accessed from NATS callback goroutine and presence loop goroutine.
 	peerMu       sync.Mutex
 	peerLastSeen map[string]time.Time
+	peerFiles    map[string]string // peerID → currently open file path
+
+	// myOpenFile is the file path currently open in this tab's editor.
+	myOpenFile string
 )
 
 func init() {
 	myPeerID = fmt.Sprintf("%04x", rand.Intn(0xFFFF))
 	peerLastSeen = make(map[string]time.Time)
+	peerFiles = make(map[string]string)
 }
 
 // startChat subscribes to the chat subject and publishes a join message.
@@ -113,6 +118,7 @@ func startPresence(nc *nats.Conn, user string) error {
 		}
 		peerMu.Lock()
 		peerLastSeen[hb.ID] = time.Now()
+		peerFiles[hb.ID] = hb.File
 		peerMu.Unlock()
 		broadcastPeers()
 	})
@@ -149,6 +155,7 @@ func publishHeartbeat(nc *nats.Conn, user string) {
 	hb := PresenceHeartbeat{
 		ID:   myPeerID,
 		User: user,
+		File: myOpenFile,
 		Time: time.Now().UTC().Format(time.RFC3339),
 	}
 	data, err := json.Marshal(hb)
@@ -163,13 +170,35 @@ func publishHeartbeat(nc *nats.Conn, user string) {
 
 func evictStalePeers() {
 	peerMu.Lock()
-	defer peerMu.Unlock()
+	hadCoEditors := fileHasCoEditorsLocked(myOpenFile)
 	now := time.Now()
 	for id, lastSeen := range peerLastSeen {
 		if now.Sub(lastSeen) > presenceTimeout {
 			delete(peerLastSeen, id)
+			delete(peerFiles, id)
 		}
 	}
+	hasCoEditors := fileHasCoEditorsLocked(myOpenFile)
+	peerMu.Unlock()
+
+	// If we lost our last co-editor, auto-commit any UV drafts.
+	if hadCoEditors && !hasCoEditors {
+		go autoCommitDrafts()
+	}
+}
+
+// fileHasCoEditorsLocked checks for co-editors without taking the lock.
+// Caller must hold peerMu.
+func fileHasCoEditorsLocked(path string) bool {
+	if path == "" {
+		return false
+	}
+	for id, file := range peerFiles {
+		if id != myPeerID && file == path {
+			return true
+		}
+	}
+	return false
 }
 
 func broadcastPeers() {
@@ -178,14 +207,35 @@ func broadcastPeers() {
 	type peerInfo struct {
 		ID   string `json:"id"`
 		IsMe bool   `json:"isMe"`
+		File string `json:"file"`
 	}
 	// Always include self.
 	peerLastSeen[myPeerID] = time.Now()
+	peerFiles[myPeerID] = myOpenFile
 	var list []peerInfo
 	for id := range peerLastSeen {
-		list = append(list, peerInfo{ID: id, IsMe: id == myPeerID})
+		list = append(list, peerInfo{
+			ID:   id,
+			IsMe: id == myPeerID,
+			File: peerFiles[id],
+		})
 	}
 	postResult("peers", toJSON(list))
+}
+
+// fileHasCoEditors returns true if another peer has the given file open.
+func fileHasCoEditors(path string) bool {
+	if path == "" {
+		return false
+	}
+	peerMu.Lock()
+	defer peerMu.Unlock()
+	for id, file := range peerFiles {
+		if id != myPeerID && file == path {
+			return true
+		}
+	}
+	return false
 }
 
 // startNotify subscribes to commit notifications from other peers.
@@ -239,9 +289,10 @@ func stopSocial() {
 		heartbeatStop = nil
 	}
 	peerLastSeen = make(map[string]time.Time)
+	peerFiles = make(map[string]string)
 }
 
-// registerSocialCallbacks exposes chat to JS via _sendChat(text, user).
+// registerSocialCallbacks exposes chat, drafts, and file presence to JS.
 func registerSocialCallbacks() {
 	js.Global().Set("_sendChat", js.FuncOf(func(_ js.Value, args []js.Value) any {
 		if currentNATS == nil {
@@ -257,5 +308,46 @@ func registerSocialCallbacks() {
 		}
 		go sendChat(currentNATS, user, text)
 		return nil
+	}))
+
+	// _setOpenFile updates which file this peer has open (for presence).
+	js.Global().Set("_setOpenFile", js.FuncOf(func(_ js.Value, args []js.Value) any {
+		path := ""
+		if len(args) > 0 {
+			path = args[0].String()
+		}
+		myOpenFile = path
+		// Publish updated presence immediately so peers see the change.
+		if currentNATS != nil {
+			go publishHeartbeat(currentNATS, "browser-"+myPeerID)
+		}
+		return nil
+	}))
+
+	// _saveDraft writes content to a UV draft (only when co-editing).
+	js.Global().Set("_saveDraft", js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if len(args) < 2 {
+			return nil
+		}
+		path := args[0].String()
+		content := args[1].String()
+		// Only save UV draft if another peer has this file open.
+		if !fileHasCoEditors(path) {
+			return nil
+		}
+		go func() {
+			if err := saveDraft(path, content); err != nil {
+				log(fmt.Sprintf("[drafts] save %s failed: %v", path, err))
+			}
+		}()
+		return nil
+	}))
+
+	// _hasCoEditors checks if the given file has other peers editing it.
+	js.Global().Set("_hasCoEditors", js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if len(args) < 1 {
+			return js.ValueOf(false)
+		}
+		return js.ValueOf(fileHasCoEditors(args[0].String()))
 	}))
 }

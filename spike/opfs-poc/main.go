@@ -383,6 +383,9 @@ func doCoCommit(comment, user string) {
 
 // postSyncHook crosslinks pulled manifests and re-materializes checkout.
 func postSyncHook(result *sync.SyncResult) {
+	// Apply any UV drafts received from peers.
+	applyReceivedDrafts()
+
 	if result.FilesRecvd == 0 {
 		return
 	}
@@ -449,12 +452,14 @@ func doStartAgent(natsWsURL string) {
 	log("[agent] connected to NATS")
 
 	transport := agent.NewNATSTransport(nc, projectCode, 0, "fossil")
+	ensureUVSchema()
 	cfg := agent.Config{
 		RepoPath:     repoPath,
 		NATSUrl:      "nats://browser",
 		PollInterval: 10 * time.Second,
 		Push:         true,
 		Pull:         true,
+		UV:           true, // Enable UV sync for draft propagation.
 		Logger: func(msg string) {
 			log("[agent] " + msg)
 			postResult("agentLog", toJSON(map[string]any{"msg": msg}))
