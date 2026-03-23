@@ -24,3 +24,9 @@ func Register(cfg DriverConfig) {
 	registered = &cfg
 }
 
+// RegisteredDriver returns the currently registered driver config, or nil if none.
+// Primarily for testing.
+func RegisteredDriver() *DriverConfig {
+	return registered
+}
+

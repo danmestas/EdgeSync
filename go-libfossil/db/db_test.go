@@ -1,4 +1,4 @@
-package db
+package db_test
 
 import (
 	"fmt"
@@ -7,12 +7,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dmestas/edgesync/go-libfossil/db"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
+	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
 )
 
 func TestOpenClose(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
-	d, err := Open(path)
+	d, err := db.Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -30,7 +32,7 @@ func TestOpenClose(t *testing.T) {
 
 func TestExec(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
-	d, err := Open(path)
+	d, err := db.Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -58,7 +60,7 @@ func TestExec(t *testing.T) {
 
 func TestApplicationID(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
-	d, err := Open(path)
+	d, err := db.Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -80,7 +82,7 @@ func TestApplicationID(t *testing.T) {
 
 func TestTransaction(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
-	d, err := Open(path)
+	d, err := db.Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -89,7 +91,7 @@ func TestTransaction(t *testing.T) {
 	d.Exec("CREATE TABLE test(id INTEGER PRIMARY KEY, val TEXT)")
 
 	// Commit case
-	err = d.WithTx(func(tx *Tx) error {
+	err = d.WithTx(func(tx *db.Tx) error {
 		_, err := tx.Exec("INSERT INTO test(val) VALUES(?)", "committed")
 		return err
 	})
@@ -104,7 +106,7 @@ func TestTransaction(t *testing.T) {
 	}
 
 	// Rollback case
-	err = d.WithTx(func(tx *Tx) error {
+	err = d.WithTx(func(tx *db.Tx) error {
 		tx.Exec("INSERT INTO test(val) VALUES(?)", "rolled-back")
 		return fmt.Errorf("deliberate error")
 	})
@@ -120,13 +122,13 @@ func TestTransaction(t *testing.T) {
 
 func TestCreateRepoSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.fossil")
-	d, err := Open(path)
+	d, err := db.Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	defer d.Close()
 
-	err = CreateRepoSchema(d)
+	err = db.CreateRepoSchema(d)
 	if err != nil {
 		t.Fatalf("CreateRepoSchema: %v", err)
 	}
@@ -194,22 +196,22 @@ func TestCreateRepoSchema_FossilValidation(t *testing.T) {
 	}
 
 	path := filepath.Join(t.TempDir(), "test.fossil")
-	d, err := Open(path)
+	d, err := db.Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 
-	err = CreateRepoSchema(d)
+	err = db.CreateRepoSchema(d)
 	if err != nil {
 		t.Fatalf("CreateRepoSchema: %v", err)
 	}
 
-	err = SeedConfig(d, simio.CryptoRand{})
+	err = db.SeedConfig(d, simio.CryptoRand{})
 	if err != nil {
 		t.Fatalf("SeedConfig: %v", err)
 	}
 
-	err = SeedUser(d, "testuser")
+	err = db.SeedUser(d, "testuser")
 	if err != nil {
 		t.Fatalf("SeedUser: %v", err)
 	}
@@ -226,17 +228,16 @@ func TestCreateRepoSchema_FossilValidation(t *testing.T) {
 
 func TestRegisterDriver(t *testing.T) {
 	// Driver should already be registered by testdriver import (added in Task 3).
-	// For now, the old build-tagged driver files still call driverName()/buildDSN(),
-	// so registered may be nil. This test will fully work after Task 3.
-	if registered == nil {
-		t.Skip("no driver registered yet (will work after testdriver migration)")
+	cfg := db.RegisteredDriver()
+	if cfg == nil {
+		t.Fatal("no driver registered")
 	}
-	if registered.Name == "" {
+	if cfg.Name == "" {
 		t.Fatal("registered driver name is empty")
 	}
-	t.Logf("active driver: %s", registered.Name)
+	t.Logf("active driver: %s", cfg.Name)
 
-	dsn := registered.BuildDSN("/tmp/test.db", defaultPragmas())
+	dsn := cfg.BuildDSN("/tmp/test.db", db.DefaultPragmas())
 	t.Logf("DSN: %s", dsn)
 	if !strings.Contains(dsn, "journal_mode") {
 		t.Fatal("DSN missing journal_mode pragma")
@@ -248,7 +249,7 @@ func TestRegisterDriver(t *testing.T) {
 
 func TestOpenWithDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
-	d, err := Open(path)
+	d, err := db.Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -268,7 +269,7 @@ func TestOpenWithDefaults(t *testing.T) {
 
 func TestOpenWithCustomPragmas(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
-	d, err := OpenWith(path, OpenConfig{
+	d, err := db.OpenWith(path, db.OpenConfig{
 		Pragmas: map[string]string{
 			"cache_size": "-2000",
 		},

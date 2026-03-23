@@ -8,7 +8,9 @@ type OpenConfig struct {
 	Pragmas map[string]string // additional/override pragmas (merged with defaults)
 }
 
-func defaultPragmas() map[string]string {
+// DefaultPragmas returns the default pragma settings.
+// Exported for testing.
+func DefaultPragmas() map[string]string {
 	m := map[string]string{
 		"journal_mode": "WAL",
 		"busy_timeout": "5000",
@@ -18,6 +20,10 @@ func defaultPragmas() map[string]string {
 		m[k] = v
 	}
 	return m
+}
+
+func defaultPragmas() map[string]string {
+	return DefaultPragmas()
 }
 
 func driverFromEnv() string {
