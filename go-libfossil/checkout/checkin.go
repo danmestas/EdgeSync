@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"path/filepath"
 	"strconv"
 
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
@@ -170,7 +169,10 @@ func (c *Checkout) buildCommitFiles(
 			continue
 		}
 
-		fullPath := filepath.Join(c.dir, name)
+		fullPath, err := c.safePath(name)
+		if err != nil {
+			return nil, fmt.Errorf("checkout.Commit: path traversal in %s: %w", name, err)
+		}
 		fileData, err := c.env.Storage.ReadFile(fullPath)
 		if err != nil {
 			return nil, fmt.Errorf("checkout.Commit: read %s: %w", name, err)

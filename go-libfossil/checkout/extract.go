@@ -23,7 +23,10 @@ func (c *Checkout) extractSingleFile(pathname string, blobRid int64, isexe int64
 		return fmt.Errorf("checkout.Extract: expand blob for %s: %w", pathname, err)
 	}
 
-	fullPath := filepath.Join(c.dir, pathname)
+	fullPath, err := c.safePath(pathname)
+	if err != nil {
+		return fmt.Errorf("checkout.Extract: path traversal in %s: %w", pathname, err)
+	}
 
 	parentDir := filepath.Dir(fullPath)
 	if err := c.env.Storage.MkdirAll(parentDir, 0o755); err != nil {

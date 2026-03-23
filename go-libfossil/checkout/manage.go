@@ -3,7 +3,6 @@ package checkout
 import (
 	"database/sql"
 	"fmt"
-	"path/filepath"
 
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"github.com/dmestas/edgesync/go-libfossil/hash"
@@ -46,7 +45,10 @@ func (c *Checkout) Manage(opts ManageOpts) (*ManageCounts, error) {
 		}
 
 		// Read file from Storage
-		fullPath := filepath.Join(c.dir, path)
+		fullPath, err := c.safePath(path)
+		if err != nil {
+			return counts, fmt.Errorf("checkout.Manage: path traversal in %s: %w", path, err)
+		}
 		data, err := c.env.Storage.ReadFile(fullPath)
 		if err != nil {
 			return counts, fmt.Errorf("checkout.Manage: read %s: %w", path, err)

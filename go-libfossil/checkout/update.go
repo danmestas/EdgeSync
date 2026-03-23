@@ -276,7 +276,10 @@ func (c *Checkout) updateFile(
 	case inCurrent && !inTarget:
 		// File removed in target — delete from disk
 		if !dryRun {
-			fullPath := filepath.Join(c.dir, name)
+			fullPath, err := c.safePath(name)
+			if err != nil {
+				return UpdateNone, fmt.Errorf("remove %s: %w", name, err)
+			}
 			if err := c.env.Storage.Remove(fullPath); err != nil {
 				// Ignore errors if file already missing
 				if !os.IsNotExist(err) {
@@ -343,7 +346,10 @@ func (c *Checkout) mergeFile(
 	}
 
 	if !dryRun {
-		fullPath := filepath.Join(c.dir, name)
+		fullPath, err := c.safePath(name)
+		if err != nil {
+			return UpdateNone, fmt.Errorf("merge %s: path traversal: %w", name, err)
+		}
 		parentDir := filepath.Dir(fullPath)
 		if err := c.env.Storage.MkdirAll(parentDir, os.FileMode(0o755)); err != nil {
 			return UpdateNone, fmt.Errorf("merge %s: mkdir: %w", name, err)
@@ -366,7 +372,10 @@ func (c *Checkout) writeFileFromUUID(name, uuid string) error {
 		return fmt.Errorf("writeFileFromUUID %s: %w", name, err)
 	}
 
-	fullPath := filepath.Join(c.dir, name)
+	fullPath, err := c.safePath(name)
+	if err != nil {
+		return fmt.Errorf("writeFileFromUUID %s: path traversal: %w", name, err)
+	}
 	parentDir := filepath.Dir(fullPath)
 	if err := c.env.Storage.MkdirAll(parentDir, os.FileMode(0o755)); err != nil {
 		return fmt.Errorf("mkdir %s: %w", parentDir, err)

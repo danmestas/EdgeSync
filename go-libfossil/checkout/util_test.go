@@ -255,6 +255,90 @@ func TestIsRootedIn(t *testing.T) {
 	}
 }
 
+func TestSafePathRejectsTraversal(t *testing.T) {
+	r, cleanup := newTestRepoWithCheckin(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	co, err := Create(r, dir, CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer co.Close()
+
+	bad := []string{"../etc/passwd", "../../root/.ssh/id_rsa", "/etc/shadow", "foo/../../bar"}
+	for _, p := range bad {
+		_, err := co.safePath(p)
+		if err == nil {
+			t.Fatalf("safePath(%q) should have failed", p)
+		}
+	}
+
+	good := []string{"hello.txt", "src/main.go", "a/b/c.txt"}
+	for _, p := range good {
+		path, err := co.safePath(p)
+		if err != nil {
+			t.Fatalf("safePath(%q) failed: %v", p, err)
+		}
+		if path == "" {
+			t.Fatalf("safePath(%q) returned empty", p)
+		}
+		if !strings.HasPrefix(path, dir) {
+			t.Fatalf("safePath(%q) = %q, not within checkout dir %q", p, path, dir)
+		}
+	}
+}
+
+func TestFileContentRejectsTraversal(t *testing.T) {
+	r, cleanup := newTestRepoWithCheckin(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	co, err := Create(r, dir, CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer co.Close()
+
+	_, err = co.FileContent("../etc/passwd")
+	if err == nil {
+		t.Fatal("FileContent(\"../etc/passwd\") should have failed")
+	}
+	if !strings.Contains(err.Error(), "escapes checkout") {
+		t.Fatalf("FileContent error should mention escapes checkout, got: %v", err)
+	}
+}
+
+func TestRenameRejectsTraversal(t *testing.T) {
+	r, cleanup := newTestRepoWithCheckin(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	co, err := Create(r, dir, CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer co.Close()
+
+	rid, _, _ := co.Version()
+	if err := co.Extract(rid, ExtractOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rename To with traversal should fail
+	err = co.Rename(RenameOpts{
+		From:     "hello.txt",
+		To:       "../outside",
+		DoFsMove: true,
+	})
+	if err == nil {
+		t.Fatal("Rename to ../outside should have failed")
+	}
+	if !strings.Contains(err.Error(), "escapes checkout") {
+		t.Fatalf("Rename error should mention escapes checkout, got: %v", err)
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

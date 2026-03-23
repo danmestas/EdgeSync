@@ -111,7 +111,10 @@ func (c *Checkout) revertSinglePath(vid libfossil.FslID, pathname string, callba
 
 // revertFile handles the revert logic for a single file.
 func (c *Checkout) revertFile(id int64, pathname string, rid int64, callback func(string, RevertChange) error) error {
-	fullPath := filepath.Join(c.dir, pathname)
+	fullPath, err := c.safePath(pathname)
+	if err != nil {
+		return fmt.Errorf("checkout.Revert: path traversal in %s: %w", pathname, err)
+	}
 
 	if rid == 0 {
 		// Newly added file (never committed) — remove completely

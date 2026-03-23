@@ -106,7 +106,10 @@ func (c *Checkout) scanSingleEntry(e scanVFileEntry, flags ScanFlags) (changed, 
 		return false, false, nil
 	}
 
-	fullPath := filepath.Join(c.dir, e.pathname)
+	fullPath, err := c.safePath(e.pathname)
+	if err != nil {
+		return false, false, fmt.Errorf("checkout.ScanChanges: path traversal in %s: %w", e.pathname, err)
+	}
 
 	data, err := c.env.Storage.ReadFile(fullPath)
 	if err != nil {
@@ -255,8 +258,9 @@ func (c *Checkout) walkDir(dir string) (map[string]bool, error) {
 		for _, entry := range entries {
 			name := entry.Name()
 
-			// Skip checkout databases
-			if name == ".fslckout" || name == "_FOSSIL_" {
+			// Skip checkout databases and VCS directories
+			switch name {
+			case ".fslckout", "_FOSSIL_", ".git", ".hg", ".svn":
 				continue
 			}
 

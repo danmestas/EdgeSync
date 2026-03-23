@@ -103,8 +103,14 @@ func (c *Checkout) Rename(opts RenameOpts) error {
 			return fmt.Errorf("checkout.Rename: %w", err)
 		}
 
-		oldPath := filepath.Join(c.dir, opts.From)
-		newPath := filepath.Join(c.dir, opts.To)
+		oldPath, err := c.safePath(opts.From)
+		if err != nil {
+			return fmt.Errorf("checkout.Rename: path traversal in %s: %w", opts.From, err)
+		}
+		newPath, err := c.safePath(opts.To)
+		if err != nil {
+			return fmt.Errorf("checkout.Rename: path traversal in %s: %w", opts.To, err)
+		}
 		if err := c.moveFile(oldPath, newPath, perm); err != nil {
 			return fmt.Errorf("checkout.Rename: %w", err)
 		}
@@ -172,8 +178,14 @@ func (c *Checkout) RevertRename(name string, doFsMove bool) (bool, error) {
 			return false, fmt.Errorf("checkout.RevertRename: %w", err)
 		}
 
-		currentPath := filepath.Join(c.dir, name)
-		originalPath := filepath.Join(c.dir, oldOrigName)
+		currentPath, err := c.safePath(name)
+		if err != nil {
+			return false, fmt.Errorf("checkout.RevertRename: path traversal in %s: %w", name, err)
+		}
+		originalPath, err := c.safePath(oldOrigName)
+		if err != nil {
+			return false, fmt.Errorf("checkout.RevertRename: path traversal in %s: %w", oldOrigName, err)
+		}
 		if err := c.moveFile(currentPath, originalPath, perm); err != nil {
 			return false, fmt.Errorf("checkout.RevertRename: %w", err)
 		}

@@ -19,7 +19,10 @@ func (c *Checkout) FileContent(name string) ([]byte, error) {
 		panic("checkout.FileContent: empty name")
 	}
 
-	fullPath := filepath.Join(c.dir, name)
+	fullPath, err := c.safePath(name)
+	if err != nil {
+		return nil, fmt.Errorf("checkout.FileContent: %w", err)
+	}
 	data, err := c.env.Storage.ReadFile(fullPath)
 	if err != nil {
 		return nil, fmt.Errorf("checkout.FileContent: %w", err)
@@ -47,7 +50,10 @@ func (c *Checkout) WriteManifest(flags ManifestFlags) error {
 			return fmt.Errorf("checkout.WriteManifest: expand manifest: %w", err)
 		}
 
-		manifestPath := filepath.Join(c.dir, "manifest")
+		manifestPath, err := c.safePath("manifest")
+		if err != nil {
+			return fmt.Errorf("checkout.WriteManifest: %w", err)
+		}
 		if err := c.env.Storage.WriteFile(manifestPath, manifestContent, os.FileMode(0o644)); err != nil {
 			return fmt.Errorf("checkout.WriteManifest: write manifest: %w", err)
 		}
@@ -56,13 +62,26 @@ func (c *Checkout) WriteManifest(flags ManifestFlags) error {
 	// Write UUID file
 	if flags&ManifestUUID != 0 {
 		uuidContent := []byte(uuid + "\n")
-		uuidPath := filepath.Join(c.dir, "manifest.uuid")
+		uuidPath, err := c.safePath("manifest.uuid")
+		if err != nil {
+			return fmt.Errorf("checkout.WriteManifest: %w", err)
+		}
 		if err := c.env.Storage.WriteFile(uuidPath, uuidContent, os.FileMode(0o644)); err != nil {
 			return fmt.Errorf("checkout.WriteManifest: write manifest.uuid: %w", err)
 		}
 	}
 
 	return nil
+}
+
+// safePath validates that name is within the checkout directory and returns
+// the full absolute path. Panics if c is nil or name is empty.
+func (c *Checkout) safePath(name string) (string, error) {
+	clean, err := c.CheckFilename(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(c.dir, clean), nil
 }
 
 // CheckFilename canonicalizes and validates that a filename is within the checkout directory.
