@@ -119,3 +119,171 @@ func TestNeedsReindex_AfterCheckin(t *testing.T) {
 		t.Fatal("expected NeedsReindex=true after checkin")
 	}
 }
+
+func TestRebuildIndex_IndexesFiles(t *testing.T) {
+	r := newTestRepo(t)
+
+	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files: []manifest.File{
+			{Name: "main.go", Content: []byte("package main\n\nfunc handleSync() {}\n")},
+			{Name: "README.md", Content: []byte("# Hello World\n")},
+		},
+		Comment: "initial",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := search.Open(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.RebuildIndex(); err != nil {
+		t.Fatal(err)
+	}
+
+	// After rebuild, NeedsReindex should be false
+	needs, err := idx.NeedsReindex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if needs {
+		t.Fatal("expected NeedsReindex=false after rebuild")
+	}
+}
+
+func TestRebuildIndex_SkipsBinaries(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Search implementation (Task 4)")
+	}
+	r := newTestRepo(t)
+
+	binaryContent := make([]byte, 100)
+	binaryContent[50] = 0x00 // null byte
+	copy(binaryContent, []byte("not really text"))
+
+	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files: []manifest.File{
+			{Name: "text.txt", Content: []byte("searchable content here")},
+			{Name: "image.bin", Content: binaryContent},
+		},
+		Comment: "with binary",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := search.Open(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.RebuildIndex(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify text file IS searchable
+	results, err := idx.Search(search.Query{Term: "searchable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Path != "text.txt" {
+		t.Fatalf("expected text.txt, got %s", results[0].Path)
+	}
+
+	// Verify binary file is NOT searchable
+	binaryResults, err := idx.Search(search.Query{Term: "not really text"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(binaryResults) != 0 {
+		t.Fatalf("expected 0 results for binary content, got %d", len(binaryResults))
+	}
+}
+
+func TestRebuildIndex_HandlesDeltaChains(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Search implementation (Task 4)")
+	}
+	r := newTestRepo(t)
+
+	// First checkin
+	rid1, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "data.txt", Content: []byte("original content")}},
+		Comment: "first",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Second checkin with Delta=true — blob stored as delta, not full content
+	_, _, err = manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "data.txt", Content: []byte("modified content")}},
+		Comment: "second",
+		User:    "test",
+		Parent:  rid1,
+		Delta:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := search.Open(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.RebuildIndex(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should find the expanded (modified) content, not the delta bytes
+	results, err := idx.Search(search.Query{Term: "modified"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for delta-expanded content, got %d", len(results))
+	}
+}
+
+func TestRebuildIndex_Idempotent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Search implementation (Task 4)")
+	}
+	r := newTestRepo(t)
+
+	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "a.txt", Content: []byte("hello world")}},
+		Comment: "initial",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := search.Open(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Rebuild twice — second should no-op
+	if err := idx.RebuildIndex(); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.RebuildIndex(); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := idx.Search(search.Query{Term: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result after double rebuild, got %d", len(results))
+	}
+}
