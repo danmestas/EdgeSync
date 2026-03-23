@@ -27,6 +27,16 @@ type TagOpts struct {
 	Time      time.Time
 }
 
+// ApplyOpts describes a tag application from an existing control artifact.
+type ApplyOpts struct {
+	TargetRID libfossil.FslID // Artifact to tag.
+	SrcRID    libfossil.FslID // Control artifact that introduced this tag (0 for inline T-cards).
+	TagName   string
+	TagType   int    // TagCancel, TagSingleton, or TagPropagating.
+	Value     string
+	MTime     float64 // Julian day.
+}
+
 // AddTag creates a control artifact that adds or cancels a tag on a target checkin.
 // It stores the artifact as a blob, ensures the tag name exists in the tag table,
 // and inserts/replaces a row in the tagxref table.
@@ -123,6 +133,48 @@ func AddTag(r *repo.Repo, opts TagOpts) (libfossil.FslID, error) {
 		return 0, fmt.Errorf("tag.AddTag: %w", err)
 	}
 	return controlRid, nil
+}
+
+// ApplyTag inserts a tagxref row and propagates without creating a control artifact.
+// Used by Crosslink to process existing control artifacts.
+func ApplyTag(r *repo.Repo, opts ApplyOpts) error {
+	if r == nil {
+		panic("tag.ApplyTag: r must not be nil")
+	}
+	if opts.TagName == "" {
+		panic("tag.ApplyTag: opts.TagName must not be empty")
+	}
+	if opts.TargetRID <= 0 {
+		panic("tag.ApplyTag: opts.TargetRID must be positive")
+	}
+
+	return r.WithTx(func(tx *db.Tx) error {
+		tagid, err := ensureTag(tx, opts.TagName)
+		if err != nil {
+			return fmt.Errorf("ensure tag %q: %w", opts.TagName, err)
+		}
+
+		if _, err := tx.Exec(
+			`INSERT OR REPLACE INTO tagxref(tagid, tagtype, srcid, origid, value, mtime, rid)
+			 VALUES(?, ?, ?, ?, ?, ?, ?)`,
+			tagid, opts.TagType, opts.SrcRID, opts.TargetRID, opts.Value, opts.MTime, opts.TargetRID,
+		); err != nil {
+			return fmt.Errorf("tagxref insert: %w", err)
+		}
+
+		// Special: bgcolor updates event table.
+		if opts.TagName == "bgcolor" && opts.TagType == TagPropagating {
+			tx.Exec("UPDATE event SET bgcolor=? WHERE objid=?", opts.Value, opts.TargetRID)
+		}
+
+		if opts.TagType == TagPropagating || opts.TagType == TagCancel {
+			if err := propagate(tx, tagid, opts.TagType, opts.TargetRID, opts.MTime, opts.Value, opts.TagName, opts.TargetRID); err != nil {
+				return fmt.Errorf("propagate: %w", err)
+			}
+		}
+
+		return nil
+	})
 }
 
 // ensureTag returns the tagid for the given tag name, creating it if it doesn't exist.

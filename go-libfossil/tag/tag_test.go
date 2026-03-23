@@ -295,3 +295,39 @@ func TestPropagateBgcolor(t *testing.T) {
 		t.Errorf("B bgcolor = %q, want %q", bgcolor, "#ff0000")
 	}
 }
+
+func TestApplyTag(t *testing.T) {
+	r := setupTestRepo(t)
+
+	ridA := makeCheckin(t, r, 0, "a.txt", "aaa", "commit A")
+	ridB := makeCheckin(t, r, ridA, "a.txt", "bbb", "commit B")
+
+	err := ApplyTag(r, ApplyOpts{
+		TargetRID: libfossil.FslID(ridA),
+		SrcRID:    999,
+		TagName:   "sym-trunk",
+		TagType:   TagPropagating,
+		Value:     "",
+		MTime:     libfossil.TimeToJulian(time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)),
+	})
+	if err != nil {
+		t.Fatalf("ApplyTag: %v", err)
+	}
+
+	// Verify tagxref at A has srcid=999.
+	var srcid int64
+	r.DB().QueryRow(
+		"SELECT srcid FROM tagxref JOIN tag USING(tagid) WHERE tagname='sym-trunk' AND rid=?", ridA,
+	).Scan(&srcid)
+	if srcid != 999 {
+		t.Errorf("A srcid=%d, want 999", srcid)
+	}
+
+	// Verify propagated to B with srcid=0.
+	r.DB().QueryRow(
+		"SELECT srcid FROM tagxref JOIN tag USING(tagid) WHERE tagname='sym-trunk' AND rid=?", ridB,
+	).Scan(&srcid)
+	if srcid != 0 {
+		t.Errorf("B srcid=%d, want 0 (propagated)", srcid)
+	}
+}
