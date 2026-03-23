@@ -88,7 +88,9 @@ func TestTransaction(t *testing.T) {
 	}
 	defer d.Close()
 
-	d.Exec("CREATE TABLE test(id INTEGER PRIMARY KEY, val TEXT)")
+	if _, err := d.Exec("CREATE TABLE test(id INTEGER PRIMARY KEY, val TEXT)"); err != nil {
+		t.Fatalf("Exec CREATE: %v", err)
+	}
 
 	// Commit case
 	err = d.WithTx(func(tx *db.Tx) error {
@@ -100,21 +102,27 @@ func TestTransaction(t *testing.T) {
 	}
 
 	var count int
-	d.QueryRow("SELECT count(*) FROM test").Scan(&count)
+	if err := d.QueryRow("SELECT count(*) FROM test").Scan(&count); err != nil {
+		t.Fatalf("count query: %v", err)
+	}
 	if count != 1 {
 		t.Fatalf("count after commit = %d, want 1", count)
 	}
 
 	// Rollback case
 	err = d.WithTx(func(tx *db.Tx) error {
-		tx.Exec("INSERT INTO test(val) VALUES(?)", "rolled-back")
+		if _, err := tx.Exec("INSERT INTO test(val) VALUES(?)", "rolled-back"); err != nil {
+			return err
+		}
 		return fmt.Errorf("deliberate error")
 	})
 	if err == nil {
 		t.Fatal("WithTx should return error")
 	}
 
-	d.QueryRow("SELECT count(*) FROM test").Scan(&count)
+	if err := d.QueryRow("SELECT count(*) FROM test").Scan(&count); err != nil {
+		t.Fatalf("count query after rollback: %v", err)
+	}
 	if count != 1 {
 		t.Fatalf("count after rollback = %d, want 1", count)
 	}
@@ -261,7 +269,9 @@ func TestOpenWithDefaults(t *testing.T) {
 	t.Logf("opened with driver: %s", d.Driver())
 
 	var mode string
-	d.QueryRow("PRAGMA journal_mode").Scan(&mode)
+	if err := d.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatalf("journal_mode query: %v", err)
+	}
 	if mode != "wal" {
 		t.Fatalf("journal_mode = %q, want wal", mode)
 	}
@@ -280,7 +290,9 @@ func TestOpenWithCustomPragmas(t *testing.T) {
 	defer d.Close()
 
 	var mode string
-	d.QueryRow("PRAGMA journal_mode").Scan(&mode)
+	if err := d.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatalf("journal_mode query: %v", err)
+	}
 	if mode != "wal" {
 		t.Fatalf("journal_mode = %q, want wal (default should still apply)", mode)
 	}

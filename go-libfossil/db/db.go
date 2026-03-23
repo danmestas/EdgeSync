@@ -31,7 +31,7 @@ func OpenWith(path string, cfg OpenConfig) (*DB, error) {
 		driver = registered.Name
 	}
 
-	pragmas := defaultPragmas()
+	pragmas := DefaultPragmas()
 	for k, v := range cfg.Pragmas {
 		pragmas[k] = v
 	}

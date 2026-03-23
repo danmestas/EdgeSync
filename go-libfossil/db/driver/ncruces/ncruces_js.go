@@ -19,6 +19,9 @@ func init() {
 }
 
 func buildDSN(path string, pragmas map[string]string) string {
+	if path == "" {
+		panic("ncruces.buildDSN: path must not be empty")
+	}
 	var parts []string
 	parts = append(parts, "vfs=opfs")
 	for k, v := range pragmas {

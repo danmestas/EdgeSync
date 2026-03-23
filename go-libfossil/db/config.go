@@ -7,7 +7,6 @@ type OpenConfig struct {
 }
 
 // DefaultPragmas returns the default pragma settings.
-// Exported for testing.
 func DefaultPragmas() map[string]string {
 	m := map[string]string{
 		"journal_mode": "WAL",
@@ -18,8 +17,4 @@ func DefaultPragmas() map[string]string {
 		m[k] = v
 	}
 	return m
-}
-
-func defaultPragmas() map[string]string {
-	return DefaultPragmas()
 }

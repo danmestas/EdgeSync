@@ -16,6 +16,9 @@ func init() {
 }
 
 func buildDSN(path string, pragmas map[string]string) string {
+	if path == "" {
+		panic("modernc.buildDSN: path must not be empty")
+	}
 	if len(pragmas) == 0 {
 		return path
 	}

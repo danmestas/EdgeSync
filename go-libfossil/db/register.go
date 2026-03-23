@@ -22,11 +22,17 @@ func Register(cfg DriverConfig) {
 		panic("db: BuildDSN must not be nil")
 	}
 	registered = &cfg
+	if registered.Name == "" || registered.BuildDSN == nil {
+		panic("db: registration postcondition failed")
+	}
 }
 
-// RegisteredDriver returns the currently registered driver config, or nil if none.
-// Primarily for testing.
+// RegisteredDriver returns a copy of the currently registered driver config, or nil if none.
 func RegisteredDriver() *DriverConfig {
-	return registered
+	if registered == nil {
+		return nil
+	}
+	cfg := *registered
+	return &cfg
 }
 
