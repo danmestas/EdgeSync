@@ -456,7 +456,7 @@ func doStartAgent(natsWsURL string) {
 	cfg := agent.Config{
 		RepoPath:     repoPath,
 		NATSUrl:      "nats://browser",
-		PollInterval: 10 * time.Second,
+		PollInterval: 24 * time.Hour, // Notify-driven — poll is just a fallback.
 		Push:         true,
 		Pull:         true,
 		UV:           true, // Enable UV sync for draft propagation.
