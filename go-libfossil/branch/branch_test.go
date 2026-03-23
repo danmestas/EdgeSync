@@ -77,3 +77,62 @@ func TestCreate(t *testing.T) {
 		t.Errorf("sym-trunk should be cancelled on branch, count=%d", oldSymCount)
 	}
 }
+
+func TestList(t *testing.T) {
+	r := setupTestRepo(t)
+
+	parentRid, _, _ := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "a.txt", Content: []byte("a")}},
+		Comment: "initial",
+		User:    "testuser",
+		Time:    time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
+	})
+
+	Create(r, CreateOpts{Name: "feature-a", Parent: parentRid, User: "testuser", Time: time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)})
+	Create(r, CreateOpts{Name: "feature-b", Parent: parentRid, User: "testuser", Time: time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)})
+
+	branches, err := List(r)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+
+	names := map[string]bool{}
+	for _, b := range branches {
+		names[b.Name] = true
+		t.Logf("branch: %s closed=%v checkins=%d", b.Name, b.IsClosed, b.CheckinCount)
+	}
+	if !names["feature-a"] {
+		t.Error("missing branch feature-a")
+	}
+	if !names["feature-b"] {
+		t.Error("missing branch feature-b")
+	}
+}
+
+func TestClose(t *testing.T) {
+	r := setupTestRepo(t)
+
+	parentRid, _, _ := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "a.txt", Content: []byte("a")}},
+		Comment: "initial",
+		User:    "testuser",
+		Time:    time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
+	})
+
+	Create(r, CreateOpts{Name: "done-branch", Parent: parentRid, User: "testuser", Time: time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC)})
+
+	if err := Close(r, "done-branch", "testuser"); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	branches, _ := List(r)
+	for _, b := range branches {
+		if b.Name == "done-branch" {
+			if !b.IsClosed {
+				t.Error("branch done-branch should be closed")
+			}
+			return
+		}
+	}
+	t.Error("done-branch not found in List")
+}
