@@ -503,9 +503,8 @@ func storeReceivedFile(r *repo.Repo, uuid, deltaSrc string, payload []byte) erro
 	}
 
 	return r.WithTx(func(tx *db.Tx) error {
-		if rid, ok := blob.Exists(tx, uuid); ok {
-			_, err := tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid)
-			return err
+		if _, ok := blob.Exists(tx, uuid); ok {
+			return nil
 		}
 		compressed, err := blob.Compress(fullContent)
 		if err != nil {

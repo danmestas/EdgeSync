@@ -50,7 +50,7 @@ func Checkin(r *repo.Repo, opts CheckinOpts) (manifestRid libfossil.FslID, manif
 	}
 
 	err = r.WithTx(func(tx *db.Tx) error {
-		fCards, txErr := storeFileBlobs(tx, opts.Files)
+		fCards, fileRids, txErr := storeFileBlobs(tx, opts.Files)
 		if txErr != nil {
 			return txErr
 		}
@@ -69,7 +69,19 @@ func Checkin(r *repo.Repo, opts CheckinOpts) (manifestRid libfossil.FslID, manif
 			return txErr
 		}
 
-		return markLeafAndEvent(tx, opts, manifestRid)
+		if txErr := markLeafAndEvent(tx, opts, manifestRid); txErr != nil {
+			return txErr
+		}
+
+		// Mark file blobs as unsent so sync pushes them.
+		// (unclustered is handled by blob.Store automatically.)
+		for _, frid := range fileRids {
+			if _, err := tx.Exec("INSERT OR IGNORE INTO unsent(rid) VALUES(?)", frid); err != nil {
+				return fmt.Errorf("unsent file: %w", err)
+			}
+		}
+
+		return nil
 	})
 	if err != nil {
 		return 0, "", fmt.Errorf("manifest.Checkin: %w", err)
@@ -77,16 +89,18 @@ func Checkin(r *repo.Repo, opts CheckinOpts) (manifestRid libfossil.FslID, manif
 	return manifestRid, manifestUUID, nil
 }
 
-func storeFileBlobs(tx *db.Tx, files []File) ([]deck.FileCard, error) {
+func storeFileBlobs(tx *db.Tx, files []File) ([]deck.FileCard, []libfossil.FslID, error) {
 	fCards := make([]deck.FileCard, len(files))
+	var rids []libfossil.FslID
 	for i, f := range files {
-		_, uuid, err := blob.Store(tx, f.Content)
+		rid, uuid, err := blob.Store(tx, f.Content)
 		if err != nil {
-			return nil, fmt.Errorf("storing file %q: %w", f.Name, err)
+			return nil, nil, fmt.Errorf("storing file %q: %w", f.Name, err)
 		}
 		fCards[i] = deck.FileCard{Name: f.Name, UUID: uuid, Perm: f.Perm}
+		rids = append(rids, rid)
 	}
-	return fCards, nil
+	return fCards, rids, nil
 }
 
 func buildCheckinDeck(tx *db.Tx, opts CheckinOpts, fCards []deck.FileCard) (*deck.Deck, error) {
@@ -206,10 +220,7 @@ func markLeafAndEvent(tx *db.Tx, opts CheckinOpts, manifestRid libfossil.FslID) 
 		}
 	}
 
-	// unclustered + unsent
-	if _, err := tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", manifestRid); err != nil {
-		return fmt.Errorf("unclustered: %w", err)
-	}
+	// Mark manifest as unsent so sync pushes it (unclustered is handled by blob.Store).
 	if _, err := tx.Exec("INSERT OR IGNORE INTO unsent(rid) VALUES(?)", manifestRid); err != nil {
 		return fmt.Errorf("unsent: %w", err)
 	}

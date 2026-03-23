@@ -169,15 +169,11 @@ func TestBuildRequestHasPragmaClientVersion(t *testing.T) {
 func TestBuildRequestIGotFromUnclustered(t *testing.T) {
 	s, r := newTestSession(t, SyncOpts{Push: true, ServerCode: "sc", ProjectCode: "pc"})
 
-	// Store a blob and add it to unclustered
+	// Store a blob — blob.Store auto-marks unclustered.
 	content := []byte("test artifact for igot")
-	rid, uuid, err := blob.Store(r.DB(), content)
+	_, uuid, err := blob.Store(r.DB(), content)
 	if err != nil {
 		t.Fatalf("blob.Store: %v", err)
-	}
-	_, err = r.DB().Exec("INSERT INTO unclustered(rid) VALUES(?)", rid)
-	if err != nil {
-		t.Fatalf("insert unclustered: %v", err)
 	}
 
 	msg, err := s.buildRequest(0)
@@ -554,12 +550,9 @@ func BenchmarkBuildRequest(b *testing.B) {
 	// Populate 100 unclustered artifacts
 	for i := 0; i < 100; i++ {
 		content := []byte(fmt.Sprintf("benchmark artifact %d", i))
-		rid, _, err := blob.Store(r.DB(), content)
+		_, _, err := blob.Store(r.DB(), content)
 		if err != nil {
 			b.Fatalf("blob.Store: %v", err)
-		}
-		if _, err := r.DB().Exec("INSERT INTO unclustered(rid) VALUES(?)", rid); err != nil {
-			b.Fatalf("insert unclustered: %v", err)
 		}
 	}
 

@@ -102,10 +102,6 @@ func TestE2EPushFromLeaf(t *testing.T) {
 			return err
 		}
 		uuid = u
-		_, err = tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid)
-		if err != nil {
-			return err
-		}
 		_, err = tx.Exec("INSERT OR IGNORE INTO unsent(rid) VALUES(?)", rid)
 		return err
 	})
@@ -159,7 +155,6 @@ func TestE2EBidirectional(t *testing.T) {
 			return err
 		}
 		leafUUID = u
-		tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid)
 		tx.Exec("INSERT OR IGNORE INTO unsent(rid) VALUES(?)", rid)
 		return nil
 	})

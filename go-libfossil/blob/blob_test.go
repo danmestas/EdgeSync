@@ -122,6 +122,64 @@ func TestStoreDelta(t *testing.T) {
 	}
 }
 
+func TestStoreMarksUnclustered(t *testing.T) {
+	d := setupTestDB(t)
+	content := []byte("unclustered test blob")
+
+	rid, _, err := Store(d, content)
+	if err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+
+	var count int
+	d.QueryRow("SELECT count(*) FROM unclustered WHERE rid=?", rid).Scan(&count)
+	if count != 1 {
+		t.Fatalf("unclustered count = %d, want 1", count)
+	}
+}
+
+func TestStoreDeltaMarksUnclustered(t *testing.T) {
+	d := setupTestDB(t)
+	source := []byte("delta source content here")
+	target := []byte("delta target content here")
+
+	srcRid, _, _ := Store(d, source)
+	tgtRid, _, err := StoreDelta(d, target, srcRid)
+	if err != nil {
+		t.Fatalf("StoreDelta: %v", err)
+	}
+
+	for _, rid := range []int64{int64(srcRid), int64(tgtRid)} {
+		var count int
+		d.QueryRow("SELECT count(*) FROM unclustered WHERE rid=?", rid).Scan(&count)
+		if count != 1 {
+			t.Fatalf("unclustered count for rid %d = %d, want 1", rid, count)
+		}
+	}
+}
+
+func TestStoreExistingBlobSkipsUnclustered(t *testing.T) {
+	d := setupTestDB(t)
+	content := []byte("idempotent blob test")
+
+	rid, _, _ := Store(d, content)
+	d.Exec("DELETE FROM unclustered WHERE rid=?", rid)
+
+	rid2, _, err := Store(d, content)
+	if err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+	if rid2 != rid {
+		t.Fatalf("rid = %d, want %d (same blob)", rid2, rid)
+	}
+
+	var count int
+	d.QueryRow("SELECT count(*) FROM unclustered WHERE rid=?", rid).Scan(&count)
+	if count != 0 {
+		t.Fatalf("unclustered count = %d, want 0 (already-existing blob)", count)
+	}
+}
+
 func BenchmarkStore(b *testing.B) {
 	d := func() *db.DB {
 		path := filepath.Join(b.TempDir(), "bench.fossil")
