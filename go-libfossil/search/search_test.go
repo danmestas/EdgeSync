@@ -3,6 +3,7 @@ package search_test
 import (
 	"testing"
 
+	"github.com/dmestas/edgesync/go-libfossil/manifest"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/search"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
@@ -73,5 +74,48 @@ func TestDrop(t *testing.T) {
 	_, err = idx2.Search(search.Query{Term: "test"})
 	if err != nil {
 		t.Fatal("search after drop+reopen failed:", err)
+	}
+}
+
+func TestNeedsReindex_EmptyRepo(t *testing.T) {
+	r := newTestRepo(t)
+	idx, err := search.Open(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	needs, err := idx.NeedsReindex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Empty repo has no trunk tip — nothing to index
+	if needs {
+		t.Fatal("expected NeedsReindex=false for empty repo")
+	}
+}
+
+func TestNeedsReindex_AfterCheckin(t *testing.T) {
+	r := newTestRepo(t)
+
+	// manifest.Checkin creates repos programmatically — no fossil binary needed.
+	// manifest.File fields: Name string, Content []byte, Perm string
+	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "hello.txt", Content: []byte("hello world")}},
+		Comment: "initial",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := search.Open(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	needs, err := idx.NeedsReindex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !needs {
+		t.Fatal("expected NeedsReindex=true after checkin")
 	}
 }
