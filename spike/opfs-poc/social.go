@@ -170,7 +170,7 @@ func publishHeartbeat(nc *nats.Conn, user string) {
 
 func evictStalePeers() {
 	peerMu.Lock()
-	hadCoEditors := fileHasCoEditorsLocked(myOpenFile)
+	hadPeers := hasPeersLocked()
 	now := time.Now()
 	for id, lastSeen := range peerLastSeen {
 		if now.Sub(lastSeen) > presenceTimeout {
@@ -178,11 +178,11 @@ func evictStalePeers() {
 			delete(peerFiles, id)
 		}
 	}
-	hasCoEditors := fileHasCoEditorsLocked(myOpenFile)
+	stillHasPeers := hasPeersLocked()
 	peerMu.Unlock()
 
-	// If we lost our last co-editor, auto-commit the OPFS working tree.
-	if hadCoEditors && !hasCoEditors {
+	// If all peers left, auto-commit any uncommitted changes.
+	if hadPeers && !stillHasPeers {
 		go func() {
 			if currentCheckout == nil {
 				return
@@ -191,7 +191,7 @@ func evictStalePeers() {
 			if err != nil || len(changes) == 0 {
 				return
 			}
-			log("[drafts] collaboration ended, auto-committing...")
+			log("[drafts] all peers left, auto-committing...")
 			_, uuid, err := currentCheckout.CommitAll("auto: collaboration ended", "browser-"+myPeerID)
 			if err != nil {
 				log(fmt.Sprintf("[drafts] auto-commit failed: %v", err))
@@ -208,14 +208,10 @@ func evictStalePeers() {
 	}
 }
 
-// fileHasCoEditorsLocked checks for co-editors without taking the lock.
-// Caller must hold peerMu.
-func fileHasCoEditorsLocked(path string) bool {
-	if path == "" {
-		return false
-	}
-	for id, file := range peerFiles {
-		if id != myPeerID && file == path {
+// hasPeersLocked checks for other peers. Caller must hold peerMu.
+func hasPeersLocked() bool {
+	for id := range peerLastSeen {
+		if id != myPeerID {
 			return true
 		}
 	}
@@ -244,15 +240,12 @@ func broadcastPeers() {
 	postResult("peers", toJSON(list))
 }
 
-// fileHasCoEditors returns true if another peer has the given file open.
-func fileHasCoEditors(path string) bool {
-	if path == "" {
-		return false
-	}
+// hasPeers returns true if any other peer is connected.
+func hasPeers() bool {
 	peerMu.Lock()
 	defer peerMu.Unlock()
-	for id, file := range peerFiles {
-		if id != myPeerID && file == path {
+	for id := range peerLastSeen {
+		if id != myPeerID {
 			return true
 		}
 	}
@@ -345,26 +338,23 @@ func registerSocialCallbacks() {
 		return nil
 	}))
 
-	// _saveDraft publishes content to co-editors via NATS (only when co-editing).
+	// _saveDraft publishes content to peers via NATS when others are connected.
 	js.Global().Set("_saveDraft", js.FuncOf(func(_ js.Value, args []js.Value) any {
 		if len(args) < 2 {
 			return nil
 		}
 		path := args[0].String()
 		content := args[1].String()
-		// Only publish draft if another peer has this file open.
-		if !fileHasCoEditors(path) {
+		// Only publish if there are other peers connected (any file).
+		if !hasPeers() {
 			return nil
 		}
 		go publishDraft(path, content)
 		return nil
 	}))
 
-	// _hasCoEditors checks if the given file has other peers editing it.
-	js.Global().Set("_hasCoEditors", js.FuncOf(func(_ js.Value, args []js.Value) any {
-		if len(args) < 1 {
-			return js.ValueOf(false)
-		}
-		return js.ValueOf(fileHasCoEditors(args[0].String()))
+	// _hasPeers checks if any other peers are connected.
+	js.Global().Set("_hasPeers", js.FuncOf(func(_ js.Value, _ []js.Value) any {
+		return js.ValueOf(hasPeers())
 	}))
 }
