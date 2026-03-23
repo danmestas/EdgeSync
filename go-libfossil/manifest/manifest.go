@@ -220,7 +220,7 @@ func markLeafAndEvent(tx *db.Tx, opts CheckinOpts, manifestRid libfossil.FslID) 
 		}
 	}
 
-	// unsent (unclustered is handled by blob.Store automatically)
+	// Mark manifest as unsent so sync pushes it (unclustered is handled by blob.Store).
 	if _, err := tx.Exec("INSERT OR IGNORE INTO unsent(rid) VALUES(?)", manifestRid); err != nil {
 		return fmt.Errorf("unsent: %w", err)
 	}

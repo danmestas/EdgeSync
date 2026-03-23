@@ -264,9 +264,12 @@ func fossilInit(t *testing.T, dir, name string) string {
 	if err != nil {
 		t.Fatalf("fossil init: %v\n%s", err, out)
 	}
-	// Add nobody user with capabilities for unauthenticated sync.
+	// Grant nobody user capabilities for unauthenticated sync.
+	// fossil init may already create the nobody user, so "user new" can fail — that's fine.
 	exec.Command("fossil", "user", "new", "nobody", "", "cghijknorswz", "-R", path).Run()
-	exec.Command("fossil", "user", "capabilities", "nobody", "cghijknorswz", "-R", path).Run()
+	if out, err := exec.Command("fossil", "user", "capabilities", "nobody", "cghijknorswz", "-R", path).CombinedOutput(); err != nil {
+		t.Fatalf("fossil user capabilities nobody: %v\n%s", err, out)
+	}
 	return path
 }
 
@@ -276,7 +279,9 @@ func fossilCommitFiles(t *testing.T, repoPath, workDir string, files map[string]
 	t.Helper()
 	if workDir == "" {
 		workDir = filepath.Join(t.TempDir(), "fossil-work")
-		os.MkdirAll(workDir, 0755)
+		if err := os.MkdirAll(workDir, 0755); err != nil {
+			t.Fatalf("mkdir fossil-work: %v", err)
+		}
 		cmd := exec.Command("fossil", "open", repoPath)
 		cmd.Dir = workDir
 		out, err := cmd.CombinedOutput()
@@ -286,14 +291,18 @@ func fossilCommitFiles(t *testing.T, repoPath, workDir string, files map[string]
 	}
 	for name, content := range files {
 		fpath := filepath.Join(workDir, name)
-		os.MkdirAll(filepath.Dir(fpath), 0755)
+		if err := os.MkdirAll(filepath.Dir(fpath), 0755); err != nil {
+			t.Fatalf("mkdir for %s: %v", name, err)
+		}
 		if err := os.WriteFile(fpath, []byte(content), 0644); err != nil {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
 	addCmd := exec.Command("fossil", "add", ".")
 	addCmd.Dir = workDir
-	addCmd.CombinedOutput()
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		t.Fatalf("fossil add: %v\n%s", err, out)
+	}
 
 	commitCmd := exec.Command("fossil", "commit", "-m", comment, "--no-warnings")
 	commitCmd.Dir = workDir
@@ -309,7 +318,10 @@ func fossilCommitFiles(t *testing.T, repoPath, workDir string, files map[string]
 func startFossilServe(t *testing.T, repoPath string) string {
 	t.Helper()
 	addr := freeAddr(t)
-	_, portStr, _ := net.SplitHostPort(addr)
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("SplitHostPort %s: %v", addr, err)
+	}
 
 	cmd := exec.Command("fossil", "server", "--port="+portStr, repoPath)
 	cmd.Stdout = os.Stderr
@@ -380,10 +392,12 @@ func testFossilToLeaf(t *testing.T, commits []map[string]string, messages []stri
 		workDir = fossilCommitFiles(t, fossilRepoPath, workDir, files, messages[i])
 	}
 
-	// Close the fossil checkout to release locks.
+	// Close the fossil checkout to release locks (best-effort; serve works regardless).
 	closeCmd := exec.Command("fossil", "close", "--force")
 	closeCmd.Dir = workDir
-	closeCmd.Run()
+	if out, err := closeCmd.CombinedOutput(); err != nil {
+		t.Logf("fossil close: %v\n%s", err, out)
+	}
 
 	// 2. Start fossil serve.
 	serverURL := startFossilServe(t, fossilRepoPath)
@@ -502,9 +516,10 @@ func testLeafToLeaf(t *testing.T, checkins []checkinFiles, expected map[string]s
 	addr, cancel := serveLeafHTTP(t, leafAReopened)
 	defer cancel()
 
-	// 4. Sync leaf B from leaf A.
+	// 4. Sync leaf B from leaf A (bounded: must converge within 10 rounds).
 	transport := &sync.HTTPTransport{URL: fmt.Sprintf("http://%s", addr)}
 	ctx := context.Background()
+	converged := false
 	for round := 0; round < 10; round++ {
 		result, err := sync.Sync(ctx, leafB, transport, sync.SyncOpts{
 			Push:        true,
@@ -516,8 +531,12 @@ func testLeafToLeaf(t *testing.T, checkins []checkinFiles, expected map[string]s
 			t.Fatalf("sync round %d: %v", round, err)
 		}
 		if result.FilesSent == 0 && result.FilesRecvd == 0 {
+			converged = true
 			break
 		}
+	}
+	if !converged {
+		t.Fatal("sync did not converge within 10 rounds")
 	}
 
 	// 5. Crosslink leaf B (sync.Sync doesn't crosslink, unlike sync.Clone).
