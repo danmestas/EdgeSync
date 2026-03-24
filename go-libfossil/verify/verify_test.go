@@ -494,3 +494,75 @@ func TestVerify_AfterRebuild_IsClean(t *testing.T) {
 		t.Fatalf("expected clean verify after rebuild, got %d issues", len(report.Issues))
 	}
 }
+
+// TestRebuild_DeltaManifestExpansion verifies that rebuild correctly expands
+// delta manifests (B-card) to the full file set. Without expansion, only
+// changed files get mlink rows — inherited files from the baseline are lost.
+func TestRebuild_DeltaManifestExpansion(t *testing.T) {
+	r := newTestRepo(t)
+
+	// First checkin: two files
+	rid1, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files: []manifest.File{
+			{Name: "a.txt", Content: []byte("alpha")},
+			{Name: "b.txt", Content: []byte("bravo")},
+		},
+		Comment: "first",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Second checkin: delta manifest (only changes to a.txt, b.txt inherited)
+	_, _, err = manifest.Checkin(r, manifest.CheckinOpts{
+		Files: []manifest.File{
+			{Name: "a.txt", Content: []byte("alpha modified")},
+			{Name: "b.txt", Content: []byte("bravo")},
+		},
+		Comment: "second (delta)",
+		User:    "test",
+		Parent:  rid1,
+		Delta:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Count mlink rows before rebuild
+	var mlinkBefore int
+	r.DB().QueryRow("SELECT count(*) FROM mlink").Scan(&mlinkBefore)
+
+	// Delete all derived tables
+	for _, tbl := range []string{"event", "mlink", "plink", "tagxref", "filename", "leaf", "unclustered", "unsent"} {
+		r.DB().Exec("DELETE FROM " + tbl)
+	}
+
+	// Rebuild
+	_, err = verify.Rebuild(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Count mlink rows after rebuild
+	var mlinkAfter int
+	r.DB().QueryRow("SELECT count(*) FROM mlink").Scan(&mlinkAfter)
+
+	// The second checkin (delta) should have mlink rows for BOTH files
+	// (a.txt modified + b.txt inherited), not just a.txt.
+	if mlinkAfter < mlinkBefore {
+		t.Fatalf("delta manifest expansion: mlink before=%d after=%d (expected >=)", mlinkBefore, mlinkAfter)
+	}
+
+	// Verify clean
+	vReport, err := verify.Verify(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !vReport.OK() {
+		for _, iss := range vReport.Issues {
+			t.Logf("issue: %s", iss.Message)
+		}
+		t.Fatalf("expected clean verify after delta rebuild, got %d issues", len(vReport.Issues))
+	}
+}
