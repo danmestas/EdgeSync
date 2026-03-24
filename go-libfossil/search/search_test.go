@@ -10,6 +10,8 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/search"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
+
+	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/ncruces"
 )
 
 func newTestRepo(t *testing.T) *repo.Repo {
