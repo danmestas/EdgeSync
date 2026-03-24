@@ -12,6 +12,9 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/deck"
 	"github.com/dmestas/edgesync/go-libfossil/delta"
 	"github.com/dmestas/edgesync/go-libfossil/hash"
+	"github.com/dmestas/edgesync/go-libfossil/manifest"
+	"github.com/dmestas/edgesync/go-libfossil/repo"
+	"github.com/dmestas/edgesync/go-libfossil/simio"
 	"github.com/dmestas/edgesync/go-libfossil/sync"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
 )
@@ -436,4 +439,163 @@ func TestCloneCrosslinksManifests(t *testing.T) {
 	}
 
 	t.Logf("Clone crosslink: rounds=%d blobs=%d checkins=%d", result.Rounds, result.BlobsRecvd, result.CheckinsLinked)
+}
+
+// TestCloneViaHandler wires Clone() against HandleSync() with a real repo.
+// This is the integration test that catches protocol mismatches between
+// client and server — missing PushCard, missing completion signal, etc.
+func TestCloneViaHandler(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create source repo with a real checkin.
+	srcPath := filepath.Join(dir, "source.fossil")
+	srcRepo, err := repo.Create(srcPath, "testuser", simio.CryptoRand{})
+	if err != nil {
+		t.Fatalf("repo.Create: %v", err)
+	}
+	defer srcRepo.Close()
+
+	_, _, err = manifest.Checkin(srcRepo, manifest.CheckinOpts{
+		Comment: "initial commit",
+		User:    "testuser",
+		Files: []manifest.File{
+			{Name: "README.md", Content: []byte("# Test repo\n")},
+			{Name: "hello.txt", Content: []byte("hello world\n")},
+			{Name: "src/main.go", Content: []byte("package main\n")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Checkin: %v", err)
+	}
+
+	// Read source project-code for verification.
+	var srcProjectCode string
+	srcRepo.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&srcProjectCode)
+
+	// Wire Clone() against HandleSync() via MockTransport.
+	transport := &sync.MockTransport{
+		Handler: func(req *xfer.Message) *xfer.Message {
+			resp, err := sync.HandleSync(context.Background(), srcRepo, req)
+			if err != nil {
+				t.Fatalf("HandleSync: %v", err)
+			}
+			return resp
+		},
+	}
+
+	clonePath := filepath.Join(dir, "clone.fossil")
+	cloneRepo, result, err := sync.Clone(context.Background(), clonePath, transport, sync.CloneOpts{})
+	if err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	defer cloneRepo.Close()
+
+	// Verify blobs received (3 file blobs + 1 manifest).
+	if result.BlobsRecvd < 4 {
+		t.Errorf("BlobsRecvd = %d, want >= 4", result.BlobsRecvd)
+	}
+
+	// Verify crosslink produced a checkin.
+	if result.CheckinsLinked != 1 {
+		t.Errorf("CheckinsLinked = %d, want 1", result.CheckinsLinked)
+	}
+
+	// Verify project-code propagated.
+	if result.ProjectCode != srcProjectCode {
+		t.Errorf("ProjectCode = %q, want %q", result.ProjectCode, srcProjectCode)
+	}
+
+	// Verify tipRID query works (leaf + event tables populated).
+	var tipRID int64
+	err = cloneRepo.DB().QueryRow(`
+		SELECT l.rid FROM leaf l
+		JOIN event e ON e.objid=l.rid
+		WHERE e.type='ci'
+		ORDER BY e.mtime DESC LIMIT 1
+	`).Scan(&tipRID)
+	if err != nil {
+		t.Fatalf("tipRID query: %v", err)
+	}
+	if tipRID <= 0 {
+		t.Errorf("tipRID = %d, want > 0", tipRID)
+	}
+}
+
+// TestCloneViaHandlerMultipleCheckins verifies clone with parent-child checkins.
+func TestCloneViaHandlerMultipleCheckins(t *testing.T) {
+	dir := t.TempDir()
+
+	srcPath := filepath.Join(dir, "source.fossil")
+	srcRepo, err := repo.Create(srcPath, "testuser", simio.CryptoRand{})
+	if err != nil {
+		t.Fatalf("repo.Create: %v", err)
+	}
+	defer srcRepo.Close()
+
+	// First checkin.
+	rid1, _, err := manifest.Checkin(srcRepo, manifest.CheckinOpts{
+		Comment: "first",
+		User:    "testuser",
+		Files:   []manifest.File{{Name: "a.txt", Content: []byte("v1")}},
+	})
+	if err != nil {
+		t.Fatalf("Checkin 1: %v", err)
+	}
+
+	// Second checkin (child of first).
+	rid2, _, err := manifest.Checkin(srcRepo, manifest.CheckinOpts{
+		Comment: "second",
+		User:    "testuser",
+		Parent:  rid1,
+		Files:   []manifest.File{{Name: "a.txt", Content: []byte("v2")}, {Name: "b.txt", Content: []byte("new")}},
+	})
+	if err != nil {
+		t.Fatalf("Checkin 2: %v", err)
+	}
+
+	// Third checkin (child of second).
+	_, _, err = manifest.Checkin(srcRepo, manifest.CheckinOpts{
+		Comment: "third",
+		User:    "testuser",
+		Parent:  rid2,
+		Files:   []manifest.File{{Name: "a.txt", Content: []byte("v3")}, {Name: "b.txt", Content: []byte("new")}},
+	})
+	if err != nil {
+		t.Fatalf("Checkin 3: %v", err)
+	}
+
+	transport := &sync.MockTransport{
+		Handler: func(req *xfer.Message) *xfer.Message {
+			resp, err := sync.HandleSync(context.Background(), srcRepo, req)
+			if err != nil {
+				t.Fatalf("HandleSync: %v", err)
+			}
+			return resp
+		},
+	}
+
+	clonePath := filepath.Join(dir, "clone.fossil")
+	cloneRepo, result, err := sync.Clone(context.Background(), clonePath, transport, sync.CloneOpts{})
+	if err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	defer cloneRepo.Close()
+
+	if result.CheckinsLinked != 3 {
+		t.Errorf("CheckinsLinked = %d, want 3", result.CheckinsLinked)
+	}
+
+	// Verify plink has 2 parent-child links.
+	var plinkCount int
+	cloneRepo.DB().QueryRow("SELECT count(*) FROM plink").Scan(&plinkCount)
+	if plinkCount != 2 {
+		t.Errorf("plink count = %d, want 2", plinkCount)
+	}
+
+	// Verify 3 events.
+	var eventCount int
+	cloneRepo.DB().QueryRow("SELECT count(*) FROM event WHERE type='ci'").Scan(&eventCount)
+	if eventCount != 3 {
+		t.Errorf("event count = %d, want 3", eventCount)
+	}
 }

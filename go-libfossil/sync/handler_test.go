@@ -251,8 +251,8 @@ func TestHandleClonePagination(t *testing.T) {
 	}
 
 	seqnos2 := findCards[*xfer.CloneSeqNoCard](resp2)
-	if len(seqnos2) > 0 {
-		t.Fatal("page 2: should not have clone_seqno (all blobs served)")
+	if len(seqnos2) != 1 || seqnos2[0].SeqNo != 0 {
+		t.Fatalf("page 2: expected clone_seqno 0 (completion), got %v", seqnos2)
 	}
 }
 
@@ -462,5 +462,51 @@ func TestHandleSyncNoSpuriousGimmeForReceivedFile(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("HandleSync did not emit IGotCard for %s in response", uuid[:12])
+	}
+}
+
+func TestHandlerEmitsPushCardOnClone(t *testing.T) {
+	r := setupSyncTestRepo(t)
+
+	var projectCode, serverCode string
+	r.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projectCode)
+	r.DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&serverCode)
+
+	req := &xfer.Message{Cards: []xfer.Card{
+		&xfer.CloneCard{Version: 1},
+	}}
+	resp, err := HandleSync(context.Background(), r, req)
+	if err != nil {
+		t.Fatalf("HandleSync: %v", err)
+	}
+
+	pushCards := findCards[*xfer.PushCard](resp)
+	if len(pushCards) != 1 {
+		t.Fatalf("PushCard count = %d, want 1", len(pushCards))
+	}
+	if pushCards[0].ProjectCode != projectCode {
+		t.Errorf("ProjectCode = %q, want %q", pushCards[0].ProjectCode, projectCode)
+	}
+	if pushCards[0].ServerCode != serverCode {
+		t.Errorf("ServerCode = %q, want %q", pushCards[0].ServerCode, serverCode)
+	}
+}
+
+func TestHandlerNoPushCardOnPull(t *testing.T) {
+	r := setupSyncTestRepo(t)
+
+	req := &xfer.Message{Cards: []xfer.Card{
+		&xfer.PullCard{ServerCode: "test", ProjectCode: "test"},
+	}}
+	resp, err := HandleSync(context.Background(), r, req)
+	if err != nil {
+		t.Fatalf("HandleSync: %v", err)
+	}
+
+	// Server must NOT emit PushCard on sync/pull — real Fossil treats
+	// server-sent "push" as unknown command during sync.
+	pushCards := findCards[*xfer.PushCard](resp)
+	if len(pushCards) != 0 {
+		t.Fatalf("PushCard count = %d, want 0 (push is clone-only)", len(pushCards))
 	}
 }
