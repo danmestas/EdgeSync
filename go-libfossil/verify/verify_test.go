@@ -1,6 +1,7 @@
 package verify_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/dmestas/edgesync/go-libfossil/manifest"
@@ -334,6 +335,52 @@ func TestRebuild_Idempotent(t *testing.T) {
 	}
 }
 
+func TestRebuild_ReconstructsTags(t *testing.T) {
+	r := newTestRepo(t)
+	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "a.txt", Content: []byte("content")}},
+		Comment: "initial on trunk",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var tagxrefCount int
+	r.DB().QueryRow("SELECT count(*) FROM tagxref").Scan(&tagxrefCount)
+	if tagxrefCount == 0 {
+		t.Fatal("expected tagxref rows after checkin with trunk tags")
+	}
+
+	for _, tbl := range []string{"event", "mlink", "plink", "tagxref", "filename", "leaf", "unclustered", "unsent"} {
+		r.DB().Exec("DELETE FROM " + tbl)
+	}
+
+	report, err := verify.Rebuild(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = report
+
+	var newTagxrefCount int
+	r.DB().QueryRow("SELECT count(*) FROM tagxref").Scan(&newTagxrefCount)
+	if newTagxrefCount == 0 {
+		t.Fatal("expected tagxref rows after rebuild")
+	}
+
+	// Verify repo is clean
+	vReport, err := verify.Verify(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !vReport.OK() {
+		for _, iss := range vReport.Issues {
+			t.Logf("issue: %s", iss.Message)
+		}
+		t.Fatalf("expected clean verify after rebuild, got %d issues", len(vReport.Issues))
+	}
+}
+
 func TestVerify_DetectsIncorrectLeaf(t *testing.T) {
 	r := newTestRepo(t)
 	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
@@ -364,5 +411,86 @@ func TestVerify_DetectsIncorrectLeaf(t *testing.T) {
 			t.Logf("issue: kind=%d %s", iss.Kind, iss.Message)
 		}
 		t.Fatal("expected IssueLeafIncorrect")
+	}
+}
+
+func TestRebuild_BuggifyResilience(t *testing.T) {
+	r := newTestRepo(t)
+
+	// Create repo BEFORE enabling BUGGIFY
+	var files []manifest.File
+	for i := 0; i < 20; i++ {
+		files = append(files, manifest.File{
+			Name:    fmt.Sprintf("file%d.txt", i),
+			Content: []byte(fmt.Sprintf("content %d", i)),
+		})
+	}
+	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   files,
+		Comment: "buggify test",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Enable BUGGIFY after checkin
+	simio.EnableBuggify(42)
+	defer simio.DisableBuggify()
+
+	report, err := verify.Rebuild(r)
+	if err != nil {
+		// Rebuild may error if manifest blob is corrupted by BUGGIFY — acceptable
+		t.Logf("Rebuild under BUGGIFY returned error (expected): %v", err)
+		return
+	}
+
+	if len(report.TablesRebuilt) == 0 {
+		t.Fatal("expected TablesRebuilt after successful rebuild")
+	}
+	t.Logf("BUGGIFY rebuild: %d blobs checked, %d failed, %d skipped",
+		report.BlobsChecked, report.BlobsFailed, report.BlobsSkipped)
+}
+
+func TestVerify_AfterRebuild_IsClean(t *testing.T) {
+	r := newTestRepo(t)
+
+	rid1, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "a.txt", Content: []byte("alpha")}},
+		Comment: "first",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = manifest.Checkin(r, manifest.CheckinOpts{
+		Files: []manifest.File{
+			{Name: "a.txt", Content: []byte("alpha modified")},
+			{Name: "b.txt", Content: []byte("bravo")},
+		},
+		Comment: "second",
+		User:    "test",
+		Parent:  rid1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Rebuild from scratch
+	_, err = verify.Rebuild(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify should be completely clean
+	report, err := verify.Verify(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.OK() {
+		for _, iss := range report.Issues {
+			t.Logf("issue: kind=%d table=%s %s", iss.Kind, iss.Table, iss.Message)
+		}
+		t.Fatalf("expected clean verify after rebuild, got %d issues", len(report.Issues))
 	}
 }
