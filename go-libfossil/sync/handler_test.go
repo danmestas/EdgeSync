@@ -403,3 +403,64 @@ func TestHandleReqConfigMissing(t *testing.T) {
 		t.Fatal("should not return config for nonexistent key")
 	}
 }
+
+// TestHandleSyncNoSpuriousGimmeForReceivedFile verifies that HandleSync
+// does NOT emit a GimmeCard for a blob that was delivered as a FileCard
+// in the same request. Regression test for the igot-before-file bug:
+// if IGotCard is processed before FileCard, blob.Exists returns false
+// and a spurious GimmeCard is emitted, causing infinite sync loops.
+func TestHandleSyncNoSpuriousGimmeForReceivedFile(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	defer r.Close()
+
+	// Create a blob to push to the handler.
+	content := []byte("test content for spurious gimme check")
+	uuid := hash.SHA1(content)
+
+	// Build a request with BOTH IGotCard and FileCard for the same blob.
+	// This mimics what a sync client sends when pushing a new blob:
+	// it announces via igot AND delivers the file in the same round.
+	req := &xfer.Message{
+		Cards: []xfer.Card{
+			&xfer.PushCard{
+				ServerCode:  "test-server",
+				ProjectCode: "test-project",
+			},
+			&xfer.PullCard{
+				ServerCode:  "test-server",
+				ProjectCode: "test-project",
+			},
+			&xfer.IGotCard{UUID: uuid},
+			&xfer.FileCard{UUID: uuid, Content: content},
+		},
+	}
+
+	resp, err := HandleSync(context.Background(), r, req)
+	if err != nil {
+		t.Fatalf("HandleSync: %v", err)
+	}
+
+	// Check response for spurious gimme.
+	for _, card := range resp.Cards {
+		if g, ok := card.(*xfer.GimmeCard); ok && g.UUID == uuid {
+			t.Errorf("HandleSync emitted GimmeCard for %s which was delivered as FileCard in the same request — this causes infinite sync loops", uuid[:12])
+		}
+	}
+
+	// Verify the blob was actually stored.
+	if _, exists := blob.Exists(r.DB(), uuid); !exists {
+		t.Errorf("blob %s was not stored by HandleSync", uuid[:12])
+	}
+
+	// Verify the server acknowledges it via igot in the response.
+	found := false
+	for _, card := range resp.Cards {
+		if ig, ok := card.(*xfer.IGotCard); ok && ig.UUID == uuid {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("HandleSync did not emit IGotCard for %s in response", uuid[:12])
+	}
+}
