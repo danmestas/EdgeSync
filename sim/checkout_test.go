@@ -225,6 +225,166 @@ func checkoutExtract(t *testing.T, repoPath, checkoutDir string) *checkout.Check
 }
 
 // ---------------------------------------------------------------------------
+// Test 2: Commit on A → Sync → Update on B
+// ---------------------------------------------------------------------------
+
+// TestCheckout_CommitSyncUpdate proves the full edit cycle: commit on Leaf A,
+// sync to Leaf B via NATS, then update Leaf B's checkout to see new content.
+func TestCheckout_CommitSyncUpdate(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	seedFiles := map[string]string{
+		"doc.txt":    "original document content\n",
+		"config.yml": "setting: default\n",
+	}
+
+	// 1. Start embedded NATS.
+	natsURL := checkoutStartNATS(t)
+
+	// 2. Create Leaf A repo with initial checkin.
+	srcPath := checkoutCreateSeededRepo(t, dir, "leafA.fossil", seedFiles)
+
+	// 3. Create Leaf B empty repo with matching project-code.
+	dstPath := filepath.Join(dir, "leafB.fossil")
+	dstRepo, err := repo.Create(dstPath, "testuser", simio.CryptoRand{})
+	if err != nil {
+		t.Fatalf("repo.Create leafB: %v", err)
+	}
+	dstRepo.Close()
+	checkoutMatchProjectCode(t, srcPath, dstPath)
+
+	// 4. Count source blobs for convergence.
+	srcRepo, err := repo.Open(srcPath)
+	if err != nil {
+		t.Fatalf("repo.Open leafA: %v", err)
+	}
+	var srcBlobCount int
+	srcRepo.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&srcBlobCount)
+	srcRepo.Close()
+	t.Logf("leafA has %d blobs", srcBlobCount)
+
+	// 5. Start agents — Leaf A pushes+serves, Leaf B pulls.
+	leafA := checkoutStartAgent(t, srcPath, natsURL, true, true, true)
+	leafB := checkoutStartAgent(t, dstPath, natsURL, true, true, false)
+
+	// 6. Wait for initial sync convergence on Leaf B.
+	checkoutWaitForBlobCount(t, dstPath, srcBlobCount, 30*time.Second)
+
+	// 7. Stop both agents. Extract Leaf A checkout + Leaf B checkout.
+	leafA.Stop()
+	leafB.Stop()
+
+	coADir := filepath.Join(dir, "checkoutA")
+	coA := checkoutExtract(t, srcPath, coADir)
+
+	coBDir := filepath.Join(dir, "checkoutB")
+	coB := checkoutExtract(t, dstPath, coBDir)
+
+	// Verify initial sync — both checkouts should match seed files.
+	gotB := checkoutReadFiles(t, coBDir)
+	for name, want := range seedFiles {
+		if gotB[name] != want {
+			t.Fatalf("initial sync: file %s mismatch: got %q want %q", name, gotB[name], want)
+		}
+	}
+	t.Log("initial sync verified — Leaf B matches seed files")
+
+	// Close Leaf B checkout for now (will reopen after second sync).
+	coB.Close()
+
+	// 8. Modify doc.txt on disk in Leaf A's checkout.
+	updatedContent := "updated document content\n"
+	docPath := filepath.Join(coADir, "doc.txt")
+	if err := os.WriteFile(docPath, []byte(updatedContent), 0o644); err != nil {
+		t.Fatalf("write doc.txt: %v", err)
+	}
+
+	// 9. ScanChanges + Commit on Leaf A checkout.
+	if err := coA.ScanChanges(checkout.ScanHash); err != nil {
+		t.Fatalf("ScanChanges: %v", err)
+	}
+
+	commitRID, commitUUID, err := coA.Commit(checkout.CommitOpts{
+		Message: "update doc.txt",
+		User:    "testuser",
+	})
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	t.Logf("committed rid=%d uuid=%s", commitRID, commitUUID[:16])
+	coA.Close()
+
+	// 10. Count blobs again after commit — new commit adds blobs.
+	srcRepo2, err := repo.Open(srcPath)
+	if err != nil {
+		t.Fatalf("repo.Open leafA after commit: %v", err)
+	}
+	var newBlobCount int
+	srcRepo2.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&newBlobCount)
+	srcRepo2.Close()
+	t.Logf("leafA after commit: %d blobs (was %d)", newBlobCount, srcBlobCount)
+
+	// 11. Restart agents for second sync round.
+	leafA = checkoutStartAgent(t, srcPath, natsURL, true, true, true)
+	leafB = checkoutStartAgent(t, dstPath, natsURL, true, true, false)
+
+	// 12. Wait for Leaf B to receive new blobs.
+	checkoutWaitForBlobCount(t, dstPath, newBlobCount, 30*time.Second)
+
+	// 13. Stop agents before checkout operations.
+	leafA.Stop()
+	leafB.Stop()
+
+	// 14. Crosslink Leaf B, open checkout, CalcUpdateVersion, Update.
+	dstRepo2, err := repo.Open(dstPath)
+	if err != nil {
+		t.Fatalf("repo.Open leafB for update: %v", err)
+	}
+	defer dstRepo2.Close()
+
+	n, err := manifest.Crosslink(dstRepo2)
+	if err != nil {
+		t.Fatalf("crosslink leafB: %v", err)
+	}
+	t.Logf("crosslinked %d manifests on leafB", n)
+
+	coB2, err := checkout.Open(dstRepo2, coBDir, checkout.OpenOpts{})
+	if err != nil {
+		t.Fatalf("checkout.Open leafB: %v", err)
+	}
+	defer coB2.Close()
+
+	updateRID, err := coB2.CalcUpdateVersion()
+	if err != nil {
+		t.Fatalf("CalcUpdateVersion: %v", err)
+	}
+	if updateRID == 0 {
+		t.Fatal("CalcUpdateVersion returned 0 — expected a newer version")
+	}
+	t.Logf("update target: rid=%d", updateRID)
+
+	if err := coB2.Update(checkout.UpdateOpts{}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	// 15. Read Leaf B files — doc.txt should have new content, config.yml unchanged.
+	gotB2 := checkoutReadFiles(t, coBDir)
+
+	if gotB2["doc.txt"] != updatedContent {
+		t.Errorf("doc.txt: got %q, want %q", gotB2["doc.txt"], updatedContent)
+	}
+	if gotB2["config.yml"] != seedFiles["config.yml"] {
+		t.Errorf("config.yml: got %q, want %q", gotB2["config.yml"], seedFiles["config.yml"])
+	}
+
+	t.Log("PASS: commit on A → sync → update on B — doc.txt updated, config.yml unchanged")
+}
+
+// ---------------------------------------------------------------------------
 // Test 1: Checkout After Clone via NATS
 // ---------------------------------------------------------------------------
 
