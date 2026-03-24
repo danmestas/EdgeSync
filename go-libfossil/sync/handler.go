@@ -93,10 +93,27 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 		h.handleControlCard(card)
 	}
 
-	// Second pass: handle data cards in wire order (matches Fossil's page_xfer).
+	// Second pass: handle file cards first so blobs are stored before
+	// IGotCard checks blob.Exists. Without this, a request containing
+	// both IGotCard and FileCard for the same blob produces a spurious
+	// GimmeCard — the IGotCard runs before the FileCard stores it.
 	for _, card := range req.Cards {
-		if err := h.handleDataCard(card); err != nil {
-			return nil, err
+		switch card.(type) {
+		case *xfer.FileCard, *xfer.CFileCard:
+			if err := h.handleDataCard(card); err != nil {
+				return nil, err
+			}
+		}
+	}
+	// Third pass: handle remaining data cards (igot, gimme, etc.).
+	for _, card := range req.Cards {
+		switch card.(type) {
+		case *xfer.FileCard, *xfer.CFileCard:
+			continue // Already handled above.
+		default:
+			if err := h.handleDataCard(card); err != nil {
+				return nil, err
+			}
 		}
 	}
 
