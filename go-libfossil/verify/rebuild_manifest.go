@@ -8,7 +8,6 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/db"
 	"github.com/dmestas/edgesync/go-libfossil/deck"
-	"github.com/dmestas/edgesync/go-libfossil/manifest"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 )
 
@@ -43,7 +42,7 @@ func rebuildManifests(r *repo.Repo, tx *db.Tx, report *Report) error {
 		if d.Type != deck.Checkin {
 			continue
 		}
-		if err := rebuildCheckin(r, tx, e.rid, d, report); err != nil {
+		if err := rebuildCheckin(tx, e.rid, d, report); err != nil {
 			return fmt.Errorf("rebuildManifests rid=%d: %w", e.rid, err)
 		}
 	}
@@ -76,7 +75,7 @@ func collectBlobEntries(q db.Querier) ([]blobEntry, error) {
 }
 
 // rebuildCheckin inserts event, plink, and mlink rows for one checkin manifest.
-func rebuildCheckin(r *repo.Repo, tx *db.Tx, rid libfossil.FslID, d *deck.Deck, report *Report) error {
+func rebuildCheckin(tx *db.Tx, rid libfossil.FslID, d *deck.Deck, report *Report) error {
 	if tx == nil {
 		panic("rebuildCheckin: nil *db.Tx")
 	}
@@ -99,10 +98,9 @@ func rebuildCheckin(r *repo.Repo, tx *db.Tx, rid libfossil.FslID, d *deck.Deck, 
 		return err
 	}
 
-	// Insert mlink/filename rows for file cards.
-	// Uses manifest.ListFiles for delta manifests (B-card) to get the
-	// full file set, not just the abbreviated delta F-cards.
-	if err := rebuildMlinks(r, tx, rid, d); err != nil {
+	// Insert mlink/filename rows for manifest F-cards.
+	// Uses d.F directly (not expanded) — matches Fossil's mlink semantics.
+	if err := rebuildMlinks(tx, rid, d); err != nil {
 		return err
 	}
 
@@ -138,42 +136,27 @@ func rebuildPlinks(tx *db.Tx, rid libfossil.FslID, d *deck.Deck, mtime float64, 
 	return nil
 }
 
-// rebuildMlinks inserts mlink and filename rows for each file in the manifest.
-// For delta manifests (d.B != ""), uses manifest.ListFiles to expand the full
-// file set by merging baseline F-cards with delta F-cards. Without this,
-// only changed files would get mlink rows — inherited files would be lost.
-func rebuildMlinks(r *repo.Repo, tx *db.Tx, rid libfossil.FslID, d *deck.Deck) error {
-	type fileRef struct {
-		name string
-		uuid string
-	}
+// rebuildMlinks inserts mlink and filename rows for files that are new or
+// changed relative to the primary parent. Fossil's rebuild only creates mlink
+// rows for files that differ from the parent checkin — unchanged files are
+// skipped. This matches fossil rebuild behavior.
+func rebuildMlinks(tx *db.Tx, rid libfossil.FslID, d *deck.Deck) error {
+	// Build parent file map (name → uuid) for comparison.
+	parentFiles := buildParentFileMap(tx, d)
 
-	var files []fileRef
-	if d.B != "" {
-		// Delta manifest — expand to full file set via manifest.ListFiles.
-		entries, err := manifest.ListFiles(r, rid)
+	for _, f := range d.F {
+		if f.UUID == "" {
+			continue // deleted file in delta manifest
+		}
+		// Skip unchanged files — only create mlink for new or modified.
+		if parentUUID, exists := parentFiles[f.Name]; exists && parentUUID == f.UUID {
+			continue
+		}
+		fnid, err := rebuildEnsureFilename(tx, f.Name)
 		if err != nil {
-			return fmt.Errorf("expand delta manifest: %w", err)
+			return fmt.Errorf("filename %q: %w", f.Name, err)
 		}
-		for _, e := range entries {
-			files = append(files, fileRef{name: e.Name, uuid: e.UUID})
-		}
-	} else {
-		// Full manifest — use F-cards directly.
-		for _, f := range d.F {
-			if f.UUID == "" {
-				continue
-			}
-			files = append(files, fileRef{name: f.Name, uuid: f.UUID})
-		}
-	}
-
-	for _, f := range files {
-		fnid, err := rebuildEnsureFilename(tx, f.name)
-		if err != nil {
-			return fmt.Errorf("filename %q: %w", f.name, err)
-		}
-		fileRID, ok := blob.Exists(tx, f.uuid)
+		fileRID, ok := blob.Exists(tx, f.UUID)
 		if !ok {
 			continue // file blob missing — phantom or not yet received
 		}
@@ -185,6 +168,31 @@ func rebuildMlinks(r *repo.Repo, tx *db.Tx, rid libfossil.FslID, d *deck.Deck) e
 		}
 	}
 	return nil
+}
+
+// buildParentFileMap returns a map of filename→UUID from the primary parent's
+// manifest. Returns an empty map if there is no parent (initial checkin).
+func buildParentFileMap(tx *db.Tx, d *deck.Deck) map[string]string {
+	if len(d.P) == 0 {
+		return nil // initial checkin — no parent
+	}
+	parentRID, ok := blob.Exists(tx, d.P[0]) // primary parent
+	if !ok {
+		return nil
+	}
+	parentData, err := content.Expand(tx, parentRID)
+	if err != nil {
+		return nil
+	}
+	parentDeck, err := deck.Parse(parentData)
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]string, len(parentDeck.F))
+	for _, f := range parentDeck.F {
+		m[f.Name] = f.UUID
+	}
+	return m
 }
 
 // rebuildEnsureFilename ensures a filename row exists and returns its fnid.
