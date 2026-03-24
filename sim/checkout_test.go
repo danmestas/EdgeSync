@@ -386,7 +386,31 @@ func TestCheckout_CommitSyncUpdate(t *testing.T) {
 		t.Errorf("config.yml: got %q, want %q", gotB2["config.yml"], seedFiles["config.yml"])
 	}
 
-	t.Log("PASS: commit on A → sync → update on B — doc.txt updated, config.yml unchanged")
+	// 16. Verify bidirectional: Leaf A and Leaf B should have the same blob set.
+	// Both agents ran with Push+Pull, so blobs should have converged both ways.
+	srcRepo3, err := repo.Open(srcPath)
+	if err != nil {
+		t.Fatalf("repo.Open leafA for bidir check: %v", err)
+	}
+	var srcFinalCount int
+	if err := srcRepo3.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&srcFinalCount); err != nil {
+		srcRepo3.Close()
+		t.Fatalf("count srcFinal: %v", err)
+	}
+	srcRepo3.Close()
+
+	var dstFinalCount int
+	if err := dstRepo2.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&dstFinalCount); err != nil {
+		t.Fatalf("count dstFinal: %v", err)
+	}
+
+	if srcFinalCount != dstFinalCount {
+		t.Errorf("bidirectional: blob count mismatch — Leaf A has %d, Leaf B has %d", srcFinalCount, dstFinalCount)
+	} else {
+		t.Logf("bidirectional: both leaves have %d blobs", srcFinalCount)
+	}
+
+	t.Log("PASS: commit on A → sync → update on B — doc.txt updated, config.yml unchanged, bidirectional verified")
 }
 
 // ---------------------------------------------------------------------------
@@ -588,8 +612,19 @@ func TestCheckout_ConcurrentEditAndSync(t *testing.T) {
 	coB2.Close()
 	bRepo.Close()
 
-	// 7. Wait for convergence (5 seconds).
-	time.Sleep(5 * time.Second)
+	// 7. Wait for convergence — poll until Leaf B has all of Leaf A's blobs.
+	// Leaf A has: seed blobs + 5 extra checkins. Count them.
+	srcRepo2, err := repo.Open(srcPath)
+	if err != nil {
+		t.Fatalf("repo.Open leafA for convergence count: %v", err)
+	}
+	var srcTotal int
+	if err := srcRepo2.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&srcTotal); err != nil {
+		srcRepo2.Close()
+		t.Fatalf("count srcTotal: %v", err)
+	}
+	srcRepo2.Close()
+	checkoutWaitForBlobCount(t, dstPath, srcTotal, 30*time.Second)
 
 	// 8. Verify: open B's repo, crosslink synced blobs, run verify.Verify.
 	vRepo, err := repo.Open(dstPath)
