@@ -3,7 +3,9 @@ package sim
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/manifest"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/dmestas/edgesync/go-libfossil/testutil"
 	"github.com/dmestas/edgesync/go-libfossil/verify"
 	"github.com/dmestas/edgesync/leaf/agent"
 )
@@ -625,4 +628,221 @@ func TestCheckout_ConcurrentEditAndSync(t *testing.T) {
 	}
 
 	t.Log("PASS: concurrent edit + sync — no corruption, local commit preserved")
+}
+
+// ---------------------------------------------------------------------------
+// Test 4: Fossil Interop (both directions)
+// ---------------------------------------------------------------------------
+
+// TestCheckout_FossilInterop proves Go checkout reads Fossil-created repos AND
+// Fossil reads Go-created checkouts. Both directions in one test.
+func TestCheckout_FossilInterop(t *testing.T) {
+	requireFossil(t)
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	repoPath := filepath.Join(dir, "interop.fossil")
+
+	// Files that Fossil will commit.
+	wantHello := "Hello from Fossil!\n"
+	wantApp := "package main\n\nfunc main() {}\n"
+
+	// Go's modified version.
+	wantHelloModified := "Hello from Go checkout!\n"
+	goCommitMsg := "modify hello.txt via Go checkout"
+
+	// Track the Go commit UUID across subtests.
+	var goCommitUUID string
+
+	t.Run("fossil_to_go", func(t *testing.T) {
+		// 1. fossil new
+		cmd := exec.Command("fossil", "new", repoPath)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("fossil new: %v\n%s", err, out)
+		}
+		t.Logf("fossil new: %s", strings.TrimSpace(string(out)))
+
+		// 2. fossil open + write files + add + commit
+		workDir := filepath.Join(dir, "fossil-work")
+		if err := os.MkdirAll(workDir, 0o755); err != nil {
+			t.Fatalf("mkdir fossil-work: %v", err)
+		}
+
+		cmd = exec.Command("fossil", "open", repoPath)
+		cmd.Dir = workDir
+		out, err = cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("fossil open: %v\n%s", err, out)
+		}
+
+		// Write hello.txt
+		if err := os.WriteFile(filepath.Join(workDir, "hello.txt"), []byte(wantHello), 0o644); err != nil {
+			t.Fatalf("write hello.txt: %v", err)
+		}
+
+		// Write src/app.go (subdirectory)
+		srcDir := filepath.Join(workDir, "src")
+		if err := os.MkdirAll(srcDir, 0o755); err != nil {
+			t.Fatalf("mkdir src: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(srcDir, "app.go"), []byte(wantApp), 0o644); err != nil {
+			t.Fatalf("write src/app.go: %v", err)
+		}
+
+		cmd = exec.Command("fossil", "add", ".")
+		cmd.Dir = workDir
+		out, err = cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("fossil add: %v\n%s", err, out)
+		}
+
+		cmd = exec.Command("fossil", "commit", "-m", "initial fossil commit", "--no-warnings")
+		cmd.Dir = workDir
+		out, err = cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("fossil commit: %v\n%s", err, out)
+		}
+		t.Logf("fossil commit: %s", strings.TrimSpace(string(out)))
+
+		// 3. fossil close --force
+		cmd = exec.Command("fossil", "close", "--force")
+		cmd.Dir = workDir
+		out, err = cmd.CombinedOutput()
+		if err != nil {
+			t.Logf("fossil close: %v\n%s", err, out)
+		}
+
+		// 4. repo.Open the fossil-created repo
+		r, err := repo.Open(repoPath)
+		if err != nil {
+			t.Fatalf("repo.Open: %v", err)
+		}
+
+		// Crosslink to populate event/mlink tables.
+		n, err := manifest.Crosslink(r)
+		if err != nil {
+			r.Close()
+			t.Fatalf("manifest.Crosslink: %v", err)
+		}
+		t.Logf("crosslinked %d manifests", n)
+
+		// 5. checkout.Create, get Version, Extract
+		coDir := filepath.Join(dir, "go-checkout")
+		co, err := checkout.Create(r, coDir, checkout.CreateOpts{})
+		if err != nil {
+			r.Close()
+			t.Fatalf("checkout.Create: %v", err)
+		}
+
+		rid, uuid, err := co.Version()
+		if err != nil {
+			co.Close()
+			r.Close()
+			t.Fatalf("checkout.Version: %v", err)
+		}
+		t.Logf("checkout version: rid=%d uuid=%s", rid, uuid[:16])
+
+		if err := co.Extract(rid, checkout.ExtractOpts{}); err != nil {
+			co.Close()
+			r.Close()
+			t.Fatalf("checkout.Extract: %v", err)
+		}
+
+		// 6. Read files — assert they match what Fossil committed.
+		gotFiles := checkoutReadFiles(t, coDir)
+		if gotFiles["hello.txt"] != wantHello {
+			t.Errorf("hello.txt: got %q, want %q", gotFiles["hello.txt"], wantHello)
+		}
+		if gotFiles["src/app.go"] != wantApp {
+			t.Errorf("src/app.go: got %q, want %q", gotFiles["src/app.go"], wantApp)
+		}
+		t.Log("Fossil -> Go: files match")
+
+		// 7. Modify hello.txt on disk, ScanChanges, Commit via Go.
+		if err := os.WriteFile(filepath.Join(coDir, "hello.txt"), []byte(wantHelloModified), 0o644); err != nil {
+			co.Close()
+			r.Close()
+			t.Fatalf("write modified hello.txt: %v", err)
+		}
+
+		if err := co.ScanChanges(checkout.ScanHash); err != nil {
+			co.Close()
+			r.Close()
+			t.Fatalf("ScanChanges: %v", err)
+		}
+
+		commitRID, commitUUID, err := co.Commit(checkout.CommitOpts{
+			Message: goCommitMsg,
+			User:    "testuser",
+		})
+		if err != nil {
+			co.Close()
+			r.Close()
+			t.Fatalf("Commit: %v", err)
+		}
+		t.Logf("Go commit: rid=%d uuid=%s", commitRID, commitUUID[:16])
+
+		// Save UUID for subtest B.
+		goCommitUUID = commitUUID
+
+		// 8. Close checkout + repo.
+		co.Close()
+		r.Close()
+	})
+
+	t.Run("go_to_fossil", func(t *testing.T) {
+		if goCommitUUID == "" {
+			t.Fatal("no Go commit UUID from previous subtest")
+		}
+
+		// 9. fossil rebuild — proves Go's commit is structurally valid.
+		tr := testutil.NewTestRepoFromPath(t, repoPath)
+		tr.FossilRebuild(t)
+		t.Log("fossil rebuild succeeded — Go commit structurally valid")
+
+		// 10. fossil open in a new directory.
+		workDir2 := filepath.Join(dir, "fossil-verify")
+		if err := os.MkdirAll(workDir2, 0o755); err != nil {
+			t.Fatalf("mkdir fossil-verify: %v", err)
+		}
+
+		cmd := exec.Command("fossil", "open", repoPath)
+		cmd.Dir = workDir2
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("fossil open: %v\n%s", err, out)
+		}
+		t.Logf("fossil open: %s", strings.TrimSpace(string(out)))
+
+		// 11. Read hello.txt — assert it has Go's changes.
+		gotHello, err := os.ReadFile(filepath.Join(workDir2, "hello.txt"))
+		if err != nil {
+			t.Fatalf("read hello.txt: %v", err)
+		}
+		if string(gotHello) != wantHelloModified {
+			t.Errorf("hello.txt: got %q, want %q", gotHello, wantHelloModified)
+		}
+		t.Log("Go -> Fossil: hello.txt has Go's changes")
+
+		// 12. fossil artifact <go-commit-uuid> — manifest contains Go's commit message.
+		// Fossil encodes spaces as \s in the C (comment) card, so check both forms.
+		artifact := tr.FossilArtifact(t, goCommitUUID)
+		artifactStr := string(artifact)
+		escapedMsg := strings.ReplaceAll(goCommitMsg, " ", `\s`)
+		if !strings.Contains(artifactStr, goCommitMsg) && !strings.Contains(artifactStr, escapedMsg) {
+			t.Errorf("artifact does not contain commit message %q (or escaped %q):\n%s",
+				goCommitMsg, escapedMsg, artifactStr)
+		}
+		t.Logf("artifact contains Go commit message: %q", goCommitMsg)
+
+		// Clean up: close the fossil checkout.
+		closeCmd := exec.Command("fossil", "close", "--force")
+		closeCmd.Dir = workDir2
+		closeCmd.CombinedOutput()
+
+		t.Log("PASS: Go -> Fossil interop — rebuild, checkout, and artifact all valid")
+	})
 }
