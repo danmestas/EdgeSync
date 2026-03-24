@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/manifest"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/dmestas/edgesync/go-libfossil/verify"
 	"github.com/dmestas/edgesync/leaf/agent"
 )
 
@@ -465,4 +467,162 @@ func TestCheckout_AfterCloneViaNATS(t *testing.T) {
 	}
 
 	t.Logf("PASS: checkout after NATS clone — %d files byte-identical", len(seedFiles))
+}
+
+// ---------------------------------------------------------------------------
+// Test 3: Concurrent Edit and Sync
+// ---------------------------------------------------------------------------
+
+// TestCheckout_ConcurrentEditAndSync proves that checkout operations (open,
+// write, manage, scan, commit) don't corrupt the repo when a sync agent is
+// running concurrently on the same leaf. Two SQLite connections hit the same
+// repo file simultaneously — WAL mode allows this.
+func TestCheckout_ConcurrentEditAndSync(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	seedFiles := map[string]string{
+		"base.txt": "base content\n",
+	}
+
+	// 1. Start embedded NATS.
+	natsURL := checkoutStartNATS(t)
+
+	// 2. Leaf A: create repo with initial checkin, start agent (push + serve).
+	srcPath := checkoutCreateSeededRepo(t, dir, "leafA.fossil", seedFiles)
+	checkoutStartAgent(t, srcPath, natsURL, true, false, true)
+
+	// 3. Leaf B: create repo with same initial content + matching project-code.
+	dstPath := checkoutCreateSeededRepo(t, dir, "leafB.fossil", seedFiles)
+	checkoutMatchProjectCode(t, srcPath, dstPath)
+
+	// Create checkout on B, extract tip, then close — proves initial state is good.
+	coBDir := filepath.Join(dir, "checkoutB")
+	coB := checkoutExtract(t, dstPath, coBDir)
+	coB.Close()
+
+	// Start Leaf B agent (push + pull).
+	checkoutStartAgent(t, dstPath, natsURL, true, true, false)
+
+	// 4. Seed 5 more checkins on Leaf A to generate sync traffic.
+	srcRepo, err := repo.Open(srcPath)
+	if err != nil {
+		t.Fatalf("repo.Open leafA for extra checkins: %v", err)
+	}
+	for i := 1; i <= 5; i++ {
+		fname := fmt.Sprintf("extra-%d.txt", i)
+		_, _, err := manifest.Checkin(srcRepo, manifest.CheckinOpts{
+			Files: []manifest.File{{
+				Name:    fname,
+				Content: []byte(fmt.Sprintf("extra content %d\n", i)),
+			}},
+			Comment: fmt.Sprintf("extra commit %d", i),
+			User:    "testuser",
+		})
+		if err != nil {
+			srcRepo.Close()
+			t.Fatalf("manifest.Checkin extra-%d: %v", i, err)
+		}
+	}
+	srcRepo.Close()
+	t.Log("seeded 5 extra checkins on Leaf A")
+
+	// 5. Wait 2 seconds to let sync start pulling on B.
+	time.Sleep(2 * time.Second)
+
+	// 6. While B's agent is running: open a SECOND repo handle, checkout, write,
+	//    manage, scan, commit — concurrent with the agent's sync connection.
+	bRepo, err := repo.Open(dstPath)
+	if err != nil {
+		t.Fatalf("repo.Open leafB for concurrent edit: %v", err)
+	}
+
+	coB2, err := checkout.Open(bRepo, coBDir, checkout.OpenOpts{})
+	if err != nil {
+		bRepo.Close()
+		t.Fatalf("checkout.Open leafB concurrent: %v", err)
+	}
+
+	// Write a new file into the checkout directory.
+	localEditPath := filepath.Join(coBDir, "local-edit.txt")
+	if err := os.WriteFile(localEditPath, []byte("local edit while syncing\n"), 0o644); err != nil {
+		coB2.Close()
+		bRepo.Close()
+		t.Fatalf("write local-edit.txt: %v", err)
+	}
+
+	// Manage the new file (add to vfile tracking).
+	_, err = coB2.Manage(checkout.ManageOpts{
+		Paths: []string{"local-edit.txt"},
+	})
+	if err != nil {
+		coB2.Close()
+		bRepo.Close()
+		t.Fatalf("Manage local-edit.txt: %v", err)
+	}
+
+	// Scan for changes and commit.
+	if err := coB2.ScanChanges(checkout.ScanHash); err != nil {
+		coB2.Close()
+		bRepo.Close()
+		t.Fatalf("ScanChanges: %v", err)
+	}
+
+	commitRID, commitUUID, err := coB2.Commit(checkout.CommitOpts{
+		Message: "local edit while sync running",
+		User:    "testuser",
+	})
+	if err != nil {
+		coB2.Close()
+		bRepo.Close()
+		t.Fatalf("Commit concurrent: %v", err)
+	}
+	t.Logf("concurrent commit: rid=%d uuid=%s", commitRID, commitUUID[:16])
+
+	coB2.Close()
+	bRepo.Close()
+
+	// 7. Wait for convergence (5 seconds).
+	time.Sleep(5 * time.Second)
+
+	// 8. Verify: open B's repo, crosslink synced blobs, run verify.Verify.
+	vRepo, err := repo.Open(dstPath)
+	if err != nil {
+		t.Fatalf("repo.Open leafB for verify: %v", err)
+	}
+
+	n, err := manifest.Crosslink(vRepo)
+	if err != nil {
+		vRepo.Close()
+		t.Fatalf("crosslink leafB before verify: %v", err)
+	}
+	t.Logf("crosslinked %d manifests on leafB before verify", n)
+
+	report, err := verify.Verify(vRepo)
+	if err != nil {
+		vRepo.Close()
+		t.Fatalf("verify.Verify: %v", err)
+	}
+	if !report.OK() {
+		for _, issue := range report.Issues {
+			t.Logf("verify issue: %s (rid=%d uuid=%s)", issue.Message, issue.RID, issue.UUID)
+		}
+		vRepo.Close()
+		t.Fatalf("repo corrupt: %d issues found", len(report.Issues))
+	}
+	t.Logf("verify clean: %d blobs checked, %d OK", report.BlobsChecked, report.BlobsOK)
+
+	// 9. Verify: the committed blob UUID exists in the blob table.
+	var found int
+	vRepo.DB().QueryRow("SELECT count(*) FROM blob WHERE uuid=?", commitUUID).Scan(&found)
+	vRepo.Close()
+
+	if found != 1 {
+		t.Fatalf("committed blob uuid=%s not found in B's blob table", commitUUID[:16])
+	}
+
+	t.Log("PASS: concurrent edit + sync — no corruption, local commit preserved")
 }
