@@ -185,3 +185,111 @@ func TestVerify_DetectsOrphanPhantom(t *testing.T) {
 		t.Fatal("expected IssuePhantomOrphan")
 	}
 }
+
+func TestVerify_DetectsMissingEvent(t *testing.T) {
+	r := newTestRepo(t)
+	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "a.txt", Content: []byte("content")}},
+		Comment: "initial",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.DB().Exec("DELETE FROM event")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := verify.Verify(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, iss := range report.Issues {
+		if iss.Kind == verify.IssueEventMissing {
+			found = true
+			break
+		}
+	}
+	if !found {
+		for _, iss := range report.Issues {
+			t.Logf("issue: kind=%d %s", iss.Kind, iss.Message)
+		}
+		t.Fatal("expected IssueEventMissing")
+	}
+}
+
+func TestVerify_DetectsMissingPlink(t *testing.T) {
+	r := newTestRepo(t)
+	rid1, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "a.txt", Content: []byte("alpha")}},
+		Comment: "first",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "a.txt", Content: []byte("alpha")}, {Name: "b.txt", Content: []byte("bravo")}},
+		Comment: "second",
+		User:    "test",
+		Parent:  rid1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.DB().Exec("DELETE FROM plink")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := verify.Verify(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, iss := range report.Issues {
+		if iss.Kind == verify.IssuePlinkMissing {
+			found = true
+			break
+		}
+	}
+	if !found {
+		for _, iss := range report.Issues {
+			t.Logf("issue: kind=%d %s", iss.Kind, iss.Message)
+		}
+		t.Fatal("expected IssuePlinkMissing")
+	}
+}
+
+func TestVerify_DetectsIncorrectLeaf(t *testing.T) {
+	r := newTestRepo(t)
+	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "a.txt", Content: []byte("content")}},
+		Comment: "initial",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.DB().Exec("DELETE FROM leaf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := verify.Verify(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, iss := range report.Issues {
+		if iss.Kind == verify.IssueLeafIncorrect {
+			found = true
+			break
+		}
+	}
+	if !found {
+		for _, iss := range report.Issues {
+			t.Logf("issue: kind=%d %s", iss.Kind, iss.Message)
+		}
+		t.Fatal("expected IssueLeafIncorrect")
+	}
+}
