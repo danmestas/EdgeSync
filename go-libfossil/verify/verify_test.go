@@ -131,3 +131,57 @@ func TestVerify_ReportsAll(t *testing.T) {
 		t.Fatalf("expected multiple issues (report-all), got %d", len(report.Issues))
 	}
 }
+
+func TestVerify_DetectsDanglingDelta(t *testing.T) {
+	r := newTestRepo(t)
+	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "a.txt", Content: []byte("content")}},
+		Comment: "initial",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Insert a delta row pointing to nonexistent blobs
+	_, err = r.DB().Exec("INSERT INTO delta(rid, srcid) VALUES(999999, 888888)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := verify.Verify(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, iss := range report.Issues {
+		if iss.Kind == verify.IssueDeltaDangling {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected IssueDeltaDangling")
+	}
+}
+
+func TestVerify_DetectsOrphanPhantom(t *testing.T) {
+	r := newTestRepo(t)
+	// Insert a phantom row with no corresponding blob
+	_, err := r.DB().Exec("INSERT INTO phantom(rid) VALUES(999999)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := verify.Verify(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, iss := range report.Issues {
+		if iss.Kind == verify.IssuePhantomOrphan {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected IssuePhantomOrphan")
+	}
+}
