@@ -93,6 +93,21 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 		h.handleControlCard(card)
 	}
 
+	// Emit PushCard with project-code/server-code so the clone client can
+	// identify the repo. Only in clone mode — sync clients already have
+	// codes, and real Fossil treats server-sent "push" as unknown during sync.
+	if h.cloneMode {
+		var projectCode, serverCode string
+		_ = h.repo.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projectCode)
+		_ = h.repo.DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&serverCode)
+		if projectCode != "" {
+			h.resp = append(h.resp, &xfer.PushCard{
+				ProjectCode: projectCode,
+				ServerCode:  serverCode,
+			})
+		}
+	}
+
 	// Second pass: handle file cards first so blobs are stored before
 	// IGotCard checks blob.Exists. Without this, a request containing
 	// both IGotCard and FileCard for the same blob produces a spurious
@@ -336,5 +351,10 @@ func (h *handler) emitCloneBatch() error {
 		lastRID = rid
 		count++
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	// All blobs sent — signal completion so the client stops requesting.
+	h.resp = append(h.resp, &xfer.CloneSeqNoCard{SeqNo: 0})
+	return nil
 }
