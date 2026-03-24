@@ -261,6 +261,79 @@ func TestVerify_DetectsMissingPlink(t *testing.T) {
 	}
 }
 
+func TestRebuild_ReconstructsFromScratch(t *testing.T) {
+	r := newTestRepo(t)
+	rid1, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "a.txt", Content: []byte("alpha")}},
+		Comment: "first",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "a.txt", Content: []byte("alpha")}, {Name: "b.txt", Content: []byte("bravo")}},
+		Comment: "second",
+		User:    "test",
+		Parent:  rid1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Snapshot counts before
+	var eventCount, plinkCount int
+	r.DB().QueryRow("SELECT count(*) FROM event").Scan(&eventCount)
+	r.DB().QueryRow("SELECT count(*) FROM plink").Scan(&plinkCount)
+
+	// Delete all derived tables
+	for _, tbl := range []string{"event", "mlink", "plink", "tagxref", "filename", "leaf", "unclustered", "unsent"} {
+		r.DB().Exec("DELETE FROM " + tbl)
+	}
+
+	report, err := verify.Rebuild(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.TablesRebuilt) == 0 {
+		t.Fatal("expected TablesRebuilt")
+	}
+
+	var newEventCount, newPlinkCount int
+	r.DB().QueryRow("SELECT count(*) FROM event").Scan(&newEventCount)
+	r.DB().QueryRow("SELECT count(*) FROM plink").Scan(&newPlinkCount)
+	if newEventCount != eventCount {
+		t.Fatalf("event: want %d got %d", eventCount, newEventCount)
+	}
+	if newPlinkCount != plinkCount {
+		t.Fatalf("plink: want %d got %d", plinkCount, newPlinkCount)
+	}
+}
+
+func TestRebuild_Idempotent(t *testing.T) {
+	r := newTestRepo(t)
+	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
+		Files:   []manifest.File{{Name: "a.txt", Content: []byte("hello")}},
+		Comment: "initial",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	report1, err := verify.Rebuild(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report2, err := verify.Rebuild(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report1.BlobsChecked != report2.BlobsChecked {
+		t.Fatalf("blobs: %d vs %d", report1.BlobsChecked, report2.BlobsChecked)
+	}
+}
+
 func TestVerify_DetectsIncorrectLeaf(t *testing.T) {
 	r := newTestRepo(t)
 	_, _, err := manifest.Checkin(r, manifest.CheckinOpts{
