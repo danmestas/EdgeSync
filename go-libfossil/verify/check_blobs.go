@@ -75,5 +75,11 @@ func checkBlobs(r *repo.Repo, report *Report) error {
 		}
 		report.BlobsOK++
 	}
+
+	// Postcondition: every checked blob is either OK or failed.
+	if report.BlobsChecked != report.BlobsOK+report.BlobsFailed {
+		panic("checkBlobs: postcondition: BlobsChecked != BlobsOK + BlobsFailed")
+	}
+
 	return nil
 }

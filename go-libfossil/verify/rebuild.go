@@ -56,6 +56,12 @@ func Rebuild(r *repo.Repo) (*Report, error) {
 
 	report.TablesRebuilt = rebuildTableList
 	report.Duration = time.Since(start)
+
+	// Postcondition: TablesRebuilt must be populated after successful rebuild.
+	if len(report.TablesRebuilt) == 0 {
+		panic("verify.Rebuild: postcondition: TablesRebuilt empty after successful rebuild")
+	}
+
 	return report, nil
 }
 

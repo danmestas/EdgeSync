@@ -32,11 +32,12 @@ func rebuildManifests(r *repo.Repo, tx *db.Tx, report *Report) error {
 	for _, e := range entries {
 		data, err := content.Expand(tx, e.rid)
 		if err != nil {
-			continue // not expandable — raw data blob or phantom
+			report.BlobsSkipped++
+			continue // not expandable — corrupt, raw data blob, or phantom
 		}
 		d, err := deck.Parse(data)
 		if err != nil {
-			continue // not a valid manifest
+			continue // not a manifest — normal for file blobs
 		}
 		if d.Type != deck.Checkin {
 			continue
@@ -178,6 +179,3 @@ func rebuildEnsureFilename(tx *db.Tx, name string) (int64, error) {
 	}
 	return result.LastInsertId()
 }
-
-// ensure repo import is used (for future delta manifest expansion)
-var _ = (*repo.Repo)(nil)
