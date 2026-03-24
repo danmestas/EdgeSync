@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -46,6 +47,9 @@ func checkoutStartNATS(t *testing.T) string {
 // given files as an initial checkin, then closes the repo. Returns the path.
 func checkoutCreateSeededRepo(t *testing.T, dir, name string, files map[string]string) string {
 	t.Helper()
+	if len(files) == 0 {
+		t.Fatal("checkoutCreateSeededRepo: files must not be empty")
+	}
 
 	repoPath := filepath.Join(dir, name)
 	r, err := repo.Create(repoPath, "testuser", simio.CryptoRand{})
@@ -53,11 +57,18 @@ func checkoutCreateSeededRepo(t *testing.T, dir, name string, files map[string]s
 		t.Fatalf("repo.Create: %v", err)
 	}
 
-	var mfiles []manifest.File
-	for fname, content := range files {
+	// Sort keys for deterministic F-card ordering across runs.
+	names := make([]string, 0, len(files))
+	for fname := range files {
+		names = append(names, fname)
+	}
+	sort.Strings(names)
+
+	mfiles := make([]manifest.File, 0, len(files))
+	for _, fname := range names {
 		mfiles = append(mfiles, manifest.File{
 			Name:    fname,
-			Content: []byte(content),
+			Content: []byte(files[fname]),
 		})
 	}
 
@@ -104,6 +115,9 @@ func checkoutStartAgent(t *testing.T, repoPath, natsURL string, push, pull, serv
 // minCount or the timeout expires.
 func checkoutWaitForBlobCount(t *testing.T, repoPath string, minCount int, timeout time.Duration) {
 	t.Helper()
+	if minCount <= 0 {
+		t.Fatal("checkoutWaitForBlobCount: minCount must be positive")
+	}
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -113,7 +127,11 @@ func checkoutWaitForBlobCount(t *testing.T, repoPath string, minCount int, timeo
 			continue
 		}
 		var count int
-		r.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&count)
+		if err := r.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&count); err != nil {
+			r.Close()
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
 		r.Close()
 
 		if count >= minCount {
@@ -171,7 +189,10 @@ func checkoutMatchProjectCode(t *testing.T, srcPath, dstPath string) {
 		t.Fatalf("open src for project-code: %v", err)
 	}
 	var projCode string
-	src.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projCode)
+	if err := src.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projCode); err != nil {
+		src.Close()
+		t.Fatalf("read project-code from src: %v", err)
+	}
 	src.Close()
 
 	if projCode == "" {
@@ -182,7 +203,10 @@ func checkoutMatchProjectCode(t *testing.T, srcPath, dstPath string) {
 	if err != nil {
 		t.Fatalf("open dst for project-code: %v", err)
 	}
-	dst.DB().Exec("UPDATE config SET value=? WHERE name='project-code'", projCode)
+	if _, err := dst.DB().Exec("UPDATE config SET value=? WHERE name='project-code'", projCode); err != nil {
+		dst.Close()
+		t.Fatalf("write project-code to dst: %v", err)
+	}
 	dst.Close()
 }
 
