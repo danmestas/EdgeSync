@@ -409,7 +409,6 @@
     let editingPath = null;
     let changeMap = {}; // name → status for badge display
     let agentRunning = false;
-    let draftTimer = null; // Debounce timer for auto-save drafts.
 
     function log(msg) {
         const el = document.getElementById("log");
@@ -514,12 +513,6 @@
             if (data.peerId) document.title = "EdgeSync [" + data.peerId + "]";
         } else if (kind === "chatMsg") {
             appendChatMessage(data);
-        } else if (kind === "draftReceived") {
-            // A co-editor's draft arrived — reload file if we have it open.
-            if (editingPath === data.path) {
-                cmd("coRead", { path: data.path });
-            }
-            navigateTo(currentPath); // Refresh tree sizes.
         } else if (kind === "peers") {
             renderPeers(data);
         } else if (kind === "agentLog") {
@@ -612,8 +605,6 @@
         document.getElementById("editor").value = "Loading...";
         setEditorPath(path);
         cmd("coRead", { path });
-        // Tell peers which file we're looking at.
-        cmd("setOpenFile", { path });
     }
 
     function saveFile() {
@@ -709,8 +700,7 @@
         el.innerHTML = peers.map(p => {
             const color = p.isMe ? 'var(--accent)' : 'var(--green)';
             const label = p.isMe ? p.id + ' (you)' : p.id;
-            const file = p.file ? ' <span style="color:var(--text-2)">' + escapeHtml(p.file) + '</span>' : '';
-            return '<span style="color:' + color + '">● ' + label + file + '</span>';
+            return '<span style="color:' + color + '">● ' + label + '</span>';
         }).join(' &nbsp; ');
     }
 
@@ -766,19 +756,6 @@
             log("Clear: " + e.message);
         }
     }
-
-    // Debounced auto-save: on editor input, write to OPFS + UV draft.
-    document.getElementById("editor").addEventListener("input", function() {
-        if (!editingPath) return;
-        clearTimeout(draftTimer);
-        draftTimer = setTimeout(() => {
-            const content = document.getElementById("editor").value;
-            // Always save to OPFS.
-            cmd("coWrite", { path: editingPath, content });
-            // If co-editing, also save UV draft for peer propagation.
-            cmd("saveDraft", { path: editingPath, content });
-        }, 500);
-    });
 
     log("Starting worker...");
     </script>

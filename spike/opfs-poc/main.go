@@ -483,11 +483,8 @@ func doStartAgent(natsWsURL string) {
 	if err := startNotify(nc); err != nil {
 		log(fmt.Sprintf("[social] notify start failed: %v", err))
 	}
-	if err := startDraftSync(nc); err != nil {
-		log(fmt.Sprintf("[social] draft sync start failed: %v", err))
-	}
 
-	log("[agent] running — auto-sync every 10s, instant on peer commits")
+	log("[agent] running — notify-driven sync, instant on peer commits")
 	postResult("agentState", toJSON(map[string]any{"state": "running", "peerId": myPeerID}))
 }
 
@@ -497,7 +494,6 @@ func doStopAgent() {
 		return
 	}
 	stopSocial()
-	stopDraftSync()
 	// Close NATS first — this causes in-flight syncs to fail, unblocking
 	// the poll loop. We don't call agent.Stop() because it closes the
 	// shared repo. Closing NATS is sufficient to halt all sync activity.

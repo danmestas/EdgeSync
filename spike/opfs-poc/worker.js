@@ -218,8 +218,6 @@ self.onmessage = function(e) {
             case "stopAgent":  _stopAgent(); break;
             case "syncNow":    _syncNow(); break;
             case "sendChat":   _sendChat(msg.text || "", msg.user || ""); break;
-            case "setOpenFile": _setOpenFile(msg.path || ""); break;
-            case "saveDraft":  _saveDraft(msg.path || "", msg.content || ""); break;
             case "checkout":  _checkout(); break;
             case "coFiles":   _co_files(msg.path || ""); break;
             case "coRead":    _co_read(msg.path); break;

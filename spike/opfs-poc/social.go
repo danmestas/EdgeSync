@@ -30,13 +30,11 @@ type ChatMessage struct {
 type PresenceHeartbeat struct {
 	ID   string `json:"id"`
 	User string `json:"user"`
-	File string `json:"file"` // Currently open file path, "" if none.
 	Time string `json:"time"`
 }
 
 var (
 	// myPeerID is a random 4-hex identifier for this browser tab.
-	// Collisions are acceptable for a spike — not a production identifier.
 	myPeerID string
 
 	chatSub       *nats.Subscription
@@ -44,20 +42,14 @@ var (
 	notifySub     *nats.Subscription
 	heartbeatStop chan struct{}
 
-	// peerMu protects peerLastSeen and peerFiles.
-	// Accessed from NATS callback goroutine and presence loop goroutine.
+	// peerMu protects peerLastSeen.
 	peerMu       sync.Mutex
 	peerLastSeen map[string]time.Time
-	peerFiles    map[string]string // peerID → currently open file path
-
-	// myOpenFile is the file path currently open in this tab's editor.
-	myOpenFile string
 )
 
 func init() {
 	myPeerID = fmt.Sprintf("%04x", rand.Intn(0xFFFF))
 	peerLastSeen = make(map[string]time.Time)
-	peerFiles = make(map[string]string)
 }
 
 // startChat subscribes to the chat subject and publishes a join message.
@@ -72,8 +64,6 @@ func startChat(nc *nats.Conn, user string) error {
 	chatSub, err = nc.Subscribe(chatSubject, func(msg *nats.Msg) {
 		var cm ChatMessage
 		if err := json.Unmarshal(msg.Data, &cm); err != nil {
-			// Malformed message from another peer — discard silently.
-			// This is expected when peers use different message formats.
 			return
 		}
 		postResult("chatMsg", toJSON(cm))
@@ -113,12 +103,10 @@ func startPresence(nc *nats.Conn, user string) error {
 	presenceSub, err = nc.Subscribe(presenceSubject, func(msg *nats.Msg) {
 		var hb PresenceHeartbeat
 		if err := json.Unmarshal(msg.Data, &hb); err != nil {
-			// Malformed heartbeat — discard.
 			return
 		}
 		peerMu.Lock()
 		peerLastSeen[hb.ID] = time.Now()
-		peerFiles[hb.ID] = hb.File
 		peerMu.Unlock()
 		broadcastPeers()
 	})
@@ -132,7 +120,6 @@ func startPresence(nc *nats.Conn, user string) error {
 }
 
 // presenceLoop publishes heartbeats and evicts stale peers.
-// Runs until heartbeatStop is closed (when agent stops).
 func presenceLoop(nc *nats.Conn, user string) {
 	publishHeartbeat(nc, user)
 	broadcastPeers()
@@ -155,7 +142,6 @@ func publishHeartbeat(nc *nats.Conn, user string) {
 	hb := PresenceHeartbeat{
 		ID:   myPeerID,
 		User: user,
-		File: myOpenFile,
 		Time: time.Now().UTC().Format(time.RFC3339),
 	}
 	data, err := json.Marshal(hb)
@@ -170,52 +156,13 @@ func publishHeartbeat(nc *nats.Conn, user string) {
 
 func evictStalePeers() {
 	peerMu.Lock()
-	hadPeers := hasPeersLocked()
+	defer peerMu.Unlock()
 	now := time.Now()
 	for id, lastSeen := range peerLastSeen {
 		if now.Sub(lastSeen) > presenceTimeout {
 			delete(peerLastSeen, id)
-			delete(peerFiles, id)
 		}
 	}
-	stillHasPeers := hasPeersLocked()
-	peerMu.Unlock()
-
-	// If all peers left, auto-commit any uncommitted changes.
-	if hadPeers && !stillHasPeers {
-		go func() {
-			if currentCheckout == nil {
-				return
-			}
-			changes, err := currentCheckout.Status()
-			if err != nil || len(changes) == 0 {
-				return
-			}
-			log("[drafts] all peers left, auto-committing...")
-			_, uuid, err := currentCheckout.CommitAll("auto: collaboration ended", "browser-"+myPeerID)
-			if err != nil {
-				log(fmt.Sprintf("[drafts] auto-commit failed: %v", err))
-				return
-			}
-			short := uuid
-			if len(short) > 12 {
-				short = short[:12]
-			}
-			log(fmt.Sprintf("[drafts] auto-committed: %s", short))
-			postResult("coCommit", toJSON(map[string]any{"rid": 0, "uuid": uuid}))
-			publishNotify(currentNATS, uuid)
-		}()
-	}
-}
-
-// hasPeersLocked checks for other peers. Caller must hold peerMu.
-func hasPeersLocked() bool {
-	for id := range peerLastSeen {
-		if id != myPeerID {
-			return true
-		}
-	}
-	return false
 }
 
 func broadcastPeers() {
@@ -224,44 +171,22 @@ func broadcastPeers() {
 	type peerInfo struct {
 		ID   string `json:"id"`
 		IsMe bool   `json:"isMe"`
-		File string `json:"file"`
 	}
-	// Always include self.
 	peerLastSeen[myPeerID] = time.Now()
-	peerFiles[myPeerID] = myOpenFile
 	var list []peerInfo
 	for id := range peerLastSeen {
-		list = append(list, peerInfo{
-			ID:   id,
-			IsMe: id == myPeerID,
-			File: peerFiles[id],
-		})
+		list = append(list, peerInfo{ID: id, IsMe: id == myPeerID})
 	}
 	postResult("peers", toJSON(list))
 }
 
-// hasPeers returns true if any other peer is connected.
-func hasPeers() bool {
-	peerMu.Lock()
-	defer peerMu.Unlock()
-	for id := range peerLastSeen {
-		if id != myPeerID {
-			return true
-		}
-	}
-	return false
-}
-
 // startNotify subscribes to commit notifications from other peers.
-// When a notification arrives, it triggers an immediate sync via SyncNow.
 func startNotify(nc *nats.Conn) error {
 	if nc == nil {
 		panic("startNotify: nc must not be nil")
 	}
 	var err error
 	notifySub, err = nc.Subscribe(notifySubject, func(msg *nats.Msg) {
-		// Another peer committed — trigger immediate sync instead of
-		// waiting for the 10s poll timer.
 		if currentAgent != nil {
 			log("[notify] peer committed, syncing now...")
 			currentAgent.SyncNow()
@@ -274,7 +199,6 @@ func startNotify(nc *nats.Conn) error {
 }
 
 // publishNotify announces a new commit to all connected peers.
-// Called after CommitAll succeeds.
 func publishNotify(nc *nats.Conn, uuid string) {
 	if nc == nil {
 		return
@@ -303,10 +227,9 @@ func stopSocial() {
 		heartbeatStop = nil
 	}
 	peerLastSeen = make(map[string]time.Time)
-	peerFiles = make(map[string]string)
 }
 
-// registerSocialCallbacks exposes chat, drafts, and file presence to JS.
+// registerSocialCallbacks exposes chat to JS.
 func registerSocialCallbacks() {
 	js.Global().Set("_sendChat", js.FuncOf(func(_ js.Value, args []js.Value) any {
 		if currentNATS == nil {
@@ -322,39 +245,5 @@ func registerSocialCallbacks() {
 		}
 		go sendChat(currentNATS, user, text)
 		return nil
-	}))
-
-	// _setOpenFile updates which file this peer has open (for presence).
-	js.Global().Set("_setOpenFile", js.FuncOf(func(_ js.Value, args []js.Value) any {
-		path := ""
-		if len(args) > 0 {
-			path = args[0].String()
-		}
-		myOpenFile = path
-		// Publish updated presence immediately so peers see the change.
-		if currentNATS != nil {
-			go publishHeartbeat(currentNATS, "browser-"+myPeerID)
-		}
-		return nil
-	}))
-
-	// _saveDraft publishes content to peers via NATS when others are connected.
-	js.Global().Set("_saveDraft", js.FuncOf(func(_ js.Value, args []js.Value) any {
-		if len(args) < 2 {
-			return nil
-		}
-		path := args[0].String()
-		content := args[1].String()
-		// Only publish if there are other peers connected (any file).
-		if !hasPeers() {
-			return nil
-		}
-		go publishDraft(path, content)
-		return nil
-	}))
-
-	// _hasPeers checks if any other peers are connected.
-	js.Global().Set("_hasPeers", js.FuncOf(func(_ js.Value, _ []js.Value) any {
-		return js.ValueOf(hasPeers())
 	}))
 }
