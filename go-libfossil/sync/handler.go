@@ -314,10 +314,19 @@ func (h *handler) handleIGot(c *xfer.IGotCard) error {
 	if !h.pullOK {
 		return nil
 	}
-	_, exists := blob.Exists(h.repo.DB(), c.UUID)
-	if !exists {
-		h.resp = append(h.resp, &xfer.GimmeCard{UUID: c.UUID})
+	rid, exists := blob.Exists(h.repo.DB(), c.UUID)
+	if exists {
+		if c.IsPrivate {
+			content.MakePrivate(h.repo.DB(), int64(rid))
+		} else {
+			content.MakePublic(h.repo.DB(), int64(rid))
+		}
+		return nil
 	}
+	if c.IsPrivate && !h.syncPrivate {
+		return nil // not authorized — don't request
+	}
+	h.resp = append(h.resp, &xfer.GimmeCard{UUID: c.UUID})
 	return nil
 }
 

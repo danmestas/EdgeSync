@@ -1013,3 +1013,66 @@ func TestEmitIGotsIncludesPrivateWhenAuthorized(t *testing.T) {
 		t.Error("private blob should be included when send-private is authorized")
 	}
 }
+
+func TestHandlerIGotPrivate_Authorized(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	r.DB().Exec("UPDATE user SET cap='oix' WHERE login='nobody'")
+	unknownUUID := "dddddddddddddddddddddddddddddddddddddd"
+
+	resp := handleReq(t, r,
+		&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
+		&xfer.PragmaCard{Name: "send-private"},
+		&xfer.IGotCard{UUID: unknownUUID, IsPrivate: true},
+	)
+
+	gimmes := findCards[*xfer.GimmeCard](resp)
+	found := false
+	for _, g := range gimmes {
+		if g.UUID == unknownUUID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("authorized private igot should produce gimme")
+	}
+}
+
+func TestHandlerIGotPrivate_Unauthorized(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	r.DB().Exec("UPDATE user SET cap='oi' WHERE login='nobody'")
+	unknownUUID := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+
+	resp := handleReq(t, r,
+		&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
+		&xfer.IGotCard{UUID: unknownUUID, IsPrivate: true},
+	)
+
+	gimmes := findCards[*xfer.GimmeCard](resp)
+	for _, g := range gimmes {
+		if g.UUID == unknownUUID {
+			t.Error("unauthorized private igot should NOT produce gimme")
+		}
+	}
+}
+
+func TestHandlerIGotPublic_ClearsPrivate(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	// Store a blob and mark it private.
+	data := []byte("igot clears private")
+	uuid := storeTestBlob(t, r, data)
+	rid, _ := blob.Exists(r.DB(), uuid)
+	content.MakePrivate(r.DB(), int64(rid))
+	if !content.IsPrivate(r.DB(), int64(rid)) {
+		t.Fatal("precondition: blob should be private")
+	}
+
+	// Send a public igot for the existing blob.
+	handleReq(t, r,
+		&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
+		&xfer.IGotCard{UUID: uuid, IsPrivate: false},
+	)
+
+	if content.IsPrivate(r.DB(), int64(rid)) {
+		t.Error("public igot should clear private flag on existing blob")
+	}
+}
