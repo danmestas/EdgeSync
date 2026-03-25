@@ -701,3 +701,73 @@ func TestCrosslinkTicket(t *testing.T) {
 		t.Errorf("tkt-%s tag count=%d, want 1", ticketUUID, tagCount)
 	}
 }
+
+func TestCrosslinkEvent(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Manually create an event (technote) manifest
+	eventTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	eventUUID := "fedcba9876543210fedcba9876543210fedcba98"
+	eventBody := []byte("This is a technote body")
+	d := &deck.Deck{
+		Type: deck.Event,
+		E: &deck.EventCard{
+			Date: eventTime,
+			UUID: eventUUID,
+		},
+		U: "testuser",
+		D: eventTime,
+		W: eventBody,
+		C: "Test technote",
+	}
+
+	// Marshal and store the event manifest blob
+	manifestBytes, err := d.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	rid, _, err := blob.Store(r.DB(), manifestBytes)
+	if err != nil {
+		t.Fatalf("Store manifest: %v", err)
+	}
+
+	// Clear crosslink tables to simulate post-clone
+	r.DB().Exec("DELETE FROM event WHERE objid=?", rid)
+	r.DB().Exec("DELETE FROM tagxref WHERE rid=?", rid)
+
+	// Run Crosslink
+	n, err := Crosslink(r)
+	if err != nil {
+		t.Fatalf("Crosslink: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("expected at least 1 artifact crosslinked, got %d", n)
+	}
+
+	// Verify event row (type='e')
+	var eventType, comment string
+	err = r.DB().QueryRow(
+		"SELECT type, comment FROM event WHERE objid=?", rid,
+	).Scan(&eventType, &comment)
+	if err != nil {
+		t.Fatalf("event query: %v", err)
+	}
+	if eventType != "e" {
+		t.Errorf("event type=%q, want 'e'", eventType)
+	}
+	if comment != "Test technote" {
+		t.Errorf("event comment=%q, want 'Test technote'", comment)
+	}
+
+	// Verify event-* tag in tagxref
+	var tagCount int
+	r.DB().QueryRow(`
+		SELECT count(*) FROM tagxref
+		JOIN tag USING(tagid)
+		WHERE tagname=? AND rid=?
+	`, fmt.Sprintf("event-%s", eventUUID), rid).Scan(&tagCount)
+	if tagCount != 1 {
+		t.Errorf("event-%s tag count=%d, want 1", eventUUID, tagCount)
+	}
+}

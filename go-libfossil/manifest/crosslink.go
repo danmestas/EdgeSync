@@ -388,6 +388,52 @@ func crosslinkTicket(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) ([]pending
 }
 
 func crosslinkEvent(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) ([]pendingItem, error) {
+	if d.E == nil {
+		return nil, fmt.Errorf("event manifest missing E-card")
+	}
+	if err := addFWTPlink(r, rid, d); err != nil {
+		return nil, fmt.Errorf("event plink: %w", err)
+	}
+	eventID := d.E.UUID
+	tagName := fmt.Sprintf("event-%s", eventID)
+	mtime := libfossil.TimeToJulian(d.D)
+	if err := tag.ApplyTag(r, tag.ApplyOpts{
+		TargetRID: rid,
+		SrcRID:    rid,
+		TagName:   tagName,
+		TagType:   tag.TagSingleton,
+		Value:     fmt.Sprintf("%d", len(d.W)),
+		MTime:     mtime,
+	}); err != nil {
+		return nil, fmt.Errorf("event tag: %w", err)
+	}
+
+	var tagid int64
+	if err := r.DB().QueryRow("SELECT tagid FROM tag WHERE tagname=?", tagName).Scan(&tagid); err != nil {
+		return nil, fmt.Errorf("event tagid: %w", err)
+	}
+
+	var subsequent int64
+	r.DB().QueryRow("SELECT rid FROM tagxref WHERE tagid=? AND mtime>=? AND rid!=? ORDER BY mtime LIMIT 1",
+		tagid, mtime, rid).Scan(&subsequent)
+
+	if len(d.P) > 0 && subsequent == 0 {
+		r.DB().Exec("DELETE FROM event WHERE type='e' AND tagid=? AND objid IN (SELECT rid FROM tagxref WHERE tagid=?)", tagid, tagid)
+	}
+	if subsequent == 0 {
+		var bgcolor interface{}
+		var bgStr string
+		if r.DB().QueryRow("SELECT value FROM tagxref JOIN tag USING(tagid) WHERE tagname='bgcolor' AND rid=?", rid).Scan(&bgStr) == nil {
+			bgcolor = bgStr
+		}
+		if _, err := r.DB().Exec(
+			"REPLACE INTO event(type, mtime, objid, tagid, user, comment, bgcolor) VALUES('e', ?, ?, ?, ?, ?, ?)",
+			libfossil.TimeToJulian(d.E.Date), rid, tagid, d.U, d.C, bgcolor,
+		); err != nil {
+			return nil, fmt.Errorf("event insert: %w", err)
+		}
+	}
+	updateAttachmentComments(r, eventID, 'e')
 	return nil, nil
 }
 
