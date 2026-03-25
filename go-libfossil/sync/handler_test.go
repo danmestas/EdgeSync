@@ -1076,3 +1076,113 @@ func TestHandlerIGotPublic_ClearsPrivate(t *testing.T) {
 		t.Error("public igot should clear private flag on existing blob")
 	}
 }
+
+func TestHandleGimmePrivate_Authorized(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	r.DB().Exec("UPDATE user SET cap='oix' WHERE login='nobody'")
+	data := []byte("gimme private blob")
+	uuid := storeTestBlob(t, r, data)
+	rid, _ := blob.Exists(r.DB(), uuid)
+	content.MakePrivate(r.DB(), int64(rid))
+
+	resp := handleReq(t, r,
+		&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
+		&xfer.PragmaCard{Name: "send-private"},
+		&xfer.GimmeCard{UUID: uuid},
+	)
+
+	// Should get PrivateCard followed by FileCard.
+	files := findCards[*xfer.FileCard](resp)
+	found := false
+	for _, f := range files {
+		if f.UUID == uuid {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("authorized gimme for private blob should return file")
+	}
+	privCards := findCards[*xfer.PrivateCard](resp)
+	if len(privCards) == 0 {
+		t.Error("expected PrivateCard prefix before private file")
+	}
+}
+
+func TestHandleGimmePrivate_Unauthorized(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	r.DB().Exec("UPDATE user SET cap='oi' WHERE login='nobody'")
+	data := []byte("gimme private unauthorized")
+	uuid := storeTestBlob(t, r, data)
+	rid, _ := blob.Exists(r.DB(), uuid)
+	content.MakePrivate(r.DB(), int64(rid))
+
+	resp := handleReq(t, r,
+		&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
+		&xfer.GimmeCard{UUID: uuid},
+	)
+
+	files := findCards[*xfer.FileCard](resp)
+	for _, f := range files {
+		if f.UUID == uuid {
+			t.Error("unauthorized gimme for private blob should NOT return file")
+		}
+	}
+}
+
+func TestEmitCloneBatchSkipsPrivate(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	pubData := []byte("clone public blob")
+	pubUUID := storeTestBlob(t, r, pubData)
+	privData := []byte("clone private blob")
+	privUUID := storeTestBlob(t, r, privData)
+	privRid, _ := blob.Exists(r.DB(), privUUID)
+	content.MakePrivate(r.DB(), int64(privRid))
+
+	resp := handleReq(t, r,
+		&xfer.CloneCard{Version: 1},
+	)
+
+	files := findCards[*xfer.FileCard](resp)
+	fileUUIDs := make(map[string]bool)
+	for _, f := range files {
+		fileUUIDs[f.UUID] = true
+	}
+	if !fileUUIDs[pubUUID] {
+		t.Error("public blob missing from clone batch")
+	}
+	if fileUUIDs[privUUID] {
+		t.Error("private blob should be excluded from clone batch without send-private")
+	}
+}
+
+func TestEmitCloneBatchIncludesPrivateWhenAuthorized(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	r.DB().Exec("UPDATE user SET cap='gx' WHERE login='nobody'")
+	pubData := []byte("clone pub auth")
+	pubUUID := storeTestBlob(t, r, pubData)
+	privData := []byte("clone priv auth")
+	privUUID := storeTestBlob(t, r, privData)
+	privRid, _ := blob.Exists(r.DB(), privUUID)
+	content.MakePrivate(r.DB(), int64(privRid))
+
+	resp := handleReq(t, r,
+		&xfer.CloneCard{Version: 1},
+		&xfer.PragmaCard{Name: "send-private"},
+	)
+
+	files := findCards[*xfer.FileCard](resp)
+	fileUUIDs := make(map[string]bool)
+	for _, f := range files {
+		fileUUIDs[f.UUID] = true
+	}
+	if !fileUUIDs[pubUUID] {
+		t.Error("public blob missing from clone batch")
+	}
+	if !fileUUIDs[privUUID] {
+		t.Error("private blob should be included when send-private authorized")
+	}
+	privCards := findCards[*xfer.PrivateCard](resp)
+	if len(privCards) == 0 {
+		t.Error("expected PrivateCard prefix for private blob in clone batch")
+	}
+}

@@ -342,12 +342,19 @@ func (h *handler) handleGimme(c *xfer.GimmeCard) error {
 	if !ok {
 		return nil // blob not found — not fatal, skip.
 	}
+	isPriv := content.IsPrivate(h.repo.DB(), int64(rid))
+	if isPriv && !h.syncPrivate {
+		return nil // private blob, client not authorized — skip.
+	}
 	data, err := content.Expand(h.repo.DB(), rid)
 	if err != nil {
 		h.resp = append(h.resp, &xfer.ErrorCard{
 			Message: fmt.Sprintf("expand %s: %v", c.UUID, err),
 		})
 		return nil
+	}
+	if isPriv {
+		h.resp = append(h.resp, &xfer.PrivateCard{})
 	}
 	h.resp = append(h.resp, &xfer.FileCard{UUID: c.UUID, Content: data})
 	h.filesSent++
@@ -510,8 +517,8 @@ func (h *handler) emitCloneBatch() error {
 	}
 
 	rows, err := h.repo.DB().Query(
-		"SELECT rid, uuid FROM blob WHERE rid > ? AND size >= 0 ORDER BY rid LIMIT ?",
-		h.cloneSeq, batchSize+1,
+		"SELECT rid, uuid FROM blob WHERE rid > ? AND size >= 0 ORDER BY rid",
+		h.cloneSeq,
 	)
 	if err != nil {
 		return fmt.Errorf("handler: clone batch: %w", err)
@@ -519,33 +526,45 @@ func (h *handler) emitCloneBatch() error {
 	defer rows.Close()
 
 	count := 0
-	var lastRID int
+	var lastSentRID int
+	more := false
 	for rows.Next() {
 		var rid int
 		var uuid string
 		if err := rows.Scan(&rid, &uuid); err != nil {
 			return err
 		}
-		if count >= batchSize {
-			if err := rows.Err(); err != nil {
-				return err
-			}
-			h.resp = append(h.resp, &xfer.CloneSeqNoCard{SeqNo: lastRID})
-			return nil
+
+		isPriv := content.IsPrivate(h.repo.DB(), int64(rid))
+		if isPriv && !h.syncPrivate {
+			continue // skip private blob, don't count toward batch
 		}
+
+		if count >= batchSize {
+			more = true
+			break
+		}
+
 		data, err := content.Expand(h.repo.DB(), libfossil.FslID(rid))
 		if err != nil {
 			return fmt.Errorf("handler: expanding rid %d: %w", rid, err)
 		}
+		if isPriv {
+			h.resp = append(h.resp, &xfer.PrivateCard{})
+		}
 		h.resp = append(h.resp, &xfer.FileCard{UUID: uuid, Content: data})
 		h.filesSent++
-		lastRID = rid
+		lastSentRID = rid
 		count++
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	// All blobs sent — signal completion so the client stops requesting.
-	h.resp = append(h.resp, &xfer.CloneSeqNoCard{SeqNo: 0})
+	if more {
+		h.resp = append(h.resp, &xfer.CloneSeqNoCard{SeqNo: lastSentRID})
+	} else {
+		// All blobs sent — signal completion so the client stops requesting.
+		h.resp = append(h.resp, &xfer.CloneSeqNoCard{SeqNo: 0})
+	}
 	return nil
 }
