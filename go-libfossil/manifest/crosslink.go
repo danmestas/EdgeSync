@@ -532,5 +532,87 @@ func updateAttachmentComments(r *repo.Repo, targetID string, targetType byte) {
 }
 
 func crosslinkForum(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
+	if err := addFWTPlink(r, rid, d); err != nil {
+		return fmt.Errorf("forum plink: %w", err)
+	}
+
+	// Resolve thread references
+	var froot, fprev, firt libfossil.FslID
+	if d.G != "" {
+		var rootRid int64
+		if r.DB().QueryRow("SELECT rid FROM blob WHERE uuid=?", d.G).Scan(&rootRid) == nil {
+			froot = libfossil.FslID(rootRid)
+		}
+	}
+	if froot == 0 {
+		froot = rid // self is thread root
+	}
+	if len(d.P) > 0 {
+		var prevRid int64
+		if r.DB().QueryRow("SELECT rid FROM blob WHERE uuid=?", d.P[0]).Scan(&prevRid) == nil {
+			fprev = libfossil.FslID(prevRid)
+		}
+	}
+	if d.I != "" {
+		var irtRid int64
+		if r.DB().QueryRow("SELECT rid FROM blob WHERE uuid=?", d.I).Scan(&irtRid) == nil {
+			firt = libfossil.FslID(irtRid)
+		}
+	}
+
+	// Insert forumpost
+	if _, err := r.DB().Exec(
+		"REPLACE INTO forumpost(fpid, froot, fprev, firt, fmtime) VALUES(?, ?, nullif(?, 0), nullif(?, 0), ?)",
+		rid, froot, fprev, firt, libfossil.TimeToJulian(d.D),
+	); err != nil {
+		return fmt.Errorf("forumpost insert: %w", err)
+	}
+
+	mtime := libfossil.TimeToJulian(d.D)
+
+	if firt == 0 {
+		// Thread starter
+		title := d.H
+		if title == "" {
+			title = "(Deleted)"
+		}
+		fType := "Post"
+		if fprev != 0 {
+			fType = "Edit"
+		}
+		if _, err := r.DB().Exec(
+			"REPLACE INTO event(type, mtime, objid, user, comment) VALUES('f', ?, ?, ?, ?)",
+			mtime, rid, d.U, fmt.Sprintf("%s: %s", fType, title),
+		); err != nil {
+			return fmt.Errorf("forum event: %w", err)
+		}
+		// Update thread title if most recent
+		var hasNewer int
+		r.DB().QueryRow("SELECT count(*) FROM forumpost WHERE froot=? AND firt=0 AND fpid!=? AND fmtime>?",
+			froot, rid, mtime).Scan(&hasNewer)
+		if hasNewer == 0 {
+			r.DB().Exec(
+				"UPDATE event SET comment=substr(comment,1,instr(comment,':')) || ' ' || ? WHERE objid IN (SELECT fpid FROM forumpost WHERE froot=?)",
+				title, froot)
+		}
+	} else {
+		// Reply
+		var rootTitle string
+		if r.DB().QueryRow("SELECT substr(comment, instr(comment,':')+2) FROM event WHERE objid=?", froot).Scan(&rootTitle) != nil {
+			rootTitle = "Unknown"
+		}
+		fType := "Reply"
+		if len(d.W) == 0 {
+			fType = "Delete reply"
+		} else if fprev != 0 {
+			fType = "Edit reply"
+		}
+		if _, err := r.DB().Exec(
+			"REPLACE INTO event(type, mtime, objid, user, comment) VALUES('f', ?, ?, ?, ?)",
+			mtime, rid, d.U, fmt.Sprintf("%s: %s", fType, rootTitle),
+		); err != nil {
+			return fmt.Errorf("forum reply event: %w", err)
+		}
+	}
 	return nil
 }

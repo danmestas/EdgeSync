@@ -930,3 +930,77 @@ func TestCrosslinkCluster(t *testing.T) {
 		t.Errorf("rid2 still in unclustered, count=%d", count2)
 	}
 }
+
+func TestCrosslinkForum(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Create a forum post (thread starter)
+	forumTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	forumContent := []byte("This is a test forum post")
+	d := &deck.Deck{
+		Type: deck.ForumPost,
+		H:    "Discussion about sync",
+		U:    "testuser",
+		W:    forumContent,
+		D:    forumTime,
+	}
+
+	// Marshal and store the forum manifest blob
+	manifestBytes, err := d.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	rid, _, err := blob.Store(r.DB(), manifestBytes)
+	if err != nil {
+		t.Fatalf("Store manifest: %v", err)
+	}
+
+	// Clear crosslink tables to simulate post-clone
+	r.DB().Exec("DELETE FROM event WHERE objid=?", rid)
+	r.DB().Exec("DELETE FROM forumpost WHERE fpid=?", rid)
+
+	// Run Crosslink
+	n, err := Crosslink(r)
+	if err != nil {
+		t.Fatalf("Crosslink: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("expected at least 1 artifact crosslinked, got %d", n)
+	}
+
+	// Verify forumpost row with froot=self (thread starter)
+	var froot int64
+	var fprev, firt interface{}
+	var fmtime float64
+	err = r.DB().QueryRow(
+		"SELECT froot, fprev, firt, fmtime FROM forumpost WHERE fpid=?", rid,
+	).Scan(&froot, &fprev, &firt, &fmtime)
+	if err != nil {
+		t.Fatalf("forumpost query: %v", err)
+	}
+	if froot != int64(rid) {
+		t.Errorf("froot=%d, want %d (self)", froot, rid)
+	}
+	if fprev != nil {
+		t.Errorf("fprev=%v, want nil (no previous edit)", fprev)
+	}
+	if firt != nil {
+		t.Errorf("firt=%v, want nil (thread starter)", firt)
+	}
+
+	// Verify event row (type='f')
+	var eventType, comment string
+	err = r.DB().QueryRow(
+		"SELECT type, comment FROM event WHERE objid=?", rid,
+	).Scan(&eventType, &comment)
+	if err != nil {
+		t.Fatalf("event query: %v", err)
+	}
+	if eventType != "f" {
+		t.Errorf("event type=%q, want 'f'", eventType)
+	}
+	if comment != "Post: Discussion about sync" {
+		t.Errorf("event comment=%q, want 'Post: Discussion about sync'", comment)
+	}
+}
