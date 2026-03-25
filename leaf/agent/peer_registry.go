@@ -32,22 +32,17 @@ func (a *Agent) ensurePeerRegistry() error {
 }
 
 func (a *Agent) seedPeerRegistry() error {
-	row := map[string]any{
-		"peer_id":      a.config.PeerID,
-		"last_sync":    a.clock.Now().Unix(),
-		"repo_hash":    "", // TODO: compute actual repo hash
-		"version":      buildVersion,
-		"platform":     runtime.GOOS + "/" + runtime.GOARCH,
-		"capabilities": strings.Join(a.capabilities(), ","),
-		"nats_subject": a.config.SubjectPrefix,
-		"addr":         a.config.ServeHTTPAddr,
-	}
+	row := a.buildPeerRegistryRow()
 	return repo.UpsertXRow(a.repo.DB(), "peer_registry", row, a.clock.Now().Unix())
 }
 
 func (a *Agent) updatePeerRegistryAfterSync() error {
-	// Upsert requires all fields, so we provide full row.
-	row := map[string]any{
+	row := a.buildPeerRegistryRow()
+	return repo.UpsertXRow(a.repo.DB(), "peer_registry", row, a.clock.Now().Unix())
+}
+
+func (a *Agent) buildPeerRegistryRow() map[string]any {
+	return map[string]any{
 		"peer_id":      a.config.PeerID,
 		"last_sync":    a.clock.Now().Unix(),
 		"repo_hash":    "", // TODO: compute actual repo hash
@@ -57,7 +52,6 @@ func (a *Agent) updatePeerRegistryAfterSync() error {
 		"nats_subject": a.config.SubjectPrefix,
 		"addr":         a.config.ServeHTTPAddr,
 	}
-	return repo.UpsertXRow(a.repo.DB(), "peer_registry", row, a.clock.Now().Unix())
 }
 
 func (a *Agent) capabilities() []string {

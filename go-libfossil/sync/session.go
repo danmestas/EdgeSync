@@ -70,6 +70,7 @@ type session struct {
 	xTableHashSent map[string]bool            // table -> true if xtable-hash pragma sent
 	xTableGimmes   map[string]map[string]bool // table -> pkHash -> true
 	xTableToSend   map[string]map[string]bool // table -> pkHash -> true
+	xTableCache    map[string]*repo.TableDef  // cached table defs, lazily loaded
 }
 
 func newSession(r *repo.Repo, opts SyncOpts) *session {
@@ -116,6 +117,29 @@ func newSession(r *repo.Repo, opts SyncOpts) *session {
 	}
 
 	return s
+}
+
+// getXTableDef returns a cached table definition, loading all tables on first miss.
+func (s *session) getXTableDef(tableName string) (*repo.TableDef, error) {
+	if s.xTableCache != nil {
+		if def, ok := s.xTableCache[tableName]; ok {
+			return def, nil
+		}
+	}
+	// Cache miss — load all tables.
+	tables, err := repo.ListSyncedTables(s.repo.DB())
+	if err != nil {
+		return nil, err
+	}
+	s.xTableCache = make(map[string]*repo.TableDef)
+	for _, info := range tables {
+		d := info.Def
+		s.xTableCache[info.Name] = &d
+	}
+	if def, ok := s.xTableCache[tableName]; ok {
+		return def, nil
+	}
+	return nil, nil
 }
 
 // Sync runs the client sync loop against the given transport.

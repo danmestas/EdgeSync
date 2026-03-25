@@ -22,84 +22,117 @@ func (s *session) buildXTableCards() ([]xfer.Card, error) {
 	}
 
 	var cards []xfer.Card
-
 	for _, info := range tables {
-		// Emit schema card so server/peer knows about this table.
-		defJSON, err := json.Marshal(info.Def)
+		schemaCards, err := s.buildTableSchemaCard(info)
 		if err != nil {
-			return nil, fmt.Errorf("buildXTableCards: marshal def %s: %w", info.Name, err)
+			return nil, err
 		}
-		schemaHash := hash.SHA1(defJSON)
-		cards = append(cards, &xfer.SchemaCard{
+		cards = append(cards, schemaCards...)
+
+		igotCards, err := s.buildTableXIGotCards(info)
+		if err != nil {
+			return nil, err
+		}
+		cards = append(cards, igotCards...)
+
+		sendCards, err := s.buildTableSendCards(info)
+		if err != nil {
+			return nil, err
+		}
+		cards = append(cards, sendCards...)
+	}
+
+	return cards, nil
+}
+
+// buildTableSchemaCard builds the schema and pragma xtable-hash cards for one table.
+func (s *session) buildTableSchemaCard(info repo.TableInfo) ([]xfer.Card, error) {
+	defJSON, err := json.Marshal(info.Def)
+	if err != nil {
+		return nil, fmt.Errorf("buildTableSchemaCard: marshal def %s: %w", info.Name, err)
+	}
+	schemaHash := hash.SHA1(defJSON)
+
+	catHash, err := repo.CatalogHash(s.repo.DB(), info.Name, info.Def)
+	if err != nil {
+		return nil, fmt.Errorf("buildTableSchemaCard: catalog hash %s: %w", info.Name, err)
+	}
+
+	return []xfer.Card{
+		&xfer.SchemaCard{
 			Table:   info.Name,
 			Version: 1,
 			Hash:    schemaHash,
 			MTime:   info.MTime,
 			Content: defJSON,
-		})
-
-		// Emit pragma xtable-hash for catalog comparison.
-		catHash, err := repo.CatalogHash(s.repo.DB(), info.Name, info.Def)
-		if err != nil {
-			return nil, fmt.Errorf("buildXTableCards: catalog hash %s: %w", info.Name, err)
-		}
-		cards = append(cards, &xfer.PragmaCard{
+		},
+		&xfer.PragmaCard{
 			Name:   "xtable-hash",
 			Values: []string{info.Name, catHash},
-		})
+		},
+	}, nil
+}
 
-		// Emit xigot for all local rows.
-		rows, mtimes, err := repo.ListXRows(s.repo.DB(), info.Name, info.Def)
-		if err != nil {
-			return nil, fmt.Errorf("buildXTableCards: list rows %s: %w", info.Name, err)
+// buildTableXIGotCards builds xigot cards for all rows in one table.
+func (s *session) buildTableXIGotCards(info repo.TableInfo) ([]xfer.Card, error) {
+	rows, mtimes, err := repo.ListXRows(s.repo.DB(), info.Name, info.Def)
+	if err != nil {
+		return nil, fmt.Errorf("buildTableXIGotCards: list rows %s: %w", info.Name, err)
+	}
+
+	pkCols := extractPKColumns(info.Def)
+	var cards []xfer.Card
+	for i, row := range rows {
+		pkValues := make(map[string]any)
+		for _, col := range pkCols {
+			pkValues[col] = row[col]
 		}
-		pkCols := extractPKColumns(info.Def)
-		for i, row := range rows {
-			pkValues := make(map[string]any)
-			for _, col := range pkCols {
-				pkValues[col] = row[col]
-			}
-			pkHash := repo.PKHash(pkValues)
-			cards = append(cards, &xfer.XIGotCard{
+		pkHash := repo.PKHash(pkValues)
+		cards = append(cards, &xfer.XIGotCard{
+			Table:  info.Name,
+			PKHash: pkHash,
+			MTime:  mtimes[i],
+		})
+	}
+	return cards, nil
+}
+
+// buildTableSendCards builds xgimme and xrow cards for one table.
+func (s *session) buildTableSendCards(info repo.TableInfo) ([]xfer.Card, error) {
+	var cards []xfer.Card
+
+	// Emit xgimme for rows we're requesting.
+	if gimmes, ok := s.xTableGimmes[info.Name]; ok {
+		for pkHash := range gimmes {
+			cards = append(cards, &xfer.XGimmeCard{
 				Table:  info.Name,
 				PKHash: pkHash,
-				MTime:  mtimes[i],
 			})
 		}
+	}
 
-		// Emit xgimme for rows we're requesting.
-		if gimmes, ok := s.xTableGimmes[info.Name]; ok {
-			for pkHash := range gimmes {
-				cards = append(cards, &xfer.XGimmeCard{
-					Table:  info.Name,
-					PKHash: pkHash,
-				})
+	// Emit xrow for rows queued to send.
+	if sends, ok := s.xTableToSend[info.Name]; ok {
+		for pkHash := range sends {
+			row, mtime, err := repo.LookupXRow(s.repo.DB(), info.Name, info.Def, pkHash)
+			if err != nil {
+				return nil, fmt.Errorf("buildTableSendCards: lookup %s/%s: %w", info.Name, pkHash, err)
 			}
-		}
-
-		// Emit xrow for rows queued to send.
-		if sends, ok := s.xTableToSend[info.Name]; ok {
-			for pkHash := range sends {
-				row, mtime, err := repo.LookupXRow(s.repo.DB(), info.Name, info.Def, pkHash)
-				if err != nil {
-					return nil, fmt.Errorf("buildXTableCards: lookup %s/%s: %w", info.Name, pkHash, err)
-				}
-				if row == nil {
-					delete(sends, pkHash)
-					continue
-				}
-				rowJSON, err := json.Marshal(row)
-				if err != nil {
-					return nil, fmt.Errorf("buildXTableCards: marshal row %s/%s: %w", info.Name, pkHash, err)
-				}
-				cards = append(cards, &xfer.XRowCard{
-					Table:   info.Name,
-					PKHash:  pkHash,
-					MTime:   mtime,
-					Content: rowJSON,
-				})
+			if row == nil {
 				delete(sends, pkHash)
+				continue
 			}
+			rowJSON, err := json.Marshal(row)
+			if err != nil {
+				return nil, fmt.Errorf("buildTableSendCards: marshal row %s/%s: %w", info.Name, pkHash, err)
+			}
+			cards = append(cards, &xfer.XRowCard{
+				Table:   info.Name,
+				PKHash:  pkHash,
+				MTime:   mtime,
+				Content: rowJSON,
+			})
+			delete(sends, pkHash)
 		}
 	}
 
@@ -153,19 +186,9 @@ func (s *session) handleXIGotResponse(c *xfer.XIGotCard) error {
 		return fmt.Errorf("handleXIGotResponse: ensure schema: %w", err)
 	}
 
-	tables, err := repo.ListSyncedTables(s.repo.DB())
+	def, err := s.getXTableDef(c.Table)
 	if err != nil {
-		return fmt.Errorf("handleXIGotResponse: list tables: %w", err)
-	}
-
-	// Find the table definition.
-	var def *repo.TableDef
-	for _, info := range tables {
-		if info.Name == c.Table {
-			d := info.Def
-			def = &d
-			break
-		}
+		return fmt.Errorf("handleXIGotResponse: get table def %s: %w", c.Table, err)
 	}
 	if def == nil {
 		// Table not registered locally — skip (schema card should come first).

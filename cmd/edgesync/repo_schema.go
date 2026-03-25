@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 )
@@ -44,8 +45,8 @@ func (c *SchemaAddCmd) Run(g *Globals) error {
 		Conflict: c.Conflict,
 	}
 
-	// Register table (uses current Unix time).
-	mtime := int64(0) // Will use strftime in repo layer if needed
+	// Register table with current Unix time.
+	mtime := time.Now().Unix()
 	if err := repo.RegisterSyncedTable(r.DB(), c.Name, def, mtime); err != nil {
 		return err
 	}

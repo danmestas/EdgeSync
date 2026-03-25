@@ -190,16 +190,41 @@ func (h *handler) handleXRow(c *xfer.XRowCard) error {
 		return nil
 	}
 
-	// Unmarshal row data.
+	// Unmarshal and verify PK hash.
+	row, ok := h.verifyXRowPKHash(c, st)
+	if !ok {
+		return nil // error card already appended
+	}
+
+	// Conflict resolution — decide whether to accept the incoming row.
+	accept, err := h.resolveXRowConflict(c, st, row)
+	if err != nil {
+		return err
+	}
+	if !accept {
+		return nil
+	}
+
+	// Upsert row.
+	if err := repo.UpsertXRow(h.repo.DB(), c.Table, row, c.MTime); err != nil {
+		return fmt.Errorf("handler.handleXRow: upsert %s/%s: %w", c.Table, c.PKHash, err)
+	}
+
+	h.xrowsRecvd++
+	return nil
+}
+
+// verifyXRowPKHash unmarshals the row JSON and verifies the PK hash matches.
+// Returns the row map and true on success, or nil and false if an error card was emitted.
+func (h *handler) verifyXRowPKHash(c *xfer.XRowCard, st *SyncedTable) (map[string]any, bool) {
 	var row map[string]any
 	if err := json.Unmarshal(c.Content, &row); err != nil {
 		h.resp = append(h.resp, &xfer.ErrorCard{
 			Message: fmt.Sprintf("xrow %s/%s: unmarshal: %v", c.Table, c.PKHash, err),
 		})
-		return nil
+		return nil, false
 	}
 
-	// Verify PK hash.
 	pkCols := extractPKColumns(st.Def)
 	pkValues := make(map[string]any)
 	for _, col := range pkCols {
@@ -210,54 +235,54 @@ func (h *handler) handleXRow(c *xfer.XRowCard) error {
 		h.resp = append(h.resp, &xfer.ErrorCard{
 			Message: fmt.Sprintf("xrow %s/%s: pk hash mismatch", c.Table, c.PKHash),
 		})
-		return nil
+		return nil, false
 	}
 
-	// Conflict resolution.
+	return row, true
+}
+
+// resolveXRowConflict applies the table's conflict resolution policy.
+// Returns true if the incoming row should be accepted, false to reject.
+func (h *handler) resolveXRowConflict(c *xfer.XRowCard, st *SyncedTable, row map[string]any) (bool, error) {
 	localRow, localMtime, err := repo.LookupXRow(h.repo.DB(), c.Table, st.Def, c.PKHash)
 	if err != nil {
-		return fmt.Errorf("handler.handleXRow: lookup %s/%s: %w", c.Table, c.PKHash, err)
+		return false, fmt.Errorf("handler.resolveXRowConflict: lookup %s/%s: %w", c.Table, c.PKHash, err)
 	}
 
 	switch st.Def.Conflict {
 	case "mtime-wins":
+		// Tie goes to the incoming row to ensure convergence — if both sides
+		// have equal mtime, accepting the row is idempotent.
 		if localRow != nil && localMtime > c.MTime {
-			// Local is newer — reject incoming.
-			return nil
+			return false, nil
 		}
 	case "self-write":
+		// Self-write allows a peer to modify only rows it originally created.
+		// The _owner field is set on first write and immutable thereafter.
 		if localRow != nil {
 			localOwner, _ := localRow["_owner"].(string)
 			if localOwner != "" && localOwner != h.loginUser {
-				// Not owner — reject.
-				return nil
+				return false, nil
 			}
 		}
-		// Add _owner if not present (first write or self-write allowed).
 		if h.loginUser != "" {
 			row["_owner"] = h.loginUser
 		}
 	case "owner-write":
+		// Owner-write is like self-write but the owner is the loginUser,
+		// not the PK. Only the original writer can update.
 		if localRow != nil {
 			localOwner, _ := localRow["_owner"].(string)
 			if localOwner != h.loginUser {
-				// Not owner — reject.
-				return nil
+				return false, nil
 			}
 		}
-		// Add _owner.
 		if h.loginUser != "" {
 			row["_owner"] = h.loginUser
 		}
 	}
 
-	// Upsert row.
-	if err := repo.UpsertXRow(h.repo.DB(), c.Table, row, c.MTime); err != nil {
-		return fmt.Errorf("handler.handleXRow: upsert %s/%s: %w", c.Table, c.PKHash, err)
-	}
-
-	h.xrowsRecvd++
-	return nil
+	return true, nil
 }
 
 // sendXRow sends a single row to the client.

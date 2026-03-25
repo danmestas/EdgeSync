@@ -172,6 +172,12 @@ func createExtensionTable(d *db.DB, name string, def TableDef) error {
 		cols = append(cols, "_owner TEXT NOT NULL")
 	}
 
+	// Paired assertion — RegisterSyncedTable validates hasPK above, but
+	// defend against future callers that bypass registration.
+	if len(pkCols) == 0 {
+		panic(fmt.Sprintf("createExtensionTable: table %q must have at least one PK column", name))
+	}
+
 	ddl := fmt.Sprintf(
 		"CREATE TABLE IF NOT EXISTS x_%s(\n  %s,\n  PRIMARY KEY(%s)\n)",
 		name,
@@ -245,14 +251,20 @@ func UpsertXRow(d *db.DB, tableName string, row map[string]any, mtime int64) err
 		panic("repo.UpsertXRow: row must not be nil")
 	}
 
-	// Build column list and placeholders.
+	// Build column list and placeholders. Sort keys for deterministic SQL.
+	keys := make([]string, 0, len(row))
+	for k := range row {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
 	var cols []string
 	var placeholders []string
 	var values []any
-	for k, v := range row {
+	for _, k := range keys {
 		cols = append(cols, k)
 		placeholders = append(placeholders, "?")
-		values = append(values, v)
+		values = append(values, row[k])
 	}
 	cols = append(cols, "mtime")
 	placeholders = append(placeholders, "?")
@@ -352,7 +364,18 @@ func LookupXRow(d *db.DB, tableName string, def TableDef, pkHash string) (map[st
 		for _, pk := range pkCols {
 			pkValues[pk] = row[pk]
 		}
-		if PKHash(pkValues) == pkHash {
+		computed := PKHash(pkValues)
+		if computed == pkHash {
+			// Postcondition: re-derive PK hash from the row we're about to
+			// return and verify it matches the requested hash. Guards against
+			// PK column extraction bugs.
+			verifyPK := make(map[string]any)
+			for _, pk := range pkCols {
+				verifyPK[pk] = row[pk]
+			}
+			if PKHash(verifyPK) != pkHash {
+				panic(fmt.Sprintf("repo.LookupXRow: postcondition violated: re-derived PK hash != %q", pkHash))
+			}
 			return row, mtimes[i], nil
 		}
 	}
@@ -409,5 +432,9 @@ func CatalogHash(d *db.DB, tableName string, def TableDef) (string, error) {
 	for _, e := range entries {
 		fmt.Fprintf(&buf, "%s %d\n", e.pkHash, e.mtime)
 	}
-	return hash.SHA1([]byte(buf.String())), nil
+	result := hash.SHA1([]byte(buf.String()))
+	if len(result) != 40 {
+		panic(fmt.Sprintf("repo.CatalogHash: expected 40-char SHA1 hex, got %d chars", len(result)))
+	}
+	return result, nil
 }
