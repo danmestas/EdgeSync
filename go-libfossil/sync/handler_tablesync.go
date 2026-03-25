@@ -94,6 +94,11 @@ func (h *handler) handlePragmaXTableHash(table, clientHash string) {
 		return
 	}
 
+	// BUGGIFY: 3% chance corrupt catalog hash to force full xigot exchange.
+	if h.buggify != nil && h.buggify.Check("handler.catalogHash.corrupt", 0.03) {
+		localHash = "buggify-corrupt-hash"
+	}
+
 	if localHash == clientHash {
 		return // already in sync
 	}
@@ -112,6 +117,11 @@ func (h *handler) handleXIGot(c *xfer.XIGotCard) error {
 		panic("handler.handleXIGot: c must not be nil")
 	}
 	if !h.pullOK {
+		return nil
+	}
+
+	// BUGGIFY: 5% chance ignore xigot to test multi-round convergence.
+	if h.buggify != nil && h.buggify.Check("handler.handleXIGot.skip", 0.05) {
 		return nil
 	}
 
@@ -188,6 +198,14 @@ func (h *handler) handleXRow(c *xfer.XRowCard) error {
 			Message: fmt.Sprintf("buggify: rejected xrow %s/%s", c.Table, c.PKHash),
 		})
 		return nil
+	}
+
+	// BUGGIFY: 2% chance corrupt JSON payload to test unmarshal error path.
+	if h.buggify != nil && h.buggify.Check("handler.handleXRow.corruptJSON", 0.02) && len(c.Content) > 0 {
+		corrupted := make([]byte, len(c.Content))
+		copy(corrupted, c.Content)
+		corrupted[0] = '!'
+		c = &xfer.XRowCard{Table: c.Table, PKHash: c.PKHash, MTime: c.MTime, Content: corrupted}
 	}
 
 	// Unmarshal and verify PK hash.
@@ -315,19 +333,24 @@ func (h *handler) sendXRow(table string, st *SyncedTable, pkHash string) error {
 // Schema cards are sent so that pulling clients learn about new tables.
 func (h *handler) emitXIGots() error {
 	for name, st := range h.syncedTables {
-		// Emit schema card so client can register the table if missing.
-		defJSON, err := json.Marshal(st.Def)
-		if err != nil {
-			return fmt.Errorf("handler.emitXIGots: marshal def %s: %w", name, err)
+		// BUGGIFY: 5% chance skip schema card to test client retry on missing schema.
+		if h.buggify != nil && h.buggify.Check("handler.emitXIGots.dropSchema", 0.05) {
+			// Skip schema card — only emit xigots.
+		} else {
+			// Emit schema card so client can register the table if missing.
+			defJSON, err := json.Marshal(st.Def)
+			if err != nil {
+				return fmt.Errorf("handler.emitXIGots: marshal def %s: %w", name, err)
+			}
+			schemaHash := hash.SHA1(defJSON)
+			h.resp = append(h.resp, &xfer.SchemaCard{
+				Table:   name,
+				Version: 1,
+				Hash:    schemaHash,
+				MTime:   st.Info.MTime,
+				Content: defJSON,
+			})
 		}
-		schemaHash := hash.SHA1(defJSON)
-		h.resp = append(h.resp, &xfer.SchemaCard{
-			Table:   name,
-			Version: 1,
-			Hash:    schemaHash,
-			MTime:   st.Info.MTime,
-			Content: defJSON,
-		})
 
 		if err := h.emitXIGotsForTable(name, st); err != nil {
 			return err
@@ -341,6 +364,12 @@ func (h *handler) emitXIGotsForTable(table string, st *SyncedTable) error {
 	rows, mtimes, err := repo.ListXRows(h.repo.DB(), table, st.Def)
 	if err != nil {
 		return fmt.Errorf("handler.emitXIGotsForTable: list %s: %w", table, err)
+	}
+
+	// BUGGIFY: 10% chance truncate xigot list to stress multi-round convergence.
+	if h.buggify != nil && h.buggify.Check("handler.emitXIGots.truncate", 0.10) && len(rows) > 1 {
+		rows = rows[:len(rows)/2]
+		mtimes = mtimes[:len(mtimes)/2]
 	}
 
 	pkCols := extractPKColumns(st.Def)

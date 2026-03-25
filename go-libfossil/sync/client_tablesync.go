@@ -88,10 +88,17 @@ func (s *session) buildTableXIGotCards(info repo.TableInfo) ([]xfer.Card, error)
 			pkValues[col] = row[col]
 		}
 		pkHash := repo.PKHash(pkValues)
+		mtime := mtimes[i]
+
+		// BUGGIFY: 2% chance send stale mtime to test server-side comparison.
+		if s.opts.Buggify != nil && s.opts.Buggify.Check("client.buildXIGot.staleMtime", 0.02) {
+			mtime = 1 // Ancient mtime — server should still converge.
+		}
+
 		cards = append(cards, &xfer.XIGotCard{
 			Table:  info.Name,
 			PKHash: pkHash,
-			MTime:  mtimes[i],
+			MTime:  mtime,
 		})
 	}
 	return cards, nil
@@ -236,6 +243,11 @@ func (s *session) handleXGimmeResponse(c *xfer.XGimmeCard) error {
 func (s *session) handleXRowResponse(c *xfer.XRowCard) error {
 	if c == nil {
 		panic("session.handleXRowResponse: c must not be nil")
+	}
+
+	// BUGGIFY: 5% chance drop received row to test re-gimme next round.
+	if s.opts.Buggify != nil && s.opts.Buggify.Check("client.handleXRowResponse.drop", 0.05) {
+		return nil
 	}
 
 	if err := repo.EnsureSyncSchema(s.repo.DB()); err != nil {
