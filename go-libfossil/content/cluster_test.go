@@ -156,6 +156,33 @@ func TestGenerateClusters_PhantomsExcluded(t *testing.T) {
 	}
 }
 
+func TestGenerateClusters_ShunnedExcluded(t *testing.T) {
+	d := setupTestDB(t)
+
+	// Store 100 real blobs (at threshold).
+	for i := 0; i < 100; i++ {
+		_, uuid, err := blob.Store(d, []byte(fmt.Sprintf("blob-%04d-content-padding", i)))
+		if err != nil {
+			t.Fatalf("Store %d: %v", i, err)
+		}
+		// Shun the last 10 blobs.
+		if i >= 90 {
+			if _, err := d.Exec("INSERT INTO shun(uuid, mtime) VALUES(?, 0)", uuid); err != nil {
+				t.Fatalf("shun %d: %v", i, err)
+			}
+		}
+	}
+
+	// 90 non-shunned blobs < 100 threshold -> no clusters.
+	n, err := GenerateClusters(d)
+	if err != nil {
+		t.Fatalf("GenerateClusters: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("clusters = %d, want 0 (90 non-shunned < 100 threshold)", n)
+	}
+}
+
 func TestGenerateClusters_ValidArtifactFormat(t *testing.T) {
 	d := setupTestDB(t)
 

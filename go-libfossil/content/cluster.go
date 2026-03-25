@@ -30,6 +30,8 @@ func GenerateClusters(q db.Querier) (int, error) {
 	err := q.QueryRow(`
 		SELECT count(*) FROM unclustered u
 		WHERE NOT EXISTS (SELECT 1 FROM phantom WHERE rid = u.rid)
+		AND NOT EXISTS (SELECT 1 FROM shun WHERE uuid = (SELECT uuid FROM blob WHERE rid = u.rid))
+		AND NOT EXISTS (SELECT 1 FROM private WHERE rid = u.rid)
 	`).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("content.GenerateClusters count: %w", err)
@@ -43,6 +45,8 @@ func GenerateClusters(q db.Querier) (int, error) {
 		SELECT b.uuid FROM unclustered u
 		JOIN blob b ON b.rid = u.rid
 		WHERE NOT EXISTS (SELECT 1 FROM phantom WHERE rid = u.rid)
+		AND NOT EXISTS (SELECT 1 FROM shun WHERE uuid = b.uuid)
+		AND NOT EXISTS (SELECT 1 FROM private WHERE rid = u.rid)
 		ORDER BY b.uuid
 	`)
 	if err != nil {
@@ -118,7 +122,7 @@ func GenerateClusters(q db.Querier) (int, error) {
 			args[i] = rid
 		}
 		query := fmt.Sprintf(
-			"DELETE FROM unclustered WHERE rid NOT IN (%s) AND NOT EXISTS (SELECT 1 FROM phantom WHERE rid = unclustered.rid)",
+			"DELETE FROM unclustered WHERE rid NOT IN (%s) AND NOT EXISTS (SELECT 1 FROM phantom WHERE rid = unclustered.rid) AND NOT EXISTS (SELECT 1 FROM shun WHERE uuid = (SELECT uuid FROM blob WHERE rid = unclustered.rid)) AND NOT EXISTS (SELECT 1 FROM private WHERE rid = unclustered.rid)",
 			placeholders,
 		)
 		if _, err := q.Exec(query, args...); err != nil {
