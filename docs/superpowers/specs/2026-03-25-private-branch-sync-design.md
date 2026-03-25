@@ -87,7 +87,13 @@ WHERE size >= 0
   AND NOT EXISTS(SELECT 1 FROM private WHERE rid=blob.rid)
 ```
 
-When `s.opts.Private`, also call `sendPrivate()` which emits `igot UUID 1` for all private blobs.
+#### `sendPrivate`
+
+New function, called after `sendUnclustered` in `buildRequest` when `s.opts.Private`. Emits `igot UUID 1` for all private blobs:
+
+```sql
+SELECT uuid FROM private JOIN blob USING(rid) WHERE blob.size >= 0
+```
 
 #### `sendAllClusters`
 
@@ -95,9 +101,11 @@ Add same `NOT EXISTS(SELECT 1 FROM private ...)` filter.
 
 #### `buildFileCards`
 
-Before emitting a `FileCard` for a private blob, prepend a `PrivateCard`. Check `content.IsPrivate(db, rid)` when loading.
+Exclude private blobs from the unsent table query: `SELECT rid FROM unsent EXCEPT SELECT rid FROM private` (matches Fossil's `send_unsent`).
 
-Delta safety: when building a delta, skip if the delta source is private (use full content instead).
+Before emitting a `FileCard` for a private blob (from `pendingSend`), prepend a `PrivateCard`. Check `content.IsPrivate(db, rid)` when loading.
+
+Delta safety: when building a delta, skip if the delta source is private UNLESS `opts.Private` is true. Fossil allows deltas against private sources when both peers are in private sync mode (xfer.c line ~453).
 
 #### `buildGimmeCards`
 
@@ -110,10 +118,10 @@ AND NOT EXISTS(SELECT 1 FROM private WHERE rid=blob.rid)
 #### `processResponse`
 
 - **`PrivateCard`**: Set `s.nextIsPrivate = true`.
-- **`FileCard` / `CFileCard`**: After storing, if `s.nextIsPrivate`, call `content.MakePrivate`. Reset flag.
+- **`FileCard` / `CFileCard`**: After storing, if `s.nextIsPrivate`, call `content.MakePrivate` and reset flag. If `!s.nextIsPrivate`, call `content.MakePublic` (a public artifact clears any prior private status).
 - **`IGotCard` with `IsPrivate`**:
-  - If `s.opts.Private`: create private phantom (request it).
-  - If `!s.opts.Private`: if blob exists locally, call `content.MakePrivate`. Don't create phantom (don't request).
+  - If `s.opts.Private`: create private phantom (request it), call `MakePrivate`.
+  - If `!s.opts.Private`: if blob exists locally, call `content.MakePrivate`. Do NOT create phantom (don't request it).
 
 ### 4. Server-side — `sync/handler.go`
 
@@ -152,6 +160,7 @@ case *xfer.PrivateCard:
         h.resp = append(h.resp, &xfer.ErrorCard{
             Message: "not authorized to sync private content",
         })
+        h.nextIsPrivate = false // ensure flag is NOT set on auth failure
     } else {
         h.nextIsPrivate = true
     }
@@ -211,6 +220,12 @@ Respect `IsPrivate` flag:
 - `TestSyncPrivateFileCardPrefix` — private file cards preceded by `PrivateCard`.
 - `TestSyncExcludesPrivateByDefault` — `Private: false` excludes private from igot/gimme.
 
+#### Integration tests
+
+- `TestSyncPrivateArtifactTransition` — receive blob as private, then receive same UUID as public. Verify `MakePublic` clears private status.
+- `TestSyncPrivateDeltaSource` — delta against private artifact is sent as full content when `Private: false`, but as delta when `Private: true`.
+- `TestSyncMixedPrivatePublic` — sync with a mix of private and public artifacts. Verify igot filtering works correctly.
+
 #### DST scenario (`dst/scenario_test.go`)
 
 - `TestScenarioPrivateSync` — master has mix of public and private blobs. Two leaves sync: one with `x` capability gets all blobs, one without `x` gets only public blobs.
@@ -218,6 +233,11 @@ Respect `IsPrivate` flag:
 #### Sim equivalence test (`sim/equivalence_test.go`)
 
 - `TestPrivateSyncAgainstFossilServe` — create Fossil repo with private branch, grant `x` to nobody, serve via `fossil serve`, sync with go-libfossil `Private: true`, verify private artifacts arrive.
+
+#### Clone tests
+
+- `TestCloneExcludesPrivate` — clone without `Private: true` excludes private artifacts.
+- `TestCloneIncludesPrivateWhenAuthorized` — clone with `Private: true` and `x` capability includes private artifacts with `private\n` prefix.
 
 ### 6. Files changed
 
@@ -239,3 +259,5 @@ Respect `IsPrivate` flag:
 - **Shun table** — CDG-166 covers shun/private exclusions in cluster generation. This ticket focuses on sync protocol handling.
 - **Private branch creation UI** — creating private branches (tagging with `private`) is a separate concern from syncing them.
 - **`content_deltify` for private** — Fossil re-deltifies after making content public. Deferred.
+- **`remoteDate` backward compatibility** — Fossil checks `remoteDate>=20200413` before emitting `igot UUID 1` to avoid confusing older clients. go-libfossil always emits `igot UUID 1` for private artifacts, assuming all peers are go-libfossil or modern Fossil (2020+).
+- **Observer/telemetry counters** — `RoundStats.PrivateIGotsSent` (matching Fossil's `nPrivIGot`) is deferred to a follow-up.
