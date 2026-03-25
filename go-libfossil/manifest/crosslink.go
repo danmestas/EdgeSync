@@ -284,8 +284,89 @@ func crosslinkControl(r *repo.Repo, srcRID libfossil.FslID, d *deck.Deck) error 
 	return nil
 }
 
+// addFWTPlink handles plink insertion and tag propagation for wiki/forum/technote/ticket.
+// Shared helper for artifact types that use P-cards (parents) but not the full checkin flow.
+func addFWTPlink(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
+	if r == nil {
+		panic("manifest.addFWTPlink: r must not be nil")
+	}
+	if rid <= 0 {
+		panic("manifest.addFWTPlink: rid must be positive")
+	}
+
+	mtime := libfossil.TimeToJulian(d.D)
+	var primaryParentRid libfossil.FslID
+
+	for i, parentUUID := range d.P {
+		var parentRid int64
+		if err := r.DB().QueryRow("SELECT rid FROM blob WHERE uuid=?", parentUUID).Scan(&parentRid); err != nil {
+			continue // parent blob missing, skip
+		}
+		isPrim := 0
+		if i == 0 {
+			isPrim = 1
+			primaryParentRid = libfossil.FslID(parentRid)
+		}
+		if _, err := r.DB().Exec(
+			"INSERT OR IGNORE INTO plink(pid, cid, isprim, mtime) VALUES(?, ?, ?, ?)",
+			parentRid, rid, isPrim, mtime,
+		); err != nil {
+			return fmt.Errorf("addFWTPlink: %w", err)
+		}
+	}
+
+	// Propagate tags from primary parent
+	if primaryParentRid > 0 {
+		if err := tag.PropagateAll(r.DB(), primaryParentRid); err != nil {
+			return fmt.Errorf("addFWTPlink propagate: %w", err)
+		}
+	}
+
+	return nil
+}
+
 func crosslinkWiki(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) ([]pendingItem, error) {
-	return nil, nil
+	if err := addFWTPlink(r, rid, d); err != nil {
+		return nil, fmt.Errorf("wiki plink: %w", err)
+	}
+
+	title := d.L
+	if title == "" {
+		return nil, fmt.Errorf("wiki manifest missing title (L-card)")
+	}
+
+	// Apply wiki-<title> tag with value = content length
+	wikiLen := fmt.Sprintf("%d", len(d.W))
+	if err := tag.ApplyTag(r, tag.ApplyOpts{
+		TargetRID: rid,
+		SrcRID:    rid,
+		TagName:   fmt.Sprintf("wiki-%s", title),
+		TagType:   tag.TagSingleton,
+		Value:     wikiLen,
+		MTime:     libfossil.TimeToJulian(d.D),
+	}); err != nil {
+		return nil, fmt.Errorf("wiki tag: %w", err)
+	}
+
+	// Insert event row with prefix: '+' = new, ':' = edit, '-' = delete
+	var prefix byte
+	if len(d.W) == 0 {
+		prefix = '-' // deletion
+	} else if len(d.P) == 0 {
+		prefix = '+' // new page
+	} else {
+		prefix = ':' // edit
+	}
+	comment := fmt.Sprintf("%c%s", prefix, title)
+
+	if _, err := r.DB().Exec(
+		"REPLACE INTO event(type, mtime, objid, user, comment) VALUES('w', ?, ?, ?, ?)",
+		libfossil.TimeToJulian(d.D), rid, d.U, comment,
+	); err != nil {
+		return nil, fmt.Errorf("wiki event: %w", err)
+	}
+
+	return []pendingItem{{Type: 'w', ID: title}}, nil
 }
 
 func crosslinkTicket(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) ([]pendingItem, error) {

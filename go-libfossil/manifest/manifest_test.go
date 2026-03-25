@@ -584,3 +584,68 @@ func TestCrosslinkCherrypick(t *testing.T) {
 		t.Errorf("cherrypick count=%d, want 1", count)
 	}
 }
+
+func TestCrosslinkWiki(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Manually create a wiki manifest
+	wikiTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	wikiContent := []byte("This is a test wiki page")
+	d := &deck.Deck{
+		Type: deck.Wiki,
+		L:    "TestPage",
+		U:    "testuser",
+		W:    wikiContent,
+		D:    wikiTime,
+	}
+
+	// Marshal and store the wiki manifest blob
+	manifestBytes, err := d.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	rid, _, err := blob.Store(r.DB(), manifestBytes)
+	if err != nil {
+		t.Fatalf("Store manifest: %v", err)
+	}
+
+	// Clear crosslink tables to simulate post-clone
+	r.DB().Exec("DELETE FROM event WHERE objid=?", rid)
+	r.DB().Exec("DELETE FROM tagxref WHERE rid=?", rid)
+
+	// Run Crosslink
+	n, err := Crosslink(r)
+	if err != nil {
+		t.Fatalf("Crosslink: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("expected at least 1 artifact crosslinked, got %d", n)
+	}
+
+	// Verify event row (type='w')
+	var eventType, comment string
+	err = r.DB().QueryRow(
+		"SELECT type, comment FROM event WHERE objid=?", rid,
+	).Scan(&eventType, &comment)
+	if err != nil {
+		t.Fatalf("event query: %v", err)
+	}
+	if eventType != "w" {
+		t.Errorf("event type=%q, want 'w'", eventType)
+	}
+	if comment != "+TestPage" {
+		t.Errorf("event comment=%q, want '+TestPage'", comment)
+	}
+
+	// Verify wiki-TestPage tag in tagxref
+	var tagCount int
+	r.DB().QueryRow(`
+		SELECT count(*) FROM tagxref
+		JOIN tag USING(tagid)
+		WHERE tagname='wiki-TestPage' AND rid=?
+	`, rid).Scan(&tagCount)
+	if tagCount != 1 {
+		t.Errorf("wiki-TestPage tag count=%d, want 1", tagCount)
+	}
+}
