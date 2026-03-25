@@ -417,6 +417,8 @@ func (h *handler) sendAllClusters() error {
 		WHERE tx.tagid = 7
 		  AND NOT EXISTS (SELECT 1 FROM unclustered WHERE rid = b.rid)
 		  AND NOT EXISTS (SELECT 1 FROM phantom WHERE rid = b.rid)
+		  AND NOT EXISTS (SELECT 1 FROM shun WHERE uuid = b.uuid)
+		  AND NOT EXISTS (SELECT 1 FROM private WHERE rid = b.rid)
 		  AND b.size >= 0
 	`)
 	if err != nil {
