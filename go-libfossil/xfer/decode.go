@@ -134,6 +134,14 @@ func parseLine(r *bufio.Reader, line string) (Card, error) {
 		return parseConfig(r, args)
 	case "uvfile":
 		return parseUVFile(r, args)
+	case "schema":
+		return parseSchema(r, args)
+	case "xigot":
+		return parseXIGot(args)
+	case "xgimme":
+		return parseXGimme(args)
+	case "xrow":
+		return parseXRow(r, args)
 	default:
 		return &UnknownCard{Command: cmd, Args: args}, nil
 	}
@@ -445,4 +453,64 @@ func decompressCFile(data []byte) ([]byte, error) {
 		}
 	}
 	return nil, fmt.Errorf("xfer: cfile zlib init: could not decompress payload (%d bytes)", len(data))
+}
+
+func parseSchema(r *bufio.Reader, args []string) (Card, error) {
+	if len(args) != 5 {
+		return nil, fmt.Errorf("xfer: schema requires 5 args, got %d", len(args))
+	}
+	version, err := strconv.Atoi(args[1])
+	if err != nil {
+		return nil, fmt.Errorf("xfer: schema version: %w", err)
+	}
+	mtime, err := strconv.ParseInt(args[3], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("xfer: schema mtime: %w", err)
+	}
+	size, err := strconv.Atoi(args[4])
+	if err != nil {
+		return nil, fmt.Errorf("xfer: schema size: %w", err)
+	}
+	content, err := readPayloadWithTrailingNewline(r, size)
+	if err != nil {
+		return nil, fmt.Errorf("xfer: schema payload: %w", err)
+	}
+	return &SchemaCard{Table: args[0], Version: version, Hash: args[2], MTime: mtime, Content: content}, nil
+}
+
+func parseXIGot(args []string) (Card, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("xfer: xigot requires 3 args, got %d", len(args))
+	}
+	mtime, err := strconv.ParseInt(args[2], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("xfer: xigot mtime: %w", err)
+	}
+	return &XIGotCard{Table: args[0], PKHash: args[1], MTime: mtime}, nil
+}
+
+func parseXGimme(args []string) (Card, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("xfer: xgimme requires 2 args, got %d", len(args))
+	}
+	return &XGimmeCard{Table: args[0], PKHash: args[1]}, nil
+}
+
+func parseXRow(r *bufio.Reader, args []string) (Card, error) {
+	if len(args) != 4 {
+		return nil, fmt.Errorf("xfer: xrow requires 4 args, got %d", len(args))
+	}
+	mtime, err := strconv.ParseInt(args[2], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("xfer: xrow mtime: %w", err)
+	}
+	size, err := strconv.Atoi(args[3])
+	if err != nil {
+		return nil, fmt.Errorf("xfer: xrow size: %w", err)
+	}
+	content, err := readPayloadWithTrailingNewline(r, size)
+	if err != nil {
+		return nil, fmt.Errorf("xfer: xrow payload: %w", err)
+	}
+	return &XRowCard{Table: args[0], PKHash: args[1], MTime: mtime, Content: content}, nil
 }

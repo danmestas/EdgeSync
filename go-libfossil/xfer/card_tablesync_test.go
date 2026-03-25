@@ -1,6 +1,10 @@
 package xfer
 
-import "testing"
+import (
+	"bufio"
+	"bytes"
+	"testing"
+)
 
 func TestSchemaCardType(t *testing.T) {
 	c := &SchemaCard{Table: "peer_registry", Version: 1, Hash: "abc", MTime: 100, Content: []byte(`{}`)}
@@ -27,5 +31,98 @@ func TestXRowCardType(t *testing.T) {
 	c := &XRowCard{Table: "peer_registry", PKHash: "abc", MTime: 100, Content: []byte(`{}`)}
 	if c.Type() != CardXRow {
 		t.Fatalf("got %v, want CardXRow", c.Type())
+	}
+}
+
+func TestSchemaCard_RoundTrip(t *testing.T) {
+	original := &SchemaCard{
+		Table: "peer_registry", Version: 1, Hash: "abc123",
+		MTime: 1711300000,
+		Content: []byte(`{"columns":[{"name":"id","type":"text","pk":true}],"conflict":"self-write"}`),
+	}
+	var buf bytes.Buffer
+	if err := EncodeCard(&buf, original); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	r := bufio.NewReader(&buf)
+	got, err := DecodeCard(r)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	sc, ok := got.(*SchemaCard)
+	if !ok {
+		t.Fatalf("got %T, want *SchemaCard", got)
+	}
+	if sc.Table != "peer_registry" || sc.Version != 1 || sc.Hash != "abc123" || sc.MTime != 1711300000 {
+		t.Fatalf("header mismatch: %+v", sc)
+	}
+	if !bytes.Equal(sc.Content, original.Content) {
+		t.Fatalf("content mismatch: got %q", sc.Content)
+	}
+}
+
+func TestXIGotCard_RoundTrip(t *testing.T) {
+	original := &XIGotCard{Table: "peer_registry", PKHash: "abc123", MTime: 1711300000}
+	var buf bytes.Buffer
+	if err := EncodeCard(&buf, original); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	r := bufio.NewReader(&buf)
+	got, err := DecodeCard(r)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	xig, ok := got.(*XIGotCard)
+	if !ok {
+		t.Fatalf("got %T, want *XIGotCard", got)
+	}
+	if xig.Table != "peer_registry" || xig.PKHash != "abc123" || xig.MTime != 1711300000 {
+		t.Fatalf("mismatch: %+v", xig)
+	}
+}
+
+func TestXGimmeCard_RoundTrip(t *testing.T) {
+	original := &XGimmeCard{Table: "peer_registry", PKHash: "abc123"}
+	var buf bytes.Buffer
+	if err := EncodeCard(&buf, original); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	r := bufio.NewReader(&buf)
+	got, err := DecodeCard(r)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	xg, ok := got.(*XGimmeCard)
+	if !ok {
+		t.Fatalf("got %T, want *XGimmeCard", got)
+	}
+	if xg.Table != "peer_registry" || xg.PKHash != "abc123" {
+		t.Fatalf("mismatch: %+v", xg)
+	}
+}
+
+func TestXRowCard_RoundTrip(t *testing.T) {
+	original := &XRowCard{
+		Table: "peer_registry", PKHash: "abc123", MTime: 1711300000,
+		Content: []byte(`{"peer_id":"leaf-01","version":"0.5.0"}`),
+	}
+	var buf bytes.Buffer
+	if err := EncodeCard(&buf, original); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	r := bufio.NewReader(&buf)
+	got, err := DecodeCard(r)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	xr, ok := got.(*XRowCard)
+	if !ok {
+		t.Fatalf("got %T, want *XRowCard", got)
+	}
+	if xr.Table != "peer_registry" || xr.PKHash != "abc123" || xr.MTime != 1711300000 {
+		t.Fatalf("header mismatch: %+v", xr)
+	}
+	if !bytes.Equal(xr.Content, original.Content) {
+		t.Fatalf("content mismatch: got %q", xr.Content)
 	}
 }

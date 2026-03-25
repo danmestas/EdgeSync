@@ -55,6 +55,14 @@ func EncodeCard(w *bytes.Buffer, c Card) error {
 		return encodeConfig(w, v)
 	case *UVFileCard:
 		return encodeUVFile(w, v)
+	case *SchemaCard:
+		return encodeSchema(w, v)
+	case *XIGotCard:
+		return encodeXIGot(w, v)
+	case *XGimmeCard:
+		return encodeXGimme(w, v)
+	case *XRowCard:
+		return encodeXRow(w, v)
 	case *UnknownCard:
 		return encodeUnknown(w, v)
 	default:
@@ -246,6 +254,30 @@ func encodeUVFile(w *bytes.Buffer, c *UVFileCard) error {
 		w.Write(c.Content)
 	}
 	// NO trailing newline
+	return nil
+}
+
+func encodeSchema(w *bytes.Buffer, c *SchemaCard) error {
+	fmt.Fprintf(w, "schema %s %d %s %d %d\n", c.Table, c.Version, c.Hash, c.MTime, len(c.Content))
+	w.Write(c.Content)
+	w.WriteByte('\n')
+	return nil
+}
+
+func encodeXIGot(w *bytes.Buffer, c *XIGotCard) error {
+	fmt.Fprintf(w, "xigot %s %s %d\n", c.Table, c.PKHash, c.MTime)
+	return nil
+}
+
+func encodeXGimme(w *bytes.Buffer, c *XGimmeCard) error {
+	fmt.Fprintf(w, "xgimme %s %s\n", c.Table, c.PKHash)
+	return nil
+}
+
+func encodeXRow(w *bytes.Buffer, c *XRowCard) error {
+	fmt.Fprintf(w, "xrow %s %s %d %d\n", c.Table, c.PKHash, c.MTime, len(c.Content))
+	w.Write(c.Content)
+	w.WriteByte('\n')
 	return nil
 }
 
