@@ -189,3 +189,20 @@ func (o *OTelObserver) HandleCompleted(ctx context.Context, info libsync.HandleE
 	}
 	span.End()
 }
+
+func (o *OTelObserver) TableSyncStarted(ctx context.Context, info libsync.TableSyncStart) {
+	span := trace.SpanFromContext(ctx)
+	span.AddEvent("sync.table_sync.started", trace.WithAttributes(
+		attribute.String("sync.table", info.Table),
+		attribute.Int("sync.table.local_rows", info.LocalRows),
+	))
+}
+
+func (o *OTelObserver) TableSyncCompleted(ctx context.Context, info libsync.TableSyncEnd) {
+	span := trace.SpanFromContext(ctx)
+	span.AddEvent("sync.table_sync.completed", trace.WithAttributes(
+		attribute.String("sync.table", info.Table),
+		attribute.Int("sync.table.rows_sent", info.Sent),
+		attribute.Int("sync.table.rows_received", info.Received),
+	))
+}
