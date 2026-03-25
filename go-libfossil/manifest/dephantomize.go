@@ -1,6 +1,8 @@
 package manifest
 
 import (
+	"fmt"
+
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/deck"
@@ -20,13 +22,37 @@ func AfterDephantomize(r *repo.Repo, rid libfossil.FslID) {
 }
 
 func afterDephantomize(r *repo.Repo, rid libfossil.FslID, linkFlag bool) {
-	for rid > 0 {
-		if linkFlag {
-			crosslinkSingle(r, rid)
+	// Work stack replaces recursion. Bounded by total blob count in repo.
+	type workItem struct {
+		rid      libfossil.FslID
+		linkFlag bool
+	}
+	stack := []workItem{{rid: rid, linkFlag: linkFlag}}
+
+	const maxIterations = 1_000_000 // Guard against pathological delta chains.
+	iterations := 0
+
+	for len(stack) > 0 {
+		iterations++
+		if iterations > maxIterations {
+			return // Safety bound exceeded.
+		}
+
+		// Pop from stack.
+		item := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		current := item.rid
+
+		if current <= 0 {
+			continue
+		}
+
+		if item.linkFlag {
+			_ = crosslinkSingle(r, current)
 		}
 
 		// Process orphaned delta manifests whose baseline is this rid.
-		orphanRows, err := r.DB().Query("SELECT rid FROM orphan WHERE baseline=?", rid)
+		orphanRows, err := r.DB().Query("SELECT rid FROM orphan WHERE baseline=?", current)
 		if err == nil {
 			var orphans []libfossil.FslID
 			for orphanRows.Next() {
@@ -37,18 +63,20 @@ func afterDephantomize(r *repo.Repo, rid libfossil.FslID, linkFlag bool) {
 			}
 			orphanRows.Close()
 			for _, orid := range orphans {
-				crosslinkSingle(r, orid)
+				_ = crosslinkSingle(r, orid)
 			}
 			if len(orphans) > 0 {
-				r.DB().Exec("DELETE FROM orphan WHERE baseline=?", rid)
+				if _, err := r.DB().Exec("DELETE FROM orphan WHERE baseline=?", current); err != nil {
+					continue
+				}
 			}
 		}
 
 		// Find delta children not yet crosslinked.
 		childRows, err := r.DB().Query(
-			`SELECT rid FROM delta WHERE srcid=? AND NOT EXISTS (SELECT 1 FROM mlink WHERE mid=delta.rid)`, rid)
+			`SELECT rid FROM delta WHERE srcid=? AND NOT EXISTS (SELECT 1 FROM mlink WHERE mid=delta.rid)`, current)
 		if err != nil {
-			return
+			continue
 		}
 		var children []libfossil.FslID
 		for childRows.Next() {
@@ -59,44 +87,50 @@ func afterDephantomize(r *repo.Repo, rid libfossil.FslID, linkFlag bool) {
 		}
 		childRows.Close()
 
-		for i := 1; i < len(children); i++ {
-			afterDephantomize(r, children[i], true)
-		}
-		if len(children) > 0 {
-			rid = children[0]
-			linkFlag = true
-		} else {
-			rid = 0
+		// Push all children onto work stack (reverse order for LIFO processing).
+		for i := len(children) - 1; i >= 0; i-- {
+			stack = append(stack, workItem{rid: children[i], linkFlag: true})
 		}
 	}
 }
 
 // crosslinkSingle crosslinks a single blob by rid.
-func crosslinkSingle(r *repo.Repo, rid libfossil.FslID) {
+func crosslinkSingle(r *repo.Repo, rid libfossil.FslID) error {
+	if r == nil {
+		panic("crosslinkSingle: r must not be nil")
+	}
+	if rid <= 0 {
+		panic("crosslinkSingle: rid must be positive")
+	}
+
 	data, err := content.Expand(r.DB(), rid)
 	if err != nil {
-		return
+		return fmt.Errorf("crosslinkSingle expand rid=%d: %w", rid, err)
 	}
 	d, err := deck.Parse(data)
 	if err != nil {
-		return
+		return fmt.Errorf("crosslinkSingle parse rid=%d: %w", rid, err)
 	}
 	switch d.Type {
 	case deck.Checkin:
-		crosslinkCheckin(r, rid, d)
+		return crosslinkCheckin(r, rid, d)
 	case deck.Wiki:
-		crosslinkWiki(r, rid, d)
+		_, err = crosslinkWiki(r, rid, d)
+		return err
 	case deck.Ticket:
-		crosslinkTicket(r, rid, d)
+		_, err = crosslinkTicket(r, rid, d)
+		return err
 	case deck.Event:
-		crosslinkEvent(r, rid, d)
+		_, err = crosslinkEvent(r, rid, d)
+		return err
 	case deck.Attachment:
-		crosslinkAttachment(r, rid, d)
+		return crosslinkAttachment(r, rid, d)
 	case deck.Cluster:
-		crosslinkCluster(r, rid, d)
+		return crosslinkCluster(r, rid, d)
 	case deck.ForumPost:
-		crosslinkForum(r, rid, d)
+		return crosslinkForum(r, rid, d)
 	case deck.Control:
-		crosslinkControl(r, rid, d)
+		return crosslinkControl(r, rid, d)
 	}
+	return nil
 }

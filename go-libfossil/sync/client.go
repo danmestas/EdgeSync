@@ -519,8 +519,12 @@ func storeReceivedFile(r *repo.Repo, uuid, deltaSrc string, payload []byte) erro
 				len(fullContent), compressed, existingRid); err != nil {
 				return err
 			}
-			tx.Exec("DELETE FROM phantom WHERE rid=?", existingRid)
-			tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", existingRid)
+			if _, err := tx.Exec("DELETE FROM phantom WHERE rid=?", existingRid); err != nil {
+				return fmt.Errorf("delete phantom rid=%d: %w", existingRid, err)
+			}
+			if _, err := tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", existingRid); err != nil {
+				return fmt.Errorf("unclustered rid=%d: %w", existingRid, err)
+			}
 			return nil
 		}
 		compressed, err := blob.Compress(fullContent)

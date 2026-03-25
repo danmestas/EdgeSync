@@ -11,6 +11,14 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/tag"
 )
 
+// attachTargetTypeName maps attachment target type codes to human-readable names.
+// Used by crosslinkAttachment and updateAttachmentComments.
+var attachTargetTypeName = map[byte]string{
+	'w': "wiki page",
+	't': "ticket",
+	'e': "tech note",
+}
+
 type pendingItem struct {
 	Type byte   // 'w' = wiki backlink, 't' = ticket rebuild
 	ID   string
@@ -107,8 +115,22 @@ func Crosslink(r *repo.Repo) (int, error) {
 }
 
 func crosslinkCheckin(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
-	// First, crosslink event/plink/leaf/mlink/cherrypick in a transaction
-	err := r.WithTx(func(tx *db.Tx) error {
+	if r == nil {
+		panic("crosslinkCheckin: r must not be nil")
+	}
+	if rid <= 0 {
+		panic("crosslinkCheckin: rid must be positive")
+	}
+
+	if err := crosslinkCheckinTables(r, rid, d); err != nil {
+		return err
+	}
+	return applyInlineTags(r, rid, d)
+}
+
+// crosslinkCheckinTables populates event/plink/leaf/mlink/cherrypick in a single transaction.
+func crosslinkCheckinTables(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
+	return r.WithTx(func(tx *db.Tx) error {
 		// event
 		if _, err := tx.Exec(
 			"INSERT OR IGNORE INTO event(type, mtime, objid, user, comment) VALUES('ci', ?, ?, ?, ?)",
@@ -118,7 +140,7 @@ func crosslinkCheckin(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
 		}
 
 		// Resolve baseid for plink if B-card present
-		var baseid interface{} = nil
+		var baseid any = nil
 		if d.B != "" {
 			var baseRid int64
 			if err := tx.QueryRow("SELECT rid FROM blob WHERE uuid=?", d.B).Scan(&baseRid); err == nil {
@@ -126,87 +148,106 @@ func crosslinkCheckin(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
 			}
 		}
 
-		// plink — link to parent(s)
-		for i, parentUUID := range d.P {
-			var parentRid int64
-			if err := tx.QueryRow("SELECT rid FROM blob WHERE uuid=?", parentUUID).Scan(&parentRid); err != nil {
-				continue // parent blob missing, skip
-			}
-			isPrim := 0
-			if i == 0 {
-				isPrim = 1
-			}
-			if _, err := tx.Exec(
-				"INSERT OR IGNORE INTO plink(pid, cid, isprim, mtime, baseid) VALUES(?, ?, ?, ?, ?)",
-				parentRid, rid, isPrim, libfossil.TimeToJulian(d.D), baseid,
-			); err != nil {
-				return fmt.Errorf("plink: %w", err)
-			}
+		if err := insertCheckinPlinks(tx, rid, d, baseid); err != nil {
+			return err
 		}
-
-		// leaf — this is a leaf if no child points to it
-		if _, err := tx.Exec("INSERT OR IGNORE INTO leaf(rid) VALUES(?)", rid); err != nil {
-			return fmt.Errorf("leaf insert: %w", err)
+		if err := updateLeafTable(tx, rid, d); err != nil {
+			return err
 		}
-		// Remove parent from leaf table (it now has a child)
-		for _, parentUUID := range d.P {
-			var parentRid int64
-			if err := tx.QueryRow("SELECT rid FROM blob WHERE uuid=?", parentUUID).Scan(&parentRid); err != nil {
-				continue
-			}
-			if _, err := tx.Exec("DELETE FROM leaf WHERE rid=?", parentRid); err != nil {
-				return fmt.Errorf("leaf delete parent %d: %w", parentRid, err)
-			}
+		if err := insertCheckinMlinks(tx, rid, d); err != nil {
+			return err
 		}
-
-		// mlink — file mappings
-		for _, f := range d.F {
-			if f.UUID == "" {
-				continue // deleted file in delta manifest
-			}
-			fnid, err := ensureFilename(tx, f.Name)
-			if err != nil {
-				return fmt.Errorf("filename %q: %w", f.Name, err)
-			}
-			var fileRid int64
-			if err := tx.QueryRow("SELECT rid FROM blob WHERE uuid=?", f.UUID).Scan(&fileRid); err != nil {
-				continue // file blob missing
-			}
-			if _, err := tx.Exec(
-				"INSERT OR IGNORE INTO mlink(mid, fid, fnid) VALUES(?, ?, ?)",
-				rid, fileRid, fnid,
-			); err != nil {
-				return fmt.Errorf("mlink: %w", err)
-			}
-		}
-
-		// cherrypick — Q-cards (cherrypick/backout)
-		for _, cp := range d.Q {
-			target := cp.Target
-			isExclude := 0
-			if cp.IsBackout {
-				isExclude = 1
-			}
-			var parentRid int64
-			if err := tx.QueryRow("SELECT rid FROM blob WHERE uuid=?", target).Scan(&parentRid); err != nil {
-				continue // target blob missing, skip
-			}
-			if _, err := tx.Exec(
-				"REPLACE INTO cherrypick(parentid, childid, isExclude) VALUES(?, ?, ?)",
-				parentRid, rid, isExclude,
-			); err != nil {
-				return fmt.Errorf("cherrypick: %w", err)
-			}
-		}
-
-		return nil
+		return insertCherrypicks(tx, rid, d)
 	})
-	if err != nil {
-		return err
-	}
+}
 
-	// Process inline T-cards (UUID="*" means this checkin) after transaction completes.
-	// Each tag.ApplyTag call starts its own transaction.
+// insertCheckinPlinks inserts plink rows for each parent (P-card).
+func insertCheckinPlinks(tx *db.Tx, rid libfossil.FslID, d *deck.Deck, baseid any) error {
+	for i, parentUUID := range d.P {
+		var parentRid int64
+		if err := tx.QueryRow("SELECT rid FROM blob WHERE uuid=?", parentUUID).Scan(&parentRid); err != nil {
+			continue // parent blob missing, skip
+		}
+		isPrim := 0
+		if i == 0 {
+			isPrim = 1
+		}
+		if _, err := tx.Exec(
+			"INSERT OR IGNORE INTO plink(pid, cid, isprim, mtime, baseid) VALUES(?, ?, ?, ?, ?)",
+			parentRid, rid, isPrim, libfossil.TimeToJulian(d.D), baseid,
+		); err != nil {
+			return fmt.Errorf("plink: %w", err)
+		}
+	}
+	return nil
+}
+
+// updateLeafTable marks this checkin as a leaf and removes parents from the leaf table.
+func updateLeafTable(tx *db.Tx, rid libfossil.FslID, d *deck.Deck) error {
+	if _, err := tx.Exec("INSERT OR IGNORE INTO leaf(rid) VALUES(?)", rid); err != nil {
+		return fmt.Errorf("leaf insert: %w", err)
+	}
+	// Remove parent from leaf table (it now has a child)
+	for _, parentUUID := range d.P {
+		var parentRid int64
+		if err := tx.QueryRow("SELECT rid FROM blob WHERE uuid=?", parentUUID).Scan(&parentRid); err != nil {
+			continue
+		}
+		if _, err := tx.Exec("DELETE FROM leaf WHERE rid=?", parentRid); err != nil {
+			return fmt.Errorf("leaf delete parent %d: %w", parentRid, err)
+		}
+	}
+	return nil
+}
+
+// insertCheckinMlinks inserts mlink rows for each file mapping (F-card).
+func insertCheckinMlinks(tx *db.Tx, rid libfossil.FslID, d *deck.Deck) error {
+	for _, f := range d.F {
+		if f.UUID == "" {
+			continue // deleted file in delta manifest
+		}
+		fnid, err := ensureFilename(tx, f.Name)
+		if err != nil {
+			return fmt.Errorf("filename %q: %w", f.Name, err)
+		}
+		var fileRid int64
+		if err := tx.QueryRow("SELECT rid FROM blob WHERE uuid=?", f.UUID).Scan(&fileRid); err != nil {
+			continue // file blob missing
+		}
+		if _, err := tx.Exec(
+			"INSERT OR IGNORE INTO mlink(mid, fid, fnid) VALUES(?, ?, ?)",
+			rid, fileRid, fnid,
+		); err != nil {
+			return fmt.Errorf("mlink: %w", err)
+		}
+	}
+	return nil
+}
+
+// insertCherrypicks inserts cherrypick rows for Q-cards (cherrypick/backout).
+func insertCherrypicks(tx *db.Tx, rid libfossil.FslID, d *deck.Deck) error {
+	for _, cp := range d.Q {
+		target := cp.Target
+		isExclude := 0
+		if cp.IsBackout {
+			isExclude = 1
+		}
+		var parentRid int64
+		if err := tx.QueryRow("SELECT rid FROM blob WHERE uuid=?", target).Scan(&parentRid); err != nil {
+			continue // target blob missing, skip
+		}
+		if _, err := tx.Exec(
+			"REPLACE INTO cherrypick(parentid, childid, isExclude) VALUES(?, ?, ?)",
+			parentRid, rid, isExclude,
+		); err != nil {
+			return fmt.Errorf("cherrypick: %w", err)
+		}
+	}
+	return nil
+}
+
+// applyInlineTags processes T-cards with UUID="*" (self-referencing tags) and propagates from parent.
+func applyInlineTags(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
 	mtime := libfossil.TimeToJulian(d.D)
 	for _, tc := range d.T {
 		if tc.UUID != "*" {
@@ -250,6 +291,13 @@ func crosslinkCheckin(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
 }
 
 func crosslinkControl(r *repo.Repo, srcRID libfossil.FslID, d *deck.Deck) error {
+	if r == nil {
+		panic("crosslinkControl: r must not be nil")
+	}
+	if srcRID <= 0 {
+		panic("crosslinkControl: rid must be positive")
+	}
+
 	mtime := libfossil.TimeToJulian(d.D)
 	for _, tc := range d.T {
 		if tc.UUID == "*" {
@@ -282,7 +330,20 @@ func crosslinkControl(r *repo.Repo, srcRID libfossil.FslID, d *deck.Deck) error 
 		}
 	}
 
-	// Generate event row with type='g' and descriptive comment
+	// Generate event row with type='g' and descriptive comment.
+	comment := buildControlComment(d)
+	if _, err := r.DB().Exec(
+		"REPLACE INTO event(type, mtime, objid, user, comment) VALUES('g', ?, ?, ?, ?)",
+		mtime, srcRID, d.U, comment,
+	); err != nil {
+		return fmt.Errorf("control event: %w", err)
+	}
+
+	return nil
+}
+
+// buildControlComment generates a human-readable comment from a control artifact's T-cards.
+func buildControlComment(d *deck.Deck) string {
 	var comment string
 	for _, tc := range d.T {
 		if tc.UUID == "*" {
@@ -318,14 +379,7 @@ func crosslinkControl(r *repo.Repo, srcRID libfossil.FslID, d *deck.Deck) error 
 	if comment == "" {
 		comment = " "
 	}
-	if _, err := r.DB().Exec(
-		"REPLACE INTO event(type, mtime, objid, user, comment) VALUES('g', ?, ?, ?, ?)",
-		mtime, srcRID, d.U, comment,
-	); err != nil {
-		return fmt.Errorf("control event: %w", err)
-	}
-
-	return nil
+	return comment
 }
 
 // addFWTPlink handles plink insertion and tag propagation for wiki/forum/technote/ticket.
@@ -370,6 +424,13 @@ func addFWTPlink(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
 }
 
 func crosslinkWiki(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) ([]pendingItem, error) {
+	if r == nil {
+		panic("crosslinkWiki: r must not be nil")
+	}
+	if rid <= 0 {
+		panic("crosslinkWiki: rid must be positive")
+	}
+
 	if err := addFWTPlink(r, rid, d); err != nil {
 		return nil, fmt.Errorf("wiki plink: %w", err)
 	}
@@ -414,6 +475,13 @@ func crosslinkWiki(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) ([]pendingIt
 }
 
 func crosslinkTicket(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) ([]pendingItem, error) {
+	if r == nil {
+		panic("crosslinkTicket: r must not be nil")
+	}
+	if rid <= 0 {
+		panic("crosslinkTicket: rid must be positive")
+	}
+
 	ticketUUID := d.K
 	if ticketUUID == "" {
 		return nil, fmt.Errorf("ticket manifest missing UUID (K-card)")
@@ -427,11 +495,20 @@ func crosslinkTicket(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) ([]pending
 	}); err != nil {
 		return nil, fmt.Errorf("ticket tag: %w", err)
 	}
-	updateAttachmentComments(r, ticketUUID, 't')
+	if err := updateAttachmentComments(r, ticketUUID, 't'); err != nil {
+		return nil, fmt.Errorf("ticket attachment comments: %w", err)
+	}
 	return []pendingItem{{Type: 't', ID: ticketUUID}}, nil
 }
 
 func crosslinkEvent(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) ([]pendingItem, error) {
+	if r == nil {
+		panic("crosslinkEvent: r must not be nil")
+	}
+	if rid <= 0 {
+		panic("crosslinkEvent: rid must be positive")
+	}
+
 	if d.E == nil {
 		return nil, fmt.Errorf("event manifest missing E-card")
 	}
@@ -461,11 +538,14 @@ func crosslinkEvent(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) ([]pendingI
 	r.DB().QueryRow("SELECT rid FROM tagxref WHERE tagid=? AND mtime>=? AND rid!=? ORDER BY mtime LIMIT 1",
 		tagid, mtime, rid).Scan(&subsequent)
 
+	// Fossil deletes stale event rows when a newer version of this tech note exists
+	// but no subsequent version has been crosslinked yet. This ensures only the latest
+	// version's event row survives, preventing duplicate timeline entries.
 	if len(d.P) > 0 && subsequent == 0 {
 		r.DB().Exec("DELETE FROM event WHERE type='e' AND tagid=? AND objid IN (SELECT rid FROM tagxref WHERE tagid=?)", tagid, tagid)
 	}
 	if subsequent == 0 {
-		var bgcolor interface{}
+		var bgcolor any
 		var bgStr string
 		if r.DB().QueryRow("SELECT value FROM tagxref JOIN tag USING(tagid) WHERE tagname='bgcolor' AND rid=?", rid).Scan(&bgStr) == nil {
 			bgcolor = bgStr
@@ -477,11 +557,20 @@ func crosslinkEvent(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) ([]pendingI
 			return nil, fmt.Errorf("event insert: %w", err)
 		}
 	}
-	updateAttachmentComments(r, eventID, 'e')
+	if err := updateAttachmentComments(r, eventID, 'e'); err != nil {
+		return nil, fmt.Errorf("event attachment comments: %w", err)
+	}
 	return nil, nil
 }
 
 func crosslinkAttachment(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
+	if r == nil {
+		panic("crosslinkAttachment: r must not be nil")
+	}
+	if rid <= 0 {
+		panic("crosslinkAttachment: rid must be positive")
+	}
+
 	if d.A == nil {
 		return fmt.Errorf("attachment manifest missing A-card")
 	}
@@ -494,9 +583,15 @@ func crosslinkAttachment(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error 
 	); err != nil {
 		return fmt.Errorf("attachment insert: %w", err)
 	}
-	r.DB().Exec(`UPDATE attachment SET isLatest = (mtime = (SELECT max(mtime) FROM attachment WHERE target=? AND filename=?)) WHERE target=? AND filename=?`,
-		target, filename, target, filename)
+	if _, err := r.DB().Exec(
+		`UPDATE attachment SET isLatest = (mtime = (SELECT max(mtime) FROM attachment WHERE target=? AND filename=?)) WHERE target=? AND filename=?`,
+		target, filename, target, filename,
+	); err != nil {
+		return fmt.Errorf("attachment isLatest: %w", err)
+	}
 
+	// Fossil defaults to wiki when target is not a hash (page name = wiki target).
+	// Only hash-shaped targets can refer to tickets or tech notes.
 	attachToType := byte('w')
 	if isHash(target) {
 		var dummy int
@@ -507,7 +602,7 @@ func crosslinkAttachment(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error 
 		}
 	}
 
-	typeName := map[byte]string{'w': "wiki page", 't': "ticket", 'e': "tech note"}[attachToType]
+	typeName := attachTargetTypeName[attachToType]
 	var evComment string
 	if src != "" {
 		evComment = fmt.Sprintf("Add attachment %s to %s %s", filename, typeName, target)
@@ -534,6 +629,13 @@ func isHash(s string) bool {
 }
 
 func crosslinkCluster(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
+	if r == nil {
+		panic("crosslinkCluster: r must not be nil")
+	}
+	if rid <= 0 {
+		panic("crosslinkCluster: rid must be positive")
+	}
+
 	if err := tag.ApplyTag(r, tag.ApplyOpts{
 		TargetRID: rid,
 		SrcRID:    rid,
@@ -546,16 +648,25 @@ func crosslinkCluster(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
 	for _, memberUUID := range d.M {
 		var memberRid int64
 		if r.DB().QueryRow("SELECT rid FROM blob WHERE uuid=?", memberUUID).Scan(&memberRid) == nil {
-			r.DB().Exec("DELETE FROM unclustered WHERE rid=?", memberRid)
+			if _, err := r.DB().Exec("DELETE FROM unclustered WHERE rid=?", memberRid); err != nil {
+				return fmt.Errorf("cluster unclustered delete: %w", err)
+			}
 		}
 	}
 	return nil
 }
 
-func updateAttachmentComments(r *repo.Repo, targetID string, targetType byte) {
-	rows, _ := r.DB().Query("SELECT attachid, src, target, filename FROM attachment WHERE target=?", targetID)
-	if rows == nil {
-		return
+func updateAttachmentComments(r *repo.Repo, targetID string, targetType byte) error {
+	if r == nil {
+		panic("updateAttachmentComments: r must not be nil")
+	}
+	if targetID == "" {
+		panic("updateAttachmentComments: targetID must not be empty")
+	}
+
+	rows, err := r.DB().Query("SELECT attachid, src, target, filename FROM attachment WHERE target=?", targetID)
+	if err != nil {
+		return fmt.Errorf("updateAttachmentComments query: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -564,24 +675,53 @@ func updateAttachmentComments(r *repo.Repo, targetID string, targetType byte) {
 		if rows.Scan(&attachid, &src, &target, &filename) != nil {
 			continue
 		}
-		typeName := map[byte]string{'w': "wiki page", 't': "ticket", 'e': "tech note"}[targetType]
+		typeName := attachTargetTypeName[targetType]
 		var comment string
 		if src != "" {
 			comment = fmt.Sprintf("Add attachment %s to %s %s", filename, typeName, target)
 		} else {
 			comment = fmt.Sprintf("Delete attachment %q from %s %s", filename, typeName, target)
 		}
-		r.DB().Exec("UPDATE event SET comment=?, type=? WHERE objid=?", comment, string(targetType), attachid)
+		if _, err := r.DB().Exec("UPDATE event SET comment=?, type=? WHERE objid=?", comment, string(targetType), attachid); err != nil {
+			return fmt.Errorf("updateAttachmentComments event update: %w", err)
+		}
 	}
+	return rows.Err()
 }
 
 func crosslinkForum(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
+	if r == nil {
+		panic("crosslinkForum: r must not be nil")
+	}
+	if rid <= 0 {
+		panic("crosslinkForum: rid must be positive")
+	}
+
 	if err := addFWTPlink(r, rid, d); err != nil {
 		return fmt.Errorf("forum plink: %w", err)
 	}
 
 	// Resolve thread references
-	var froot, fprev, firt libfossil.FslID
+	froot, fprev, firt := resolveForumRefs(r, rid, d)
+
+	// Insert forumpost
+	if _, err := r.DB().Exec(
+		"REPLACE INTO forumpost(fpid, froot, fprev, firt, fmtime) VALUES(?, ?, nullif(?, 0), nullif(?, 0), ?)",
+		rid, froot, fprev, firt, libfossil.TimeToJulian(d.D),
+	); err != nil {
+		return fmt.Errorf("forumpost insert: %w", err)
+	}
+
+	mtime := libfossil.TimeToJulian(d.D)
+
+	if firt == 0 {
+		return crosslinkForumStarter(r, rid, d, froot, fprev, mtime)
+	}
+	return crosslinkForumReply(r, rid, d, froot, fprev, mtime)
+}
+
+// resolveForumRefs resolves the thread root, previous, and in-reply-to rids from deck cards.
+func resolveForumRefs(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) (froot, fprev, firt libfossil.FslID) {
 	if d.G != "" {
 		var rootRid int64
 		if r.DB().QueryRow("SELECT rid FROM blob WHERE uuid=?", d.G).Scan(&rootRid) == nil {
@@ -603,60 +743,54 @@ func crosslinkForum(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
 			firt = libfossil.FslID(irtRid)
 		}
 	}
+	return froot, fprev, firt
+}
 
-	// Insert forumpost
-	if _, err := r.DB().Exec(
-		"REPLACE INTO forumpost(fpid, froot, fprev, firt, fmtime) VALUES(?, ?, nullif(?, 0), nullif(?, 0), ?)",
-		rid, froot, fprev, firt, libfossil.TimeToJulian(d.D),
-	); err != nil {
-		return fmt.Errorf("forumpost insert: %w", err)
+// crosslinkForumStarter inserts the event row for a thread-starting forum post.
+func crosslinkForumStarter(r *repo.Repo, rid libfossil.FslID, d *deck.Deck, froot, fprev libfossil.FslID, mtime float64) error {
+	title := d.H
+	if title == "" {
+		title = "(Deleted)"
 	}
+	fType := "Post"
+	if fprev != 0 {
+		fType = "Edit"
+	}
+	if _, err := r.DB().Exec(
+		"REPLACE INTO event(type, mtime, objid, user, comment) VALUES('f', ?, ?, ?, ?)",
+		mtime, rid, d.U, fmt.Sprintf("%s: %s", fType, title),
+	); err != nil {
+		return fmt.Errorf("forum event: %w", err)
+	}
+	// Update thread title if most recent
+	var hasNewer int
+	r.DB().QueryRow("SELECT count(*) FROM forumpost WHERE froot=? AND firt=0 AND fpid!=? AND fmtime>?",
+		froot, rid, mtime).Scan(&hasNewer)
+	if hasNewer == 0 {
+		r.DB().Exec(
+			"UPDATE event SET comment=substr(comment,1,instr(comment,':')) || ' ' || ? WHERE objid IN (SELECT fpid FROM forumpost WHERE froot=?)",
+			title, froot)
+	}
+	return nil
+}
 
-	mtime := libfossil.TimeToJulian(d.D)
-
-	if firt == 0 {
-		// Thread starter
-		title := d.H
-		if title == "" {
-			title = "(Deleted)"
-		}
-		fType := "Post"
-		if fprev != 0 {
-			fType = "Edit"
-		}
-		if _, err := r.DB().Exec(
-			"REPLACE INTO event(type, mtime, objid, user, comment) VALUES('f', ?, ?, ?, ?)",
-			mtime, rid, d.U, fmt.Sprintf("%s: %s", fType, title),
-		); err != nil {
-			return fmt.Errorf("forum event: %w", err)
-		}
-		// Update thread title if most recent
-		var hasNewer int
-		r.DB().QueryRow("SELECT count(*) FROM forumpost WHERE froot=? AND firt=0 AND fpid!=? AND fmtime>?",
-			froot, rid, mtime).Scan(&hasNewer)
-		if hasNewer == 0 {
-			r.DB().Exec(
-				"UPDATE event SET comment=substr(comment,1,instr(comment,':')) || ' ' || ? WHERE objid IN (SELECT fpid FROM forumpost WHERE froot=?)",
-				title, froot)
-		}
-	} else {
-		// Reply
-		var rootTitle string
-		if r.DB().QueryRow("SELECT substr(comment, instr(comment,':')+2) FROM event WHERE objid=?", froot).Scan(&rootTitle) != nil {
-			rootTitle = "Unknown"
-		}
-		fType := "Reply"
-		if len(d.W) == 0 {
-			fType = "Delete reply"
-		} else if fprev != 0 {
-			fType = "Edit reply"
-		}
-		if _, err := r.DB().Exec(
-			"REPLACE INTO event(type, mtime, objid, user, comment) VALUES('f', ?, ?, ?, ?)",
-			mtime, rid, d.U, fmt.Sprintf("%s: %s", fType, rootTitle),
-		); err != nil {
-			return fmt.Errorf("forum reply event: %w", err)
-		}
+// crosslinkForumReply inserts the event row for a forum reply.
+func crosslinkForumReply(r *repo.Repo, rid libfossil.FslID, d *deck.Deck, froot, fprev libfossil.FslID, mtime float64) error {
+	var rootTitle string
+	if r.DB().QueryRow("SELECT substr(comment, instr(comment,':')+2) FROM event WHERE objid=?", froot).Scan(&rootTitle) != nil {
+		rootTitle = "Unknown"
+	}
+	fType := "Reply"
+	if len(d.W) == 0 {
+		fType = "Delete reply"
+	} else if fprev != 0 {
+		fType = "Edit reply"
+	}
+	if _, err := r.DB().Exec(
+		"REPLACE INTO event(type, mtime, objid, user, comment) VALUES('f', ?, ?, ?, ?)",
+		mtime, rid, d.U, fmt.Sprintf("%s: %s", fType, rootTitle),
+	); err != nil {
+		return fmt.Errorf("forum reply event: %w", err)
 	}
 	return nil
 }
