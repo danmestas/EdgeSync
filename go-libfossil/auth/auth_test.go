@@ -12,8 +12,8 @@ func TestHasCapability(t *testing.T) {
 		{"oi", 'i', true},
 		{"oi", 'g', false},
 		{"", 'o', false},
-		{"cghijknorswz", 's', true},
-		{"cghijknorswz", 'a', false},
+		{"cghijknorswy", 's', true},
+		{"cghijknorswy", 'a', false},
 	}
 	for _, tt := range tests {
 		got := HasCapability(tt.caps, tt.required)
@@ -39,6 +39,6 @@ func TestCanClone(t *testing.T) {
 }
 
 func TestCanPushUV(t *testing.T) {
-	if !CanPushUV("z") { t.Error("CanPushUV(z) should be true") }
+	if !CanPushUV("y") { t.Error("CanPushUV(y) should be true") }
 	if CanPushUV("oi") { t.Error("CanPushUV(oi) should be false") }
 }

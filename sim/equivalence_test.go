@@ -257,8 +257,8 @@ func fossilInit(t *testing.T, dir, name string) string {
 	}
 	// Grant nobody user capabilities for unauthenticated sync.
 	// fossil init may already create the nobody user, so "user new" can fail — that's fine.
-	exec.Command("fossil", "user", "new", "nobody", "", "cghijknorswz", "-R", path).Run()
-	if out, err := exec.Command("fossil", "user", "capabilities", "nobody", "cghijknorswz", "-R", path).CombinedOutput(); err != nil {
+	exec.Command("fossil", "user", "new", "nobody", "", "cghijknorswy", "-R", path).Run()
+	if out, err := exec.Command("fossil", "user", "capabilities", "nobody", "cghijknorswy", "-R", path).CombinedOutput(); err != nil {
 		t.Fatalf("fossil user capabilities nobody: %v\n%s", err, out)
 	}
 	return path

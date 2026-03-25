@@ -158,8 +158,8 @@ func TestIntegrationPushToFossilServer(t *testing.T) {
 
 	// 3. Create nobody user and grant write capabilities for testing
 	// (Go-created repos don't have the standard nobody/anonymous users that fossil new creates)
-	exec.Command(bin, "user", "new", "nobody", "", "cghijknorswz", "-R", remotePath).Run()
-	exec.Command(bin, "user", "capabilities", "nobody", "cghijknorswz", "-R", remotePath).Run()
+	exec.Command(bin, "user", "new", "nobody", "", "cghijknorswy", "-R", remotePath).Run()
+	exec.Command(bin, "user", "capabilities", "nobody", "cghijknorswy", "-R", remotePath).Run()
 
 	// 4. Read project-code and server-code from the remote (they match local after clone)
 	projCode := getProjectCode(t, remotePath)
