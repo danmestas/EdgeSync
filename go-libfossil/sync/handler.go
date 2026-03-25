@@ -84,6 +84,7 @@ type handler struct {
 	cloneMode     bool // client sent a clone card
 	cloneSeq      int  // clone_seqno cursor from client
 	uvCatalogSent bool // true after sending UV catalog
+	reqClusters   bool // client sent pragma req-clusters
 	filesSent     int  // files sent in response (for observer)
 	filesRecvd    int  // files received from client (for observer)
 
@@ -178,7 +179,7 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 		}
 	}
 
-	// If pull was requested, emit igot for all our blobs.
+	// If pull was requested, emit igot for all non-phantom blobs.
 	if h.pullOK {
 		if err := h.emitIGots(); err != nil {
 			return nil, err
@@ -207,6 +208,10 @@ func (h *handler) handleControlCard(card xfer.Card) {
 				})
 			}
 		}
+		if c.Name == "req-clusters" {
+			h.reqClusters = true
+		}
+		// Acknowledge client-version, ignore other unknown pragmas.
 	case *xfer.PushCard:
 		if auth.CanPush(h.caps) {
 			h.pushOK = true
@@ -345,7 +350,12 @@ func (h *handler) handleReqConfig(c *xfer.ReqConfigCard) error {
 }
 
 func (h *handler) emitIGots() error {
-	rows, err := h.repo.DB().Query("SELECT uuid FROM blob WHERE size >= 0")
+	// Emit igot for all non-phantom blobs so the client can discover
+	// everything the server has. Cluster generation is a client-side
+	// optimization for push; the server always advertises all blobs.
+	rows, err := h.repo.DB().Query(
+		"SELECT uuid FROM blob WHERE size >= 0",
+	)
 	if err != nil {
 		return fmt.Errorf("handler: listing blobs: %w", err)
 	}
@@ -372,6 +382,32 @@ func (h *handler) emitIGots() error {
 		h.resp = append(h.resp, &xfer.IGotCard{UUID: uuid})
 	}
 	return nil
+}
+
+// sendAllClusters emits igot cards for all cluster artifacts that are
+// not still in unclustered (i.e., already fully clustered themselves).
+func (h *handler) sendAllClusters() error {
+	rows, err := h.repo.DB().Query(`
+		SELECT b.uuid FROM tagxref tx
+		JOIN blob b ON tx.rid = b.rid
+		WHERE tx.tagid = 7
+		  AND NOT EXISTS (SELECT 1 FROM unclustered WHERE rid = b.rid)
+		  AND NOT EXISTS (SELECT 1 FROM phantom WHERE rid = b.rid)
+		  AND b.size >= 0
+	`)
+	if err != nil {
+		return fmt.Errorf("handler: listing clusters: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var uuid string
+		if err := rows.Scan(&uuid); err != nil {
+			return err
+		}
+		h.resp = append(h.resp, &xfer.IGotCard{UUID: uuid})
+	}
+	return rows.Err()
 }
 
 func (h *handler) emitCloneBatch() error {

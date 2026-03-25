@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
+	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/db"
 	"github.com/dmestas/edgesync/go-libfossil/deck"
@@ -90,7 +91,7 @@ func Crosslink(r *repo.Repo) (int, error) {
 		case deck.Attachment:
 			linkErr = crosslinkAttachment(r, c.rid, d)
 		case deck.Cluster:
-			linkErr = crosslinkCluster(r, c.rid, d)
+			linkErr = CrosslinkCluster(r.DB(), c.rid, d)
 		case deck.ForumPost:
 			linkErr = crosslinkForum(r, c.rid, d)
 		case deck.Control:
@@ -628,34 +629,6 @@ func isHash(s string) bool {
 	return true
 }
 
-func crosslinkCluster(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
-	if r == nil {
-		panic("crosslinkCluster: r must not be nil")
-	}
-	if rid <= 0 {
-		panic("crosslinkCluster: rid must be positive")
-	}
-
-	if err := tag.ApplyTag(r, tag.ApplyOpts{
-		TargetRID: rid,
-		SrcRID:    rid,
-		TagName:   "cluster",
-		TagType:   tag.TagSingleton,
-		MTime:     libfossil.TimeToJulian(d.D),
-	}); err != nil {
-		return fmt.Errorf("cluster tag: %w", err)
-	}
-	for _, memberUUID := range d.M {
-		var memberRid int64
-		if r.DB().QueryRow("SELECT rid FROM blob WHERE uuid=?", memberUUID).Scan(&memberRid) == nil {
-			if _, err := r.DB().Exec("DELETE FROM unclustered WHERE rid=?", memberRid); err != nil {
-				return fmt.Errorf("cluster unclustered delete: %w", err)
-			}
-		}
-	}
-	return nil
-}
-
 func updateAttachmentComments(r *repo.Repo, targetID string, targetType byte) error {
 	if r == nil {
 		panic("updateAttachmentComments: r must not be nil")
@@ -792,5 +765,46 @@ func crosslinkForumReply(r *repo.Repo, rid libfossil.FslID, d *deck.Deck, froot,
 	); err != nil {
 		return fmt.Errorf("forum reply event: %w", err)
 	}
+	return nil
+}
+
+// CrosslinkCluster processes a cluster artifact: applies the cluster singleton
+// tag (tagid=7), removes clustered blobs from unclustered, and creates phantoms
+// for any referenced UUIDs not yet in the blob table.
+func CrosslinkCluster(q db.Querier, rid libfossil.FslID, d *deck.Deck) error {
+	if q == nil {
+		panic("manifest.CrosslinkCluster: q must not be nil")
+	}
+	if rid <= 0 {
+		panic("manifest.CrosslinkCluster: rid must be > 0")
+	}
+	if d == nil {
+		panic("manifest.CrosslinkCluster: d must not be nil")
+	}
+
+	// Apply cluster singleton tag (tagid=7, tagtype=1).
+	if _, err := q.Exec(
+		"INSERT OR REPLACE INTO tagxref(tagid, tagtype, srcid, origid, value, mtime, rid) VALUES(7, 1, ?, ?, NULL, 0, ?)",
+		rid, rid, rid,
+	); err != nil {
+		return fmt.Errorf("manifest.CrosslinkCluster tag: %w", err)
+	}
+
+	// Process each M-card UUID.
+	for _, uuid := range d.M {
+		memberRID, exists := blob.Exists(q, uuid)
+		if exists {
+			// Remove from unclustered — this blob is now accounted for.
+			if _, err := q.Exec("DELETE FROM unclustered WHERE rid=?", memberRID); err != nil {
+				return fmt.Errorf("manifest.CrosslinkCluster unclustered delete rid=%d: %w", memberRID, err)
+			}
+		} else {
+			// Create phantom for unknown UUID.
+			if _, err := blob.StorePhantom(q, uuid); err != nil {
+				return fmt.Errorf("manifest.CrosslinkCluster phantom %s: %w", uuid, err)
+			}
+		}
+	}
+
 	return nil
 }

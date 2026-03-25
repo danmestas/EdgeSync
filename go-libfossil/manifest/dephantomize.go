@@ -126,7 +126,7 @@ func crosslinkSingle(r *repo.Repo, rid libfossil.FslID) error {
 	case deck.Attachment:
 		return crosslinkAttachment(r, rid, d)
 	case deck.Cluster:
-		return crosslinkCluster(r, rid, d)
+		return CrosslinkCluster(r.DB(), rid, d)
 	case deck.ForumPost:
 		return crosslinkForum(r, rid, d)
 	case deck.Control:

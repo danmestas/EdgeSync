@@ -69,6 +69,7 @@ type session struct {
 	uvGimmes            map[string]bool
 	nUvGimmeSent        int
 	nUvFileRcvd         int
+	nGimmeRcvd          int // cumulative gimmes received across all rounds
 	roundStats          RoundStats
 	dephantomizeHook    func(libfossil.FslID) // called after phantom→real transition
 }

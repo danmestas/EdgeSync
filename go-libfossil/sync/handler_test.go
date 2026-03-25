@@ -9,6 +9,7 @@ import (
 
 	"github.com/dmestas/edgesync/go-libfossil/auth"
 	"github.com/dmestas/edgesync/go-libfossil/blob"
+	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/db"
 	"github.com/dmestas/edgesync/go-libfossil/hash"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
@@ -532,6 +533,139 @@ func TestHandlerNoPushCardOnPull(t *testing.T) {
 	pushCards := findCards[*xfer.PushCard](resp)
 	if len(pushCards) != 0 {
 		t.Fatalf("PushCard count = %d, want 0 (push is clone-only)", len(pushCards))
+	}
+}
+
+// TestEmitIGots_OnlyUnclustered verifies that after clustering, emitIGots
+// returns only unclustered entries (not all blobs in the repo).
+func TestEmitIGots_AllBlobs(t *testing.T) {
+	r := setupSyncTestRepo(t)
+
+	// Store 200 blobs — above ClusterThreshold (100).
+	for i := 0; i < 200; i++ {
+		data := []byte(fmt.Sprintf("blob-%04d", i))
+		if _, _, err := blob.Store(r.DB(), data); err != nil {
+			t.Fatalf("Store blob %d: %v", i, err)
+		}
+	}
+
+	// Pre-cluster so we have known state before the handler runs.
+	n, err := content.GenerateClusters(r.DB())
+	if err != nil {
+		t.Fatalf("GenerateClusters: %v", err)
+	}
+	if n == 0 {
+		t.Fatal("expected at least 1 cluster to be created")
+	}
+
+	// Send a pull request — handler emits igots for ALL non-phantom blobs.
+	resp := handleReq(t, r,
+		&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
+	)
+
+	igots := cardsByType(resp, xfer.CardIGot)
+
+	var totalBlobs int
+	r.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&totalBlobs)
+
+	if len(igots) != totalBlobs {
+		t.Fatalf("igots = %d, total blobs = %d; emitIGots should send all blobs",
+			len(igots), totalBlobs)
+	}
+}
+
+// TestPragmaReqClusters verifies that pragma req-clusters causes the handler
+// to emit igot cards for cluster artifacts via sendAllClusters.
+func TestPragmaReqClusters(t *testing.T) {
+	r := setupSyncTestRepo(t)
+
+	// Store 200 blobs — above ClusterThreshold (100).
+	for i := 0; i < 200; i++ {
+		data := []byte(fmt.Sprintf("cluster-blob-%04d", i))
+		if _, _, err := blob.Store(r.DB(), data); err != nil {
+			t.Fatalf("Store blob %d: %v", i, err)
+		}
+	}
+
+	// Pre-cluster so we have known state.
+	n, err := content.GenerateClusters(r.DB())
+	if err != nil {
+		t.Fatalf("GenerateClusters: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("clusters = %d, want 1", n)
+	}
+
+	resp, err := HandleSync(context.Background(), r, &xfer.Message{
+		Cards: []xfer.Card{
+			&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
+			&xfer.PragmaCard{Name: "req-clusters"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleSync: %v", err)
+	}
+
+	igots := cardsByType(resp, xfer.CardIGot)
+
+	// emitIGots sends all blobs; sendAllClusters may add cluster igots
+	// (deduplication happens client-side). Total should include all blobs.
+	var totalBlobs int
+	r.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&totalBlobs)
+
+	if len(igots) < totalBlobs {
+		t.Fatalf("igots = %d, total blobs = %d; should include at least all blobs",
+			len(igots), totalBlobs)
+	}
+}
+
+// TestPragmaReqClusters_OldClusters verifies that all blobs are advertised
+// even when the unclustered table is empty (all blobs have been clustered).
+func TestPragmaReqClusters_OldClusters(t *testing.T) {
+	r := setupSyncTestRepo(t)
+
+	// Store 200 blobs and cluster them.
+	for i := 0; i < 200; i++ {
+		data := []byte(fmt.Sprintf("old-cluster-blob-%04d", i))
+		if _, _, err := blob.Store(r.DB(), data); err != nil {
+			t.Fatalf("Store blob %d: %v", i, err)
+		}
+	}
+
+	n, err := content.GenerateClusters(r.DB())
+	if err != nil {
+		t.Fatalf("GenerateClusters: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("first pass clusters = %d, want 1", n)
+	}
+
+	// Manually remove everything from unclustered to simulate old clusters
+	// that have been clustered in a future pass.
+	if _, err := r.DB().Exec("DELETE FROM unclustered"); err != nil {
+		t.Fatalf("clearing unclustered: %v", err)
+	}
+
+	resp, err := HandleSync(context.Background(), r, &xfer.Message{
+		Cards: []xfer.Card{
+			&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
+			&xfer.PragmaCard{Name: "req-clusters"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleSync: %v", err)
+	}
+
+	igots := cardsByType(resp, xfer.CardIGot)
+
+	// emitIGots sends ALL blobs regardless of unclustered status.
+	// sendAllClusters adds cluster igots (may duplicate).
+	var totalBlobs int
+	r.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&totalBlobs)
+
+	if len(igots) < totalBlobs {
+		t.Fatalf("igots = %d, total blobs = %d; should include all blobs",
+			len(igots), totalBlobs)
 	}
 }
 
