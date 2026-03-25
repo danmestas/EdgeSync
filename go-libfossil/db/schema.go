@@ -211,6 +211,19 @@ func SeedUser(d *DB, login string) error {
 	return err
 }
 
+// SeedNobody inserts a "nobody" user with the given capabilities.
+// This controls anonymous access policy for the repo.
+func SeedNobody(d *DB, caps string) error {
+	if d == nil {
+		panic("db.SeedNobody: d must not be nil")
+	}
+	_, err := d.Exec(
+		"INSERT OR IGNORE INTO user(login, pw, cap, info) VALUES('nobody', '', ?, '')",
+		caps,
+	)
+	return err
+}
+
 func SeedConfig(d *DB, rng simio.Rand) error {
 	if d == nil {
 		panic("db.SeedConfig: d must not be nil")
