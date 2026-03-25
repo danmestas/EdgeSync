@@ -85,9 +85,18 @@ type handler struct {
 	uvCatalogSent bool // true after sending UV catalog
 	filesSent     int  // files sent in response (for observer)
 	filesRecvd    int  // files received from client (for observer)
+	syncedTables  map[string]*SyncedTable // cached table definitions
+	xrowsSent     int  // table sync rows sent
+	xrowsRecvd    int  // table sync rows received
+	loginUser     string // user from LoginCard
 }
 
 func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, error) {
+	// Load synced tables.
+	if err := h.loadSyncedTables(); err != nil {
+		return nil, err
+	}
+
 	// First pass: extract control cards.
 	for _, card := range req.Cards {
 		h.handleControlCard(card)
@@ -137,6 +146,10 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 		if err := h.emitIGots(); err != nil {
 			return nil, err
 		}
+		// Emit xigots for table sync.
+		if err := h.emitXIGots(); err != nil {
+			return nil, err
+		}
 	}
 
 	// If clone, emit paginated file cards.
@@ -152,7 +165,7 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 func (h *handler) handleControlCard(card xfer.Card) {
 	switch c := card.(type) {
 	case *xfer.LoginCard:
-		_ = c // Accept all logins. Future: verify credentials.
+		h.loginUser = c.User
 	case *xfer.PragmaCard:
 		if c.Name == "uv-hash" && len(c.Values) >= 1 {
 			if err := h.handlePragmaUVHash(c.Values[0]); err != nil {
@@ -160,6 +173,8 @@ func (h *handler) handleControlCard(card xfer.Card) {
 					Message: fmt.Sprintf("uv-hash: %v", err),
 				})
 			}
+		} else if c.Name == "xtable-hash" && len(c.Values) >= 2 {
+			h.handlePragmaXTableHash(c.Values[0], c.Values[1])
 		}
 		// Acknowledge client-version, ignore other unknown pragmas.
 	case *xfer.PushCard:
@@ -170,6 +185,8 @@ func (h *handler) handleControlCard(card xfer.Card) {
 		h.cloneMode = true
 	case *xfer.CloneSeqNoCard:
 		h.cloneSeq = c.SeqNo
+	case *xfer.SchemaCard:
+		h.handleSchemaCard(c)
 	}
 }
 
@@ -191,6 +208,12 @@ func (h *handler) handleDataCard(card xfer.Card) error {
 		return h.handleUVGimme(c)
 	case *xfer.UVFileCard:
 		return h.handleUVFile(c)
+	case *xfer.XIGotCard:
+		return h.handleXIGot(c)
+	case *xfer.XGimmeCard:
+		return h.handleXGimme(c)
+	case *xfer.XRowCard:
+		return h.handleXRow(c)
 	}
 	return nil
 }
