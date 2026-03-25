@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dmestas/edgesync/go-libfossil/blob"
+	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/hash"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
@@ -508,5 +509,160 @@ func TestHandlerNoPushCardOnPull(t *testing.T) {
 	pushCards := findCards[*xfer.PushCard](resp)
 	if len(pushCards) != 0 {
 		t.Fatalf("PushCard count = %d, want 0 (push is clone-only)", len(pushCards))
+	}
+}
+
+// TestEmitIGots_OnlyUnclustered verifies that after clustering, emitIGots
+// returns only unclustered entries (not all blobs in the repo).
+func TestEmitIGots_OnlyUnclustered(t *testing.T) {
+	r := setupSyncTestRepo(t)
+
+	// Store 200 blobs — above ClusterThreshold (100).
+	for i := 0; i < 200; i++ {
+		data := []byte(fmt.Sprintf("blob-%04d", i))
+		if _, _, err := blob.Store(r.DB(), data); err != nil {
+			t.Fatalf("Store blob %d: %v", i, err)
+		}
+	}
+
+	// Pre-cluster so we have known state before the handler runs.
+	n, err := content.GenerateClusters(r.DB())
+	if err != nil {
+		t.Fatalf("GenerateClusters: %v", err)
+	}
+	if n == 0 {
+		t.Fatal("expected at least 1 cluster to be created")
+	}
+
+	// Send a pull request — handler should emit igots only for unclustered blobs.
+	resp := handleReq(t, r,
+		&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
+	)
+
+	igots := cardsByType(resp, xfer.CardIGot)
+
+	// Count total blobs vs unclustered to verify the handler is selective.
+	var totalBlobs int
+	r.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&totalBlobs)
+
+	if len(igots) >= totalBlobs {
+		t.Fatalf("igots = %d, total blobs = %d; emitIGots should send only unclustered, not all blobs",
+			len(igots), totalBlobs)
+	}
+
+	var unclusteredCount int
+	r.DB().QueryRow("SELECT count(*) FROM unclustered").Scan(&unclusteredCount)
+
+	if len(igots) != unclusteredCount {
+		t.Fatalf("igots = %d, unclustered count = %d; should match", len(igots), unclusteredCount)
+	}
+}
+
+// TestPragmaReqClusters verifies that pragma req-clusters causes the handler
+// to emit igot cards for cluster artifacts via sendAllClusters.
+func TestPragmaReqClusters(t *testing.T) {
+	r := setupSyncTestRepo(t)
+
+	// Store 200 blobs — above ClusterThreshold (100).
+	for i := 0; i < 200; i++ {
+		data := []byte(fmt.Sprintf("cluster-blob-%04d", i))
+		if _, _, err := blob.Store(r.DB(), data); err != nil {
+			t.Fatalf("Store blob %d: %v", i, err)
+		}
+	}
+
+	// Pre-cluster so we have known state.
+	n, err := content.GenerateClusters(r.DB())
+	if err != nil {
+		t.Fatalf("GenerateClusters: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("clusters = %d, want 1", n)
+	}
+
+	// After clustering 200 blobs: 1 cluster created, it IS in unclustered.
+	// sendAllClusters sends clusters NOT in unclustered — so the freshly
+	// created cluster won't appear there.
+	// emitIGots sends unclustered blobs (which includes the cluster blob).
+
+	resp, err := HandleSync(context.Background(), r, &xfer.Message{
+		Cards: []xfer.Card{
+			&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
+			&xfer.PragmaCard{Name: "req-clusters"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleSync: %v", err)
+	}
+
+	igots := cardsByType(resp, xfer.CardIGot)
+
+	// The cluster blob is in unclustered → emitIGots sends it.
+	// sendAllClusters excludes clusters still in unclustered → sends nothing extra.
+	var unclusteredCount int
+	r.DB().QueryRow("SELECT count(*) FROM unclustered").Scan(&unclusteredCount)
+
+	if len(igots) != unclusteredCount {
+		t.Fatalf("igots = %d, unclustered = %d; fresh cluster is in unclustered, sendAllClusters should not duplicate it",
+			len(igots), unclusteredCount)
+	}
+}
+
+// TestPragmaReqClusters_OldClusters verifies that sendAllClusters emits
+// cluster artifacts that have been removed from unclustered (i.e., old clusters
+// that were themselves clustered in a prior pass).
+func TestPragmaReqClusters_OldClusters(t *testing.T) {
+	r := setupSyncTestRepo(t)
+
+	// Store 200 blobs and cluster them.
+	for i := 0; i < 200; i++ {
+		data := []byte(fmt.Sprintf("old-cluster-blob-%04d", i))
+		if _, _, err := blob.Store(r.DB(), data); err != nil {
+			t.Fatalf("Store blob %d: %v", i, err)
+		}
+	}
+
+	n, err := content.GenerateClusters(r.DB())
+	if err != nil {
+		t.Fatalf("GenerateClusters: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("first pass clusters = %d, want 1", n)
+	}
+
+	// Manually remove everything from unclustered to simulate old clusters
+	// that have been clustered in a future pass.
+	if _, err := r.DB().Exec("DELETE FROM unclustered"); err != nil {
+		t.Fatalf("clearing unclustered: %v", err)
+	}
+
+	resp, err := HandleSync(context.Background(), r, &xfer.Message{
+		Cards: []xfer.Card{
+			&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
+			&xfer.PragmaCard{Name: "req-clusters"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleSync: %v", err)
+	}
+
+	igots := cardsByType(resp, xfer.CardIGot)
+
+	// emitIGots: unclustered is empty → 0 igots from emitIGots.
+	// sendAllClusters: the cluster is NOT in unclustered → it gets emitted.
+	// We expect exactly 1 igot (the cluster).
+	if len(igots) != 1 {
+		t.Fatalf("igots = %d, want 1 (old cluster not in unclustered)", len(igots))
+	}
+
+	// Verify the emitted igot is actually the cluster.
+	var clusterUUID string
+	r.DB().QueryRow(`
+		SELECT b.uuid FROM tagxref tx JOIN blob b ON tx.rid = b.rid WHERE tx.tagid = 7
+	`).Scan(&clusterUUID)
+
+	igotCard := igots[0].(*xfer.IGotCard)
+	if igotCard.UUID != clusterUUID {
+		t.Fatalf("igot UUID = %s, want cluster UUID %s", igotCard.UUID, clusterUUID)
 	}
 }
