@@ -179,6 +179,14 @@ CREATE TABLE cherrypick(
   PRIMARY KEY(parentid, childid)
 ) WITHOUT ROWID;
 CREATE INDEX cherrypick_cid ON cherrypick(childid);
+CREATE TABLE forumpost(
+  fpid INTEGER PRIMARY KEY,
+  froot INT,
+  fprev INT,
+  firt INT,
+  fmtime REAL
+);
+CREATE INDEX forumpost_froot ON forumpost(froot);
 INSERT INTO rcvfrom(rcvid, uid, mtime, nonce, ipaddr) VALUES(1, 0, 0, NULL, NULL);
 `
 
