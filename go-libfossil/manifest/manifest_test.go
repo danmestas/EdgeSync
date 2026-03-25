@@ -452,3 +452,52 @@ func TestCrosslinkControlArtifact(t *testing.T) {
 		t.Errorf("testlabel tagxref count=%d, want 1", count)
 	}
 }
+
+func TestDiscoveryQueryIdempotent(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Create a checkin.
+	rid, _, err := Checkin(r, CheckinOpts{
+		Files:   []File{{Name: "hello.txt", Content: []byte("hello")}},
+		Comment: "initial commit",
+		User:    "testuser",
+		Time:    time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("Checkin: %v", err)
+	}
+
+	// Clear event and tagxref to simulate post-clone state.
+	r.DB().Exec("DELETE FROM event")
+	r.DB().Exec("DELETE FROM plink")
+	r.DB().Exec("DELETE FROM leaf")
+	r.DB().Exec("DELETE FROM mlink")
+	r.DB().Exec("DELETE FROM tagxref")
+
+	// First run should link artifacts.
+	n1, err := Crosslink(r)
+	if err != nil {
+		t.Fatalf("first Crosslink: %v", err)
+	}
+	if n1 < 1 {
+		t.Fatalf("first run linked %d, want >= 1", n1)
+	}
+	t.Logf("first run linked %d artifacts", n1)
+
+	// Verify checkin was crosslinked.
+	var eventCount int
+	r.DB().QueryRow("SELECT count(*) FROM event WHERE objid=?", rid).Scan(&eventCount)
+	if eventCount != 1 {
+		t.Errorf("event count=%d, want 1", eventCount)
+	}
+
+	// Second run should link nothing (idempotent).
+	n2, err := Crosslink(r)
+	if err != nil {
+		t.Fatalf("second Crosslink: %v", err)
+	}
+	if n2 != 0 {
+		t.Errorf("second run linked %d, want 0 (idempotent)", n2)
+	}
+	t.Logf("second run linked %d artifacts (idempotent)", n2)
+}

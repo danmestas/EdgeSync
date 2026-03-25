@@ -11,19 +11,27 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/tag"
 )
 
-// Crosslink scans all blobs not yet in the event table, tries to parse
-// each as a checkin manifest, and populates event/plink/leaf tables.
+type pendingItem struct {
+	Type byte   // 'w' = wiki backlink, 't' = ticket rebuild
+	ID   string
+}
+
+// Crosslink scans all blobs not yet crosslinked in event/tagxref/forumpost/attachment tables,
+// parses them as manifests, and populates cross-reference tables (event/plink/leaf/mlink/tagxref).
 // This is the Go equivalent of Fossil's manifest_crosslink.
 func Crosslink(r *repo.Repo) (int, error) {
 	if r == nil {
 		panic("manifest.Crosslink: r must not be nil")
 	}
 
-	// Find blobs not yet crosslinked: blobs with no event entry.
+	// Pass 1: Discover and crosslink all uncrosslinked artifacts.
 	rows, err := r.DB().Query(`
 		SELECT b.rid, b.uuid FROM blob b
 		WHERE b.size >= 0
-		AND NOT EXISTS (SELECT 1 FROM event e WHERE e.objid = b.rid)
+		  AND NOT EXISTS (SELECT 1 FROM event e WHERE e.objid = b.rid)
+		  AND NOT EXISTS (SELECT 1 FROM tagxref tx WHERE tx.srcid = b.rid)
+		  AND NOT EXISTS (SELECT 1 FROM forumpost fp WHERE fp.fpid = b.rid)
+		  AND NOT EXISTS (SELECT 1 FROM attachment a WHERE a.attachid = b.rid)
 	`)
 	if err != nil {
 		return 0, fmt.Errorf("manifest.Crosslink query: %w", err)
@@ -47,6 +55,7 @@ func Crosslink(r *repo.Repo) (int, error) {
 	}
 
 	linked := 0
+	var pending []pendingItem
 	for _, c := range candidates {
 		data, err := content.Expand(r.DB(), c.rid)
 		if err != nil {
@@ -58,62 +67,46 @@ func Crosslink(r *repo.Repo) (int, error) {
 			continue // not a valid manifest, skip
 		}
 
-		if d.Type != deck.Checkin {
-			continue // only crosslink checkin manifests
+		var linkErr error
+		var p []pendingItem
+
+		switch d.Type {
+		case deck.Checkin:
+			linkErr = crosslinkCheckin(r, c.rid, d)
+		case deck.Wiki:
+			p, linkErr = crosslinkWiki(r, c.rid, d)
+		case deck.Ticket:
+			p, linkErr = crosslinkTicket(r, c.rid, d)
+		case deck.Event:
+			p, linkErr = crosslinkEvent(r, c.rid, d)
+		case deck.Attachment:
+			linkErr = crosslinkAttachment(r, c.rid, d)
+		case deck.Cluster:
+			linkErr = crosslinkCluster(r, c.rid, d)
+		case deck.ForumPost:
+			linkErr = crosslinkForum(r, c.rid, d)
+		case deck.Control:
+			linkErr = crosslinkControl(r, c.rid, d)
+		default:
+			continue
 		}
 
-		if err := crosslinkOne(r, c.rid, d); err != nil {
-			return linked, fmt.Errorf("manifest.Crosslink rid=%d: %w", c.rid, err)
+		if linkErr != nil {
+			return linked, fmt.Errorf("manifest.Crosslink rid=%d type=%d: %w", c.rid, d.Type, linkErr)
 		}
 		linked++
+		pending = append(pending, p...)
 	}
 
-	// Second pass: process control artifacts (tags/branches).
-	ctrlRows, err := r.DB().Query(`
-		SELECT b.rid FROM blob b
-		WHERE b.size >= 0
-		AND NOT EXISTS (SELECT 1 FROM tagxref tx WHERE tx.srcid = b.rid)
-		AND NOT EXISTS (SELECT 1 FROM event e WHERE e.objid = b.rid)
-	`)
-	if err != nil {
-		return linked, fmt.Errorf("manifest.Crosslink ctrl query: %w", err)
-	}
-	defer ctrlRows.Close()
-
-	var ctrlCandidates []libfossil.FslID
-	for ctrlRows.Next() {
-		var rid libfossil.FslID
-		if err := ctrlRows.Scan(&rid); err != nil {
-			return linked, fmt.Errorf("manifest.Crosslink ctrl scan: %w", err)
-		}
-		ctrlCandidates = append(ctrlCandidates, rid)
-	}
-	if err := ctrlRows.Err(); err != nil {
-		return linked, fmt.Errorf("manifest.Crosslink ctrl rows: %w", err)
-	}
-
-	for _, rid := range ctrlCandidates {
-		data, err := content.Expand(r.DB(), rid)
-		if err != nil {
-			continue // raw data blob or phantom — not a manifest
-		}
-		d, err := deck.Parse(data)
-		if err != nil {
-			continue // not a valid manifest card format
-		}
-		if d.Type != deck.Control {
-			continue // checkin or other type — handled in first pass
-		}
-		if err := crosslinkControl(r, rid, d); err != nil {
-			return linked, fmt.Errorf("manifest.Crosslink ctrl rid=%d: %w", rid, err)
-		}
-		linked++
+	// Pass 2: Process pending items (wiki backlinks, ticket rebuilds).
+	for _, item := range pending {
+		_ = item // Stubs return nil, nothing to process yet.
 	}
 
 	return linked, nil
 }
 
-func crosslinkOne(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
+func crosslinkCheckin(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
 	// First, crosslink event/plink/leaf/mlink in a transaction
 	err := r.WithTx(func(tx *db.Tx) error {
 		// event
@@ -222,7 +215,7 @@ func crosslinkControl(r *repo.Repo, srcRID libfossil.FslID, d *deck.Deck) error 
 	mtime := libfossil.TimeToJulian(d.D)
 	for _, tc := range d.T {
 		if tc.UUID == "*" {
-			continue // self-referencing — handled in crosslinkOne
+			continue // self-referencing — handled in crosslinkCheckin
 		}
 		var targetRID int64
 		if err := r.DB().QueryRow("SELECT rid FROM blob WHERE uuid=?", tc.UUID).Scan(&targetRID); err != nil {
@@ -250,5 +243,29 @@ func crosslinkControl(r *repo.Repo, srcRID libfossil.FslID, d *deck.Deck) error 
 			return fmt.Errorf("apply tag %q to rid=%d: %w", tc.Name, targetRID, err)
 		}
 	}
+	return nil
+}
+
+func crosslinkWiki(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) ([]pendingItem, error) {
+	return nil, nil
+}
+
+func crosslinkTicket(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) ([]pendingItem, error) {
+	return nil, nil
+}
+
+func crosslinkEvent(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) ([]pendingItem, error) {
+	return nil, nil
+}
+
+func crosslinkAttachment(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
+	return nil
+}
+
+func crosslinkCluster(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
+	return nil
+}
+
+func crosslinkForum(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
 	return nil
 }
