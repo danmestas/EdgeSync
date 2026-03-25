@@ -434,7 +434,35 @@ func (h *handler) emitIGots() error {
 	for _, uuid := range uuids {
 		h.resp = append(h.resp, &xfer.IGotCard{UUID: uuid})
 	}
+
+	if h.syncPrivate {
+		if err := h.emitPrivateIGots(); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// emitPrivateIGots emits igot cards with IsPrivate=true for all blobs in
+// the private table. Only called when the client sent pragma send-private
+// and has the 'x' capability.
+func (h *handler) emitPrivateIGots() error {
+	rows, err := h.repo.DB().Query(
+		"SELECT b.uuid FROM private p JOIN blob b ON p.rid=b.rid WHERE b.size >= 0",
+	)
+	if err != nil {
+		return fmt.Errorf("handler: listing private blobs: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var uuid string
+		if err := rows.Scan(&uuid); err != nil {
+			return err
+		}
+		h.resp = append(h.resp, &xfer.IGotCard{UUID: uuid, IsPrivate: true})
+	}
+	return rows.Err()
 }
 
 // sendAllClusters emits igot cards for all cluster artifacts that are

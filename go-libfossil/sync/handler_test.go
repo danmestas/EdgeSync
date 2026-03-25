@@ -947,3 +947,69 @@ func TestHandlerPublicFileClearsPrivate(t *testing.T) {
 		t.Error("blob should no longer be private after public file push")
 	}
 }
+
+func TestEmitIGotsExcludesPrivate(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	pubUUID := storeTestBlob(t, r, []byte("public blob"))
+	privData := []byte("private blob for exclusion")
+	privUUID := storeTestBlob(t, r, privData)
+	privRid, _ := blob.Exists(r.DB(), privUUID)
+	content.MakePrivate(r.DB(), int64(privRid))
+
+	// Pull without send-private pragma — private blob should be excluded.
+	resp := handleReq(t, r,
+		&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
+	)
+
+	igotUUIDs := make(map[string]bool)
+	for _, c := range resp.Cards {
+		if ig, ok := c.(*xfer.IGotCard); ok {
+			igotUUIDs[ig.UUID] = true
+		}
+	}
+	if !igotUUIDs[pubUUID] {
+		t.Error("public blob missing from igots")
+	}
+	if igotUUIDs[privUUID] {
+		t.Error("private blob should be excluded from igots without send-private")
+	}
+}
+
+func TestEmitIGotsIncludesPrivateWhenAuthorized(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	r.DB().Exec("UPDATE user SET cap='oix' WHERE login='nobody'")
+
+	pubUUID := storeTestBlob(t, r, []byte("public blob auth"))
+	privData := []byte("private blob auth")
+	privUUID := storeTestBlob(t, r, privData)
+	privRid, _ := blob.Exists(r.DB(), privUUID)
+	content.MakePrivate(r.DB(), int64(privRid))
+
+	// Pull WITH send-private pragma and x capability.
+	resp := handleReq(t, r,
+		&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
+		&xfer.PragmaCard{Name: "send-private"},
+	)
+
+	pubFound := false
+	privFound := false
+	for _, c := range resp.Cards {
+		if ig, ok := c.(*xfer.IGotCard); ok {
+			if ig.UUID == pubUUID {
+				pubFound = true
+			}
+			if ig.UUID == privUUID {
+				if !ig.IsPrivate {
+					t.Error("private blob igot should have IsPrivate=true")
+				}
+				privFound = true
+			}
+		}
+	}
+	if !pubFound {
+		t.Error("public blob missing from igots")
+	}
+	if !privFound {
+		t.Error("private blob should be included when send-private is authorized")
+	}
+}
