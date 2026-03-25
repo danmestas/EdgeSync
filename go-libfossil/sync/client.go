@@ -436,9 +436,22 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 
 	for _, card := range msg.Cards {
 		switch c := card.(type) {
+		case *xfer.PrivateCard:
+			s.nextIsPrivate = true
+
 		case *xfer.FileCard:
 			if err := s.handleFileCard(c.UUID, c.DeltaSrc, c.Content); err != nil {
 				return false, err
+			}
+			if s.nextIsPrivate {
+				rid, _ := blob.Exists(s.repo.DB(), c.UUID)
+				content.MakePrivate(s.repo.DB(), int64(rid))
+				s.nextIsPrivate = false
+			} else {
+				rid, exists := blob.Exists(s.repo.DB(), c.UUID)
+				if exists {
+					content.MakePublic(s.repo.DB(), int64(rid))
+				}
 			}
 			filesRecvd++
 			s.roundStats.BytesReceived += int64(len(c.Content))
@@ -448,15 +461,33 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 			if err := s.handleFileCard(c.UUID, c.DeltaSrc, c.Content); err != nil {
 				return false, err
 			}
+			if s.nextIsPrivate {
+				rid, _ := blob.Exists(s.repo.DB(), c.UUID)
+				content.MakePrivate(s.repo.DB(), int64(rid))
+				s.nextIsPrivate = false
+			} else {
+				rid, exists := blob.Exists(s.repo.DB(), c.UUID)
+				if exists {
+					content.MakePublic(s.repo.DB(), int64(rid))
+				}
+			}
 			filesRecvd++
 			s.roundStats.BytesReceived += int64(len(c.Content))
 			delete(s.phantoms, c.UUID)
 
 		case *xfer.IGotCard:
 			s.remoteHas[c.UUID] = true
-			if s.opts.Pull {
-				_, exists := blob.Exists(s.repo.DB(), c.UUID)
-				if !exists {
+			rid, exists := blob.Exists(s.repo.DB(), c.UUID)
+			if c.IsPrivate {
+				if exists {
+					content.MakePrivate(s.repo.DB(), int64(rid))
+				} else if s.opts.Private && s.opts.Pull {
+					s.phantoms[c.UUID] = true
+				}
+			} else {
+				if exists {
+					content.MakePublic(s.repo.DB(), int64(rid))
+				} else if s.opts.Pull {
 					s.phantoms[c.UUID] = true
 				}
 			}
