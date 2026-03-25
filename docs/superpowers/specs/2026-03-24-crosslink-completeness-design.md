@@ -2,11 +2,11 @@
 
 **Date:** 2026-03-24
 **Status:** Draft
-**Related:** CDG-165 (clustering), Fossil manifest.c:2336-2800
+**Related:** CDG-165 (clustering), Fossil manifest.c:2336-2875
 
 ## Problem
 
-`manifest.Crosslink` currently handles checkin manifests and control artifacts but ignores wiki, ticket, technote, attachment, forum, and cluster artifacts. Synced repos contain these blobs but the metadata tables (`event`, `attachment`, `cherrypick`, etc.) are not populated, making `fossil open` after EdgeSync clone/sync produce incomplete results.
+`manifest.Crosslink` currently handles checkin manifests and control artifacts but ignores wiki, ticket, technote, attachment, forum, and cluster artifacts. Synced repos contain these blobs but the metadata tables (`event`, `attachment`, `cherrypick`, `forumpost`, etc.) are not populated, making `fossil open` after EdgeSync clone/sync produce incomplete results.
 
 Additionally, `sync.Sync()` does not auto-crosslink — callers must invoke `Crosslink` manually or via `PostSyncHook`. Phantom blobs that receive content mid-sync are never re-crosslinked.
 
@@ -24,6 +24,7 @@ Additionally, `sync.Sync()` does not auto-crosslink — callers must invoke `Cro
 - TH1 hook scripts (`xfer_commit_code`, `xfer_ticket_code`)
 - Time fudge adjustments for near-simultaneous checkins (cosmetic, can add later)
 - Backlink extraction (`backlink_extract`, `backlink_wiki_refresh`)
+- Delta compression of prior wiki/event versions (`content_deltify`) — space optimization, not correctness; follow-on ticket
 
 ## Design
 
@@ -33,19 +34,31 @@ Restructure `Crosslink` from single-pass to Fossil's two-pass model:
 
 **Pass 1 — Crosslink artifacts into tables:**
 
-Scan all blobs not yet in the `event` table. Parse each blob, dispatch by `deck.ArtifactType` to a handler function. During this pass, collect deferred work:
+Scan all uncrosslinked blobs (see Discovery Query section below). Parse each blob, dispatch by `deck.ArtifactType` to a handler function. Tag insertion and `tag_propagate_all` happen immediately per artifact in Pass 1, matching Fossil's `manifest_crosslink` where `tag_propagate_all(parentid)` is called at line 2472 within each artifact's processing. Collect deferred work:
 
 - `pendingXlink []pendingItem` — wiki backlinks and ticket rebuilds to process after all artifacts are linked
-- `parentIDs []FslID` — parent IDs for deferred `tag_propagate_all`
-
-Tag processing for Checkin, Control, and Event types happens in Pass 1 (matching Fossil lines 2445-2473), but `tag_propagate_all` is deferred to Pass 2.
 
 **Pass 2 — Deferred processing:**
 
 - Process `pendingXlink` entries (wiki backlink refresh, ticket entry rebuild)
-- Run `tag.PropagateAll` for collected parent IDs
+- TAG_PARENT reparenting if applicable (Fossil's `manifest_crosslink_end` lines 2047-2057)
 
-This matches Fossil's `manifest_crosslink_begin` / `manifest_crosslink` / `manifest_crosslink_end` pattern.
+This matches Fossil's `manifest_crosslink_begin` / `manifest_crosslink` / `manifest_crosslink_end` pattern. Note: `tag_propagate_all` is NOT deferred — it runs in Pass 1 immediately after tag insertion for each artifact. Only wiki backlinks and ticket rebuilds are truly deferred.
+
+### Discovery Query
+
+The current query (`NOT EXISTS (SELECT 1 FROM event e WHERE e.objid = b.rid)`) will miss clusters (which don't get event rows) and cause redundant reprocessing. Replace with a multi-table check:
+
+```sql
+SELECT b.rid, b.uuid FROM blob b
+WHERE b.size >= 0
+  AND NOT EXISTS (SELECT 1 FROM event e WHERE e.objid = b.rid)
+  AND NOT EXISTS (SELECT 1 FROM tagxref tx WHERE tx.srcid = b.rid)
+  AND NOT EXISTS (SELECT 1 FROM forumpost fp WHERE fp.fpid = b.rid)
+  AND NOT EXISTS (SELECT 1 FROM attachment a WHERE a.attachid = b.rid)
+```
+
+This covers all artifact types: checkins/wiki/ticket/event → event table; control → tagxref.srcid; cluster → tagxref (cluster tag); forum → forumpost; attachment → attachment table. The query is only used for rebuild/catchup; during normal sync, dephantomize handles incremental crosslinking.
 
 ### Per-Type Handlers
 
@@ -58,13 +71,13 @@ Current behavior preserved: event/plink/leaf/mlink + inline T-cards.
 Extensions:
 - **Cherrypick:** Populate `cherrypick(parentid, childid, isExclude)` from `deck.Q` cards. Matches Fossil lines 2380-2390.
 - **baseid in plink:** Store baseline manifest RID in `plink.baseid` for delta manifests (B-card). Currently passes NULL.
-- **parentid collection:** Return primary parent ID for deferred `tag_propagate_all`.
+- **tag_propagate_all:** Call `tag.PropagateAll` on primary parent ID immediately after tag insertion (matching Fossil line 2472).
 
 #### `crosslinkWiki` (new)
 
-Matches Fossil lines 2479-2516.
+Matches Fossil lines 2475-2516.
 
-1. Insert plink for wiki version chain via `addFWTPlink` helper (shared with forum/event)
+1. Insert plink for wiki version chain via `addFWTPlink` helper (which calls `tag.PropagateAll` immediately)
 2. Create `wiki-<title>` singleton tag with content length as value
 3. Determine comment prefix: `-` (empty/delete), `+` (new), `:` (edit with prior version)
 4. Insert event row: `type='w', mtime, objid=rid, user, comment='<prefix><title>'`
@@ -77,6 +90,8 @@ Matches Fossil lines 2596-2631.
 1. Create `tkt-<uuid>` singleton tag
 2. Queue `pendingItem{Type: 't', ID: ticketUUID}` for deferred ticket rebuild
 3. Update attachment event comments targeting this ticket UUID
+
+**Ticket rebuild (deferred):** In Pass 2, for each pending ticket UUID, reconstruct the ticket's current state from all ticket-change artifacts (type J) for that UUID, ordered by mtime. This populates/updates a `ticket` table row. Note: the `ticket` table uses a dynamic schema defined by Fossil's ticketing configuration. For initial implementation, ticket rebuild inserts a minimal event record; full ticket table reconstruction is deferred to a follow-on ticket if needed.
 
 #### `crosslinkEvent` (new)
 
@@ -112,14 +127,28 @@ Matches Fossil lines 2431-2443.
 
 #### `crosslinkForum` (new)
 
-Matches Fossil lines 2475-2478 (shared with wiki/event).
+Matches Fossil lines 2810-2875.
 
-1. Insert plink for forum post version chain via `addFWTPlink`
-2. No event table entry (Fossil doesn't create one for forum posts in crosslink)
+1. Ensure `forumpost` table exists (schema addition required — see below)
+2. Insert plink for forum post version chain via `addFWTPlink`
+3. Resolve thread references: `froot` from `deck.G` (or self if thread starter), `fprev` from `deck.P[0]`, `firt` from `deck.I`
+4. Insert into `forumpost(fpid, froot, fprev, firt, fmtime)`
+5. If thread starter (`firt==0`):
+   - Determine comment type: "Edit" (if fprev) or "Post" (if new)
+   - Insert event row `type='f'` with comment `"<type>: <title>"` using `deck.H` as title
+   - If this is the most recent edit, update all event comments for the same thread root with the new title
+6. If reply (`firt!=0`):
+   - Get title from thread root's event comment
+   - Determine comment type: "Delete reply" (empty body), "Edit reply" (fprev), or "Reply" (new)
+   - Insert event row `type='f'` with comment `"<type>: <title>"`
 
-#### `crosslinkControl` (existing, unchanged)
+**Deck field mappings for forum:** `deck.G` = thread root UUID (zThreadRoot), `deck.H` = thread title (zThreadTitle), `deck.I` = in-reply-to UUID (zInReplyTo). These are already parsed by `deck.Parse`.
 
-Already processes external T-cards and applies tags with propagation.
+#### `crosslinkControl` (existing, extended)
+
+Current T-card and tag propagation behavior preserved.
+
+Extension: Create event row with `type='g'` and a generated comment describing the tag operations, matching Fossil lines 2705-2808. The comment summarizes branch moves, tag additions/cancellations, bgcolor changes, etc.
 
 ### Shared Helper: `addFWTPlink`
 
@@ -128,7 +157,13 @@ Matches Fossil's `manifest_add_fwt_plink` (lines 2287-2307).
 Used by wiki, forum, and event types. For each parent UUID in the deck:
 1. Resolve to rid
 2. Insert `plink(pid, cid, isprim, mtime, baseid=NULL)`
-3. Collect primary parent ID for deferred `tag_propagate_all`
+3. If primary parent exists, call `tag.PropagateAll(parentID)` immediately (not deferred)
+
+### New Function: `tag.PropagateAll`
+
+New exported function in `go-libfossil/tag/propagate.go` matching Fossil's `tag_propagate_all` (tag.c:118).
+
+Queries all propagating tags (`tagtype=2`) on a given rid and calls `propagate()` for each. Used by `crosslinkCheckin` (after tag insertion) and `addFWTPlink` (after plink insertion for wiki/forum/event).
 
 ### Dephantomize Hook
 
@@ -147,45 +182,67 @@ Called when a phantom blob receives real content.
 
 When `crosslinkCheckin` encounters a delta manifest (B-card) whose baseline blob is a phantom, insert into `orphan(rid, baseline)` instead of failing silently. When the baseline arrives and dephantomizes, the orphan gets crosslinked automatically.
 
-#### `EnableDephantomize(enabled bool)`
+#### `SetDephantomizeHook(hook func(db.Querier, FslID))`
 
-Package-level toggle matching Fossil's `content_enable_dephantomize`.
+Per-session hook instead of a package-level toggle. This avoids data races when multiple goroutines run concurrent sync sessions (e.g., leaf agent syncing with multiple peers).
 
-- **Disabled during Clone:** Clone runs full `Crosslink` at the end, no need for per-blob processing
-- **Enabled during Sync:** Incremental crosslinking as blobs arrive
+- The sync session sets `manifest.AfterDephantomize` as the hook at session start
+- Clone sets nil (no per-blob crosslinking; bulk `Crosslink` at end)
+- The hook is stored on the session, not as a global variable
 
-#### Integration with `blob.Store`
+#### Integration with `storeReceivedFile`
 
-`blob.Store` and `blob.StoreDelta` are in `go-libfossil/blob/`. Dephantomize logic is in `go-libfossil/manifest/`. To avoid circular imports:
+**Important:** `storeReceivedFile` in `sync/client.go:505-527` bypasses `blob.Store` — it inserts directly into the `blob` table via raw SQL. The `OnDephantomize` callback on `blob.Store` would never fire during sync.
 
-- `blob.Store` accepts an optional `OnDephantomize func(db.Querier, FslID)` callback
-- When storing content into a previously-phantom blob (`size=-1` → real content), invoke the callback
-- `sync` package wires `manifest.AfterDephantomize` as the callback when dephantomize is enabled
-- When nil (default, or during clone), no callback fires
+Solution: Add dephantomize check directly into `storeReceivedFile`. After inserting/updating a blob:
+1. Check if the blob was previously a phantom (`size=-1` before the INSERT, or the INSERT updated an existing phantom row)
+2. If dephantomize hook is set on the session, invoke it with the rid
+
+Additionally, add the `OnDephantomize` callback to `blob.Store`/`blob.StoreDelta` for non-sync callers (e.g., `repo.Create`, direct blob insertion).
 
 ### Auto-Crosslink in Sync
 
 `sync.Sync()` automatically crosslinks after convergence:
 
-1. Enable dephantomize at start of sync loop (incremental crosslinking as blobs arrive)
+1. Set dephantomize hook on the session at start of sync loop (incremental crosslinking as blobs arrive)
 2. After all rounds complete and convergence is reached, call `manifest.Crosslink(s.repo)` as a catch-all
-3. Populate `SyncResult.CheckinsLinked` from `Crosslink` return value
-4. Disable dephantomize before returning
+3. Populate `SyncResult.ArtifactsLinked` from `Crosslink` return value (renamed from `CheckinsLinked`)
+4. Clear dephantomize hook before returning
 
-**Clone behavior unchanged:** `Clone` already calls `Crosslink` at the end. Dephantomize stays disabled during clone.
+**Clone behavior unchanged:** `Clone` already calls `Crosslink` at the end. No dephantomize hook during clone.
+
+### Schema Addition
+
+Add `forumpost` table to `go-libfossil/db/schema.go`:
+
+```sql
+CREATE TABLE forumpost(
+  fpid INTEGER PRIMARY KEY,
+  froot INT,
+  fprev INT,
+  firt INT,
+  fmtime REAL
+);
+CREATE INDEX forumpost_froot ON forumpost(froot);
+```
+
+This matches Fossil's `schema_forum()` output.
 
 ## File Changes
 
 | File | Change |
 |------|--------|
-| `go-libfossil/manifest/crosslink.go` | Restructure to two-pass. Add `crosslinkWiki`, `crosslinkTicket`, `crosslinkEvent`, `crosslinkAttachment`, `crosslinkCluster`, `crosslinkForum`, `addFWTPlink`. Extend `crosslinkCheckin` with cherrypick + baseid. Add deferred processing pass. |
-| `go-libfossil/manifest/dephantomize.go` | New. `AfterDephantomize()`, `EnableDephantomize()`, orphan tracking. |
+| `go-libfossil/manifest/crosslink.go` | Restructure to two-pass. Add `crosslinkWiki`, `crosslinkTicket`, `crosslinkEvent`, `crosslinkAttachment`, `crosslinkCluster`, `crosslinkForum`, `addFWTPlink`. Extend `crosslinkCheckin` with cherrypick + baseid. Extend `crosslinkControl` with event row (type='g'). Updated discovery query. Add deferred processing pass. |
+| `go-libfossil/manifest/dephantomize.go` | New. `AfterDephantomize()`, `SetDephantomizeHook()`, orphan tracking. |
 | `go-libfossil/manifest/crosslink_test.go` | Extend with per-type tests + two-pass ordering test. |
 | `go-libfossil/manifest/dephantomize_test.go` | New. Phantom fill, orphan, delta chain tests. |
+| `go-libfossil/tag/propagate.go` | Add exported `PropagateAll(q db.Querier, rid FslID)` function. |
 | `go-libfossil/blob/blob.go` | `Store`/`StoreDelta`: detect phantom-to-real transition, invoke `OnDephantomize` callback. |
-| `go-libfossil/sync/client.go` | Call `manifest.Crosslink` after sync convergence. Enable/disable dephantomize around sync loop. |
+| `go-libfossil/sync/client.go` | Call `manifest.Crosslink` after sync convergence. Set/clear dephantomize hook. Add dephantomize check to `storeReceivedFile`. Rename `CheckinsLinked` to `ArtifactsLinked`. |
+| `go-libfossil/sync/stubs.go` | Rename `CheckinsLinked` to `ArtifactsLinked` in `SyncResult`. |
+| `go-libfossil/db/schema.go` | Add `forumpost` table and index. |
 | `dst/crosslink_test.go` | New DST test for crosslink completeness across multi-leaf sync. |
-| `sim/equivalence_test.go` | Extend to verify wiki/ticket metadata equivalence. |
+| `sim/equivalence_test.go` | Extend to verify wiki/ticket/forum metadata equivalence. |
 
 ## Testing Strategy
 
@@ -196,9 +253,11 @@ Package-level toggle matching Fossil's `content_enable_dephantomize`.
 - `TestCrosslinkEvent` — technote manifest → event type='e', `event-*` tag, subsequent-version visibility
 - `TestCrosslinkAttachment` — attachment manifest → `attachment` table, `isLatest` flag, generated comment, type detection
 - `TestCrosslinkCluster` — cluster manifest with M-cards → `cluster` tag, members removed from `unclustered`
-- `TestCrosslinkForum` — forum post manifest → plink chain, no event row
+- `TestCrosslinkForum` — forum post manifest → `forumpost` table, event type='f', thread title propagation, reply handling
 - `TestCrosslinkCherrypick` — checkin with Q-cards → `cherrypick` table populated
-- `TestCrosslinkTwoPass` — mixed artifacts → tags applied in correct order with deferred propagation
+- `TestCrosslinkControl` — control artifact → event type='g' with generated comment
+- `TestCrosslinkTwoPass` — mixed artifacts → deferred wiki/ticket processing runs after all artifacts linked
+- `TestDiscoveryQueryIdempotent` — run `Crosslink` twice, verify no duplicate processing
 - `TestDephantomizeCrosslinks` — store phantom, fill it, verify crosslink triggered
 - `TestDephantomizeOrphan` — delta manifest with phantom baseline, fill baseline, verify orphan crosslinked
 - `TestDephantomizeDeltaChain` — chain of deltas from phantom, fill root, verify all crosslinked recursively
@@ -206,8 +265,8 @@ Package-level toggle matching Fossil's `content_enable_dephantomize`.
 ### DST Tests (`dst/`)
 
 - `TestCrosslinkCompletenessAfterSync` — multi-leaf sync with wiki/ticket/checkin artifacts, verify all metadata tables populated on every leaf
-- Extend `TestTagPropagationAcrossSync` to verify two-pass ordering
+- Extend `TestTagPropagationAcrossSync` to verify tag propagation runs immediately (not deferred)
 
 ### Sim Equivalence Tests (`sim/`)
 
-- Extend equivalence tests to verify wiki/ticket event rows match between `fossil` and EdgeSync after clone+crosslink
+- Extend equivalence tests to verify wiki/ticket/forum event rows match between `fossil` and EdgeSync after clone+crosslink
