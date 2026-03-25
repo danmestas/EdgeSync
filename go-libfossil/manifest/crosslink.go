@@ -107,7 +107,7 @@ func Crosslink(r *repo.Repo) (int, error) {
 }
 
 func crosslinkCheckin(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
-	// First, crosslink event/plink/leaf/mlink in a transaction
+	// First, crosslink event/plink/leaf/mlink/cherrypick in a transaction
 	err := r.WithTx(func(tx *db.Tx) error {
 		// event
 		if _, err := tx.Exec(
@@ -115,6 +115,15 @@ func crosslinkCheckin(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
 			libfossil.TimeToJulian(d.D), rid, d.U, d.C,
 		); err != nil {
 			return fmt.Errorf("event: %w", err)
+		}
+
+		// Resolve baseid for plink if B-card present
+		var baseid interface{} = nil
+		if d.B != "" {
+			var baseRid int64
+			if err := tx.QueryRow("SELECT rid FROM blob WHERE uuid=?", d.B).Scan(&baseRid); err == nil {
+				baseid = baseRid
+			}
 		}
 
 		// plink — link to parent(s)
@@ -128,8 +137,8 @@ func crosslinkCheckin(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
 				isPrim = 1
 			}
 			if _, err := tx.Exec(
-				"INSERT OR IGNORE INTO plink(pid, cid, isprim, mtime) VALUES(?, ?, ?, ?)",
-				parentRid, rid, isPrim, libfossil.TimeToJulian(d.D),
+				"INSERT OR IGNORE INTO plink(pid, cid, isprim, mtime, baseid) VALUES(?, ?, ?, ?, ?)",
+				parentRid, rid, isPrim, libfossil.TimeToJulian(d.D), baseid,
 			); err != nil {
 				return fmt.Errorf("plink: %w", err)
 			}
@@ -171,6 +180,25 @@ func crosslinkCheckin(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
 			}
 		}
 
+		// cherrypick — Q-cards (cherrypick/backout)
+		for _, cp := range d.Q {
+			target := cp.Target
+			isExclude := 0
+			if cp.IsBackout {
+				isExclude = 1
+			}
+			var parentRid int64
+			if err := tx.QueryRow("SELECT rid FROM blob WHERE uuid=?", target).Scan(&parentRid); err != nil {
+				continue // target blob missing, skip
+			}
+			if _, err := tx.Exec(
+				"REPLACE INTO cherrypick(parentid, childid, isExclude) VALUES(?, ?, ?)",
+				parentRid, rid, isExclude,
+			); err != nil {
+				return fmt.Errorf("cherrypick: %w", err)
+			}
+		}
+
 		return nil
 	})
 	if err != nil {
@@ -205,6 +233,16 @@ func crosslinkCheckin(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
 			MTime:     mtime,
 		}); err != nil {
 			return fmt.Errorf("inline tag %q: %w", tc.Name, err)
+		}
+	}
+
+	// PropagateAll from primary parent (if checkin has parents)
+	if len(d.P) > 0 {
+		var primaryParentRid int64
+		if err := r.DB().QueryRow("SELECT rid FROM blob WHERE uuid=?", d.P[0]).Scan(&primaryParentRid); err == nil {
+			if err := tag.PropagateAll(r.DB(), libfossil.FslID(primaryParentRid)); err != nil {
+				return fmt.Errorf("propagate from parent: %w", err)
+			}
 		}
 	}
 

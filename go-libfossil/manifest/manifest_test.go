@@ -8,6 +8,7 @@ import (
 	"time"
 
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
+	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/deck"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
@@ -500,4 +501,86 @@ func TestDiscoveryQueryIdempotent(t *testing.T) {
 		t.Errorf("second run linked %d, want 0 (idempotent)", n2)
 	}
 	t.Logf("second run linked %d artifacts (idempotent)", n2)
+}
+
+func TestCrosslinkCherrypick(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Create initial checkin
+	rid1, uuid1, err := Checkin(r, CheckinOpts{
+		Files:   []File{{Name: "file.txt", Content: []byte("v1")}},
+		Comment: "first",
+		User:    "testuser",
+		Time:    time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("first Checkin: %v", err)
+	}
+
+	// Create second checkin (parent of cherrypick target)
+	rid2, uuid2, err := Checkin(r, CheckinOpts{
+		Files:   []File{{Name: "file.txt", Content: []byte("v2")}},
+		Comment: "second",
+		User:    "testuser",
+		Parent:  rid1,
+		Time:    time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("second Checkin: %v", err)
+	}
+
+	// Manually create a manifest with Q-card (cherrypick)
+	// Since Checkin doesn't support Q-cards, we construct the deck manually
+	d := &deck.Deck{
+		Type: deck.Checkin,
+		C:    "cherrypick commit",
+		D:    time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC),
+		U:    "testuser",
+		P:    []string{uuid1}, // parent is rid1
+		Q: []deck.CherryPick{
+			{Target: uuid2, IsBackout: false}, // cherrypick rid2
+		},
+		F: []deck.FileCard{
+			{Name: "file.txt", UUID: uuid2}, // use file from rid2
+		},
+	}
+
+	// Compute R-card (manifest hash)
+	d.R = "0000000000000000000000000000000000000000" // simplified for test
+
+	// Marshal and store the manifest blob
+	manifestBytes, err := d.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	rid3, _, err := blob.Store(r.DB(), manifestBytes)
+	if err != nil {
+		t.Fatalf("Store manifest: %v", err)
+	}
+
+	// Clear crosslink tables to simulate post-clone
+	r.DB().Exec("DELETE FROM event WHERE objid=?", rid3)
+	r.DB().Exec("DELETE FROM plink WHERE cid=?", rid3)
+	r.DB().Exec("DELETE FROM mlink WHERE mid=?", rid3)
+	r.DB().Exec("DELETE FROM cherrypick WHERE childid=?", rid3)
+
+	// Run Crosslink
+	n, err := Crosslink(r)
+	if err != nil {
+		t.Fatalf("Crosslink: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("expected at least 1 artifact crosslinked, got %d", n)
+	}
+
+	// Verify cherrypick table
+	var count int
+	r.DB().QueryRow(
+		"SELECT count(*) FROM cherrypick WHERE parentid=? AND childid=? AND isExclude=0",
+		rid2, rid3,
+	).Scan(&count)
+	if count != 1 {
+		t.Errorf("cherrypick count=%d, want 1", count)
+	}
 }
