@@ -109,6 +109,13 @@ func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
 		cards = append(cards, uvCards...)
 	}
 
+	// Table sync cards
+	xTableCards, err := s.buildXTableCards()
+	if err != nil {
+		return nil, fmt.Errorf("buildRequest xtable: %w", err)
+	}
+	cards = append(cards, xTableCards...)
+
 	// 7. Login card computed LAST, prepended to the front.
 	// Nonce = SHA1 of all other cards encoded + random comment.
 	if s.opts.User != "" {
@@ -375,6 +382,11 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 				}
 				s.uvToSend[c.Name] = true
 			}
+
+		case *xfer.SchemaCard, *xfer.XIGotCard, *xfer.XGimmeCard, *xfer.XRowCard:
+			if err := s.processXTableCard(card); err != nil {
+				return false, err
+			}
 		}
 	}
 
@@ -445,6 +457,18 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 	}
 	s.nUvGimmeSent = 0
 	s.nUvFileRcvd = 0
+
+	// Table sync convergence
+	for _, gimmes := range s.xTableGimmes {
+		if len(gimmes) > 0 {
+			return false, nil
+		}
+	}
+	for _, sends := range s.xTableToSend {
+		if len(sends) > 0 {
+			return false, nil
+		}
+	}
 
 	return true, nil
 }

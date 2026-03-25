@@ -67,6 +67,9 @@ type session struct {
 	nUvGimmeSent        int
 	nUvFileRcvd         int
 	roundStats          RoundStats
+	xTableHashSent map[string]bool            // table -> true if xtable-hash pragma sent
+	xTableGimmes   map[string]map[string]bool // table -> pkHash -> true
+	xTableToSend   map[string]map[string]bool // table -> pkHash -> true
 }
 
 func newSession(r *repo.Repo, opts SyncOpts) *session {
@@ -82,14 +85,17 @@ func newSession(r *repo.Repo, opts SyncOpts) *session {
 		env = simio.RealEnv()
 	}
 	s := &session{
-		repo:        r,
-		env:         env,
-		opts:        opts,
-		maxSend:     ms,
-		remoteHas:   make(map[string]bool),
-		phantoms:    make(map[string]bool),
-		pendingSend: make(map[string]bool),
-		phantomAge:  make(map[string]int),
+		repo:           r,
+		env:            env,
+		opts:           opts,
+		maxSend:        ms,
+		remoteHas:      make(map[string]bool),
+		phantoms:       make(map[string]bool),
+		pendingSend:    make(map[string]bool),
+		phantomAge:     make(map[string]int),
+		xTableHashSent: make(map[string]bool),
+		xTableGimmes:   make(map[string]map[string]bool),
+		xTableToSend:   make(map[string]map[string]bool),
 	}
 
 	// Pre-populate uvToSend with all local non-tombstone UV files.

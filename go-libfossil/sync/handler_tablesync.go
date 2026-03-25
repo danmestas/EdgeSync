@@ -199,7 +199,7 @@ func (h *handler) handleXRow(c *xfer.XRowCard) error {
 	}
 
 	// Verify PK hash.
-	pkCols := h.extractPKColumns(st.Def)
+	pkCols := extractPKColumns(st.Def)
 	pkValues := make(map[string]any)
 	for _, col := range pkCols {
 		pkValues[col] = row[col]
@@ -285,9 +285,22 @@ func (h *handler) sendXRow(table string, st *SyncedTable, pkHash string) error {
 	return nil
 }
 
-// emitXIGots emits xigot cards for all synced tables.
+// emitXIGots emits schema and xigot cards for all synced tables.
+// Schema cards are sent so that pulling clients learn about new tables.
 func (h *handler) emitXIGots() error {
 	for name, st := range h.syncedTables {
+		// Emit schema card so client can register the table if missing.
+		defJSON, err := json.Marshal(st.Def)
+		if err != nil {
+			return fmt.Errorf("handler.emitXIGots: marshal def %s: %w", name, err)
+		}
+		h.resp = append(h.resp, &xfer.SchemaCard{
+			Table:   name,
+			Version: 1,
+			MTime:   st.Info.MTime,
+			Content: defJSON,
+		})
+
 		if err := h.emitXIGotsForTable(name, st); err != nil {
 			return err
 		}
@@ -302,7 +315,7 @@ func (h *handler) emitXIGotsForTable(table string, st *SyncedTable) error {
 		return fmt.Errorf("handler.emitXIGotsForTable: list %s: %w", table, err)
 	}
 
-	pkCols := h.extractPKColumns(st.Def)
+	pkCols := extractPKColumns(st.Def)
 
 	for i, row := range rows {
 		pkValues := make(map[string]any)
@@ -320,13 +333,5 @@ func (h *handler) emitXIGotsForTable(table string, st *SyncedTable) error {
 	return nil
 }
 
-// extractPKColumns returns the names of all primary key columns.
-func (h *handler) extractPKColumns(def repo.TableDef) []string {
-	var pkCols []string
-	for _, col := range def.Columns {
-		if col.PK {
-			pkCols = append(pkCols, col.Name)
-		}
-	}
-	return pkCols
-}
+// extractPKColumns is defined in client_tablesync.go as a package-level
+// function shared by both client and handler code.
