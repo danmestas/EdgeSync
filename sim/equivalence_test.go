@@ -361,7 +361,8 @@ func TestFossilToLeaf(t *testing.T) {
 	})
 
 	t.Run("commit_chain", func(t *testing.T) {
-		t.Skip("KNOWN ISSUE: fossil server sends cfile cards with incorrect usize headers for commit chains")
+		// Was skipped: "KNOWN ISSUE: fossil server sends cfile cards with incorrect usize headers"
+		// Root cause: usize = full expanded content size, not decompressed delta size
 		testFossilToLeaf(t,
 			[]map[string]string{
 				{"base.txt": "base content"},
