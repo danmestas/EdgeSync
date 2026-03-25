@@ -412,8 +412,8 @@ func TestCloneCrosslinksManifests(t *testing.T) {
 	}
 
 	// Verify crosslink populated the event table.
-	if result.CheckinsLinked != 1 {
-		t.Errorf("CheckinsLinked = %d, want 1", result.CheckinsLinked)
+	if result.ArtifactsLinked != 1 {
+		t.Errorf("ArtifactsLinked = %d, want 1", result.ArtifactsLinked)
 	}
 
 	var eventCount int
@@ -438,7 +438,7 @@ func TestCloneCrosslinksManifests(t *testing.T) {
 		t.Error("manifest blob not found")
 	}
 
-	t.Logf("Clone crosslink: rounds=%d blobs=%d checkins=%d", result.Rounds, result.BlobsRecvd, result.CheckinsLinked)
+	t.Logf("Clone crosslink: rounds=%d blobs=%d checkins=%d", result.Rounds, result.BlobsRecvd, result.ArtifactsLinked)
 }
 
 // TestCloneViaHandler wires Clone() against HandleSync() with a real repo.
@@ -496,8 +496,8 @@ func TestCloneViaHandler(t *testing.T) {
 	}
 
 	// Verify crosslink produced a checkin.
-	if result.CheckinsLinked != 1 {
-		t.Errorf("CheckinsLinked = %d, want 1", result.CheckinsLinked)
+	if result.ArtifactsLinked != 1 {
+		t.Errorf("ArtifactsLinked = %d, want 1", result.ArtifactsLinked)
 	}
 
 	// Verify project-code propagated.
@@ -581,8 +581,8 @@ func TestCloneViaHandlerMultipleCheckins(t *testing.T) {
 	}
 	defer cloneRepo.Close()
 
-	if result.CheckinsLinked != 3 {
-		t.Errorf("CheckinsLinked = %d, want 3", result.CheckinsLinked)
+	if result.ArtifactsLinked != 3 {
+		t.Errorf("ArtifactsLinked = %d, want 3", result.ArtifactsLinked)
 	}
 
 	// Verify plink has 2 parent-child links.
