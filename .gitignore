@@ -27,5 +27,8 @@ f.txt
 
 # Agent/skill tool files
 .agents/
+AGENTS.md
 skills-lock.json
 .DS_Store
+.gitnexus
+.claude/worktrees/

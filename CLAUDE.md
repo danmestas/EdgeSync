@@ -169,3 +169,9 @@ cd ~/EdgeSync && git pull && cd deploy && sudo docker compose up -d --build
 - `event` — checkin manifests
 - `mlink` — file mappings per checkin
 - `unversioned` — mutable UV files (name, mtime, hash, sz, encoding, content)
+
+<!-- gitnexus:start -->
+# GitNexus — Code Intelligence
+
+This project is indexed by GitNexus. Tools (`query`, `context`, `impact`, `rename`, `detect_changes`, `cypher`) are available via MCP. A PreToolUse hook on `git commit` automatically runs blast-radius analysis on staged changes — no manual steps needed.
+<!-- gitnexus:end -->
