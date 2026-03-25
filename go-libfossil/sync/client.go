@@ -443,15 +443,8 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 			if err := s.handleFileCard(c.UUID, c.DeltaSrc, c.Content); err != nil {
 				return false, err
 			}
-			if s.nextIsPrivate {
-				rid, _ := blob.Exists(s.repo.DB(), c.UUID)
-				content.MakePrivate(s.repo.DB(), int64(rid))
-				s.nextIsPrivate = false
-			} else {
-				rid, exists := blob.Exists(s.repo.DB(), c.UUID)
-				if exists {
-					content.MakePublic(s.repo.DB(), int64(rid))
-				}
+			if err := s.applyPrivateStatus(c.UUID); err != nil {
+				return false, err
 			}
 			filesRecvd++
 			s.roundStats.BytesReceived += int64(len(c.Content))
@@ -461,15 +454,8 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 			if err := s.handleFileCard(c.UUID, c.DeltaSrc, c.Content); err != nil {
 				return false, err
 			}
-			if s.nextIsPrivate {
-				rid, _ := blob.Exists(s.repo.DB(), c.UUID)
-				content.MakePrivate(s.repo.DB(), int64(rid))
-				s.nextIsPrivate = false
-			} else {
-				rid, exists := blob.Exists(s.repo.DB(), c.UUID)
-				if exists {
-					content.MakePublic(s.repo.DB(), int64(rid))
-				}
+			if err := s.applyPrivateStatus(c.UUID); err != nil {
+				return false, err
 			}
 			filesRecvd++
 			s.roundStats.BytesReceived += int64(len(c.Content))
@@ -480,13 +466,17 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 			rid, exists := blob.Exists(s.repo.DB(), c.UUID)
 			if c.IsPrivate {
 				if exists {
-					content.MakePrivate(s.repo.DB(), int64(rid))
+					if err := content.MakePrivate(s.repo.DB(), int64(rid)); err != nil {
+						return false, fmt.Errorf("sync: MakePrivate %s: %w", c.UUID, err)
+					}
 				} else if s.opts.Private && s.opts.Pull {
 					s.phantoms[c.UUID] = true
 				}
 			} else {
 				if exists {
-					content.MakePublic(s.repo.DB(), int64(rid))
+					if err := content.MakePublic(s.repo.DB(), int64(rid)); err != nil {
+						return false, fmt.Errorf("sync: MakePublic %s: %w", c.UUID, err)
+					}
 				} else if s.opts.Pull {
 					s.phantoms[c.UUID] = true
 				}
@@ -785,6 +775,27 @@ func (s *session) handleFileCard(uuid, deltaSrc string, payload []byte) error {
 		return fmt.Errorf("buggify: simulated storage failure for %s", uuid)
 	}
 
+	return nil
+}
+
+// applyPrivateStatus marks a just-stored blob as private or public based on
+// whether a PrivateCard preceded it. Extracted from FileCard/CFileCard handlers
+// to eliminate duplication.
+func (s *session) applyPrivateStatus(uuid string) error {
+	if s.nextIsPrivate {
+		rid, _ := blob.Exists(s.repo.DB(), uuid)
+		if err := content.MakePrivate(s.repo.DB(), int64(rid)); err != nil {
+			return fmt.Errorf("sync: MakePrivate %s: %w", uuid, err)
+		}
+		s.nextIsPrivate = false
+	} else {
+		rid, exists := blob.Exists(s.repo.DB(), uuid)
+		if exists {
+			if err := content.MakePublic(s.repo.DB(), int64(rid)); err != nil {
+				return fmt.Errorf("sync: MakePublic %s: %w", uuid, err)
+			}
+		}
+	}
 	return nil
 }
 

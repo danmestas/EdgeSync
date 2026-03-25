@@ -165,27 +165,38 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 		}
 	}
 
-	// Second pass: handle file cards (and private prefix) first so blobs
-	// are stored before IGotCard checks blob.Exists. Without this, a
-	// request containing both IGotCard and FileCard for the same blob
-	// produces a spurious GimmeCard — the IGotCard runs before the
-	// FileCard stores it.
-	for _, card := range req.Cards {
+	// Process data cards and emit response blobs.
+	if err := h.processDataCards(req.Cards); err != nil {
+		return nil, err
+	}
+
+	return &xfer.Message{Cards: h.resp}, nil
+}
+
+// processDataCards handles file, igot, gimme, and other data cards in the
+// correct order, then emits igot/clone batches. Extracted from process() to
+// keep each function under 70 lines.
+func (h *handler) processDataCards(cards []xfer.Card) error {
+	// File cards (and private prefix) first so blobs are stored before
+	// IGotCard checks blob.Exists. Without this, a request containing
+	// both IGotCard and FileCard for the same blob produces a spurious
+	// GimmeCard — the IGotCard runs before the FileCard stores it.
+	for _, card := range cards {
 		switch card.(type) {
 		case *xfer.FileCard, *xfer.CFileCard, *xfer.PrivateCard:
 			if err := h.handleDataCard(card); err != nil {
-				return nil, err
+				return err
 			}
 		}
 	}
-	// Third pass: handle remaining data cards (igot, gimme, etc.).
-	for _, card := range req.Cards {
+	// Remaining data cards (igot, gimme, etc.).
+	for _, card := range cards {
 		switch card.(type) {
 		case *xfer.FileCard, *xfer.CFileCard, *xfer.PrivateCard:
 			continue // Already handled above.
 		default:
 			if err := h.handleDataCard(card); err != nil {
-				return nil, err
+				return err
 			}
 		}
 	}
@@ -193,22 +204,20 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 	// If pull was requested, emit igot for all non-phantom blobs.
 	if h.pullOK {
 		if err := h.emitIGots(); err != nil {
-			return nil, err
+			return err
 		}
-		// Emit xigots for table sync.
 		if err := h.emitXIGots(); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
 	// If clone, emit paginated file cards.
 	if h.cloneMode {
 		if err := h.emitCloneBatch(); err != nil {
-			return nil, err
+			return err
 		}
 	}
-
-	return &xfer.Message{Cards: h.resp}, nil
+	return nil
 }
 
 func (h *handler) handleControlCard(card xfer.Card) {
@@ -384,10 +393,14 @@ func (h *handler) handleFile(uuid, deltaSrc string, payload []byte) error {
 	}
 	rid, _ := blob.Exists(h.repo.DB(), uuid)
 	if h.nextIsPrivate {
-		content.MakePrivate(h.repo.DB(), int64(rid))
+		if err := content.MakePrivate(h.repo.DB(), int64(rid)); err != nil {
+			return fmt.Errorf("handler: MakePrivate %s: %w", uuid, err)
+		}
 		h.nextIsPrivate = false
 	} else {
-		content.MakePublic(h.repo.DB(), int64(rid))
+		if err := content.MakePublic(h.repo.DB(), int64(rid)); err != nil {
+			return fmt.Errorf("handler: MakePublic %s: %w", uuid, err)
+		}
 	}
 	h.filesRecvd++
 	return nil

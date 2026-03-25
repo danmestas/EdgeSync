@@ -9,6 +9,9 @@ func IsPrivate(q db.Querier, rid int64) bool {
 	if q == nil {
 		panic("content.IsPrivate: q must not be nil")
 	}
+	if rid <= 0 {
+		panic("content.IsPrivate: rid must be positive")
+	}
 	var n int
 	err := q.QueryRow("SELECT 1 FROM private WHERE rid=?", rid).Scan(&n)
 	return err == nil
@@ -19,6 +22,9 @@ func MakePrivate(q db.Querier, rid int64) error {
 	if q == nil {
 		panic("content.MakePrivate: q must not be nil")
 	}
+	if rid <= 0 {
+		panic("content.MakePrivate: rid must be positive")
+	}
 	_, err := q.Exec("INSERT OR IGNORE INTO private(rid) VALUES(?)", rid)
 	return err
 }
@@ -27,6 +33,9 @@ func MakePrivate(q db.Querier, rid int64) error {
 func MakePublic(q db.Querier, rid int64) error {
 	if q == nil {
 		panic("content.MakePublic: q must not be nil")
+	}
+	if rid <= 0 {
+		panic("content.MakePublic: rid must be positive")
 	}
 	_, err := q.Exec("DELETE FROM private WHERE rid=?", rid)
 	return err
