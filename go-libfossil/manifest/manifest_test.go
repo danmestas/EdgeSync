@@ -649,3 +649,55 @@ func TestCrosslinkWiki(t *testing.T) {
 		t.Errorf("wiki-TestPage tag count=%d, want 1", tagCount)
 	}
 }
+
+func TestCrosslinkTicket(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Manually create a ticket manifest
+	ticketTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	ticketUUID := "0123456789abcdef0123456789abcdef01234567"
+	d := &deck.Deck{
+		Type: deck.Ticket,
+		K:    ticketUUID,
+		U:    "testuser",
+		D:    ticketTime,
+		J: []deck.TicketField{
+			{Name: "title", Value: "Test ticket"},
+			{Name: "status", Value: "Open"},
+		},
+	}
+
+	// Marshal and store the ticket manifest blob
+	manifestBytes, err := d.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	rid, _, err := blob.Store(r.DB(), manifestBytes)
+	if err != nil {
+		t.Fatalf("Store manifest: %v", err)
+	}
+
+	// Clear crosslink tables to simulate post-clone
+	r.DB().Exec("DELETE FROM tagxref WHERE rid=?", rid)
+
+	// Run Crosslink
+	n, err := Crosslink(r)
+	if err != nil {
+		t.Fatalf("Crosslink: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("expected at least 1 artifact crosslinked, got %d", n)
+	}
+
+	// Verify tkt-* tag in tagxref
+	var tagCount int
+	r.DB().QueryRow(`
+		SELECT count(*) FROM tagxref
+		JOIN tag USING(tagid)
+		WHERE tagname=? AND rid=?
+	`, fmt.Sprintf("tkt-%s", ticketUUID), rid).Scan(&tagCount)
+	if tagCount != 1 {
+		t.Errorf("tkt-%s tag count=%d, want 1", ticketUUID, tagCount)
+	}
+}

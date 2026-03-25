@@ -370,7 +370,21 @@ func crosslinkWiki(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) ([]pendingIt
 }
 
 func crosslinkTicket(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) ([]pendingItem, error) {
-	return nil, nil
+	ticketUUID := d.K
+	if ticketUUID == "" {
+		return nil, fmt.Errorf("ticket manifest missing UUID (K-card)")
+	}
+	if err := tag.ApplyTag(r, tag.ApplyOpts{
+		TargetRID: rid,
+		SrcRID:    rid,
+		TagName:   fmt.Sprintf("tkt-%s", ticketUUID),
+		TagType:   tag.TagSingleton,
+		MTime:     libfossil.TimeToJulian(d.D),
+	}); err != nil {
+		return nil, fmt.Errorf("ticket tag: %w", err)
+	}
+	updateAttachmentComments(r, ticketUUID, 't')
+	return []pendingItem{{Type: 't', ID: ticketUUID}}, nil
 }
 
 func crosslinkEvent(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) ([]pendingItem, error) {
@@ -383,6 +397,29 @@ func crosslinkAttachment(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error 
 
 func crosslinkCluster(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
 	return nil
+}
+
+func updateAttachmentComments(r *repo.Repo, targetID string, targetType byte) {
+	rows, _ := r.DB().Query("SELECT attachid, src, target, filename FROM attachment WHERE target=?", targetID)
+	if rows == nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var attachid int64
+		var src, target, filename string
+		if rows.Scan(&attachid, &src, &target, &filename) != nil {
+			continue
+		}
+		typeName := map[byte]string{'w': "wiki page", 't': "ticket", 'e': "tech note"}[targetType]
+		var comment string
+		if src != "" {
+			comment = fmt.Sprintf("Add attachment %s to %s %s", filename, typeName, target)
+		} else {
+			comment = fmt.Sprintf("Delete attachment %q from %s %s", filename, typeName, target)
+		}
+		r.DB().Exec("UPDATE event SET comment=?, type=? WHERE objid=?", comment, string(targetType), attachid)
+	}
 }
 
 func crosslinkForum(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
