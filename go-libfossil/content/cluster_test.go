@@ -183,6 +183,67 @@ func TestGenerateClusters_ShunnedExcluded(t *testing.T) {
 	}
 }
 
+func TestGenerateClusters_PrivateExcluded(t *testing.T) {
+	d := setupTestDB(t)
+
+	var rids []libfossil.FslID
+	for i := 0; i < 100; i++ {
+		rid, _, err := blob.Store(d, []byte(fmt.Sprintf("blob-%04d-content-padding", i)))
+		if err != nil {
+			t.Fatalf("Store %d: %v", i, err)
+		}
+		rids = append(rids, rid)
+	}
+
+	for _, rid := range rids[90:] {
+		if _, err := d.Exec("INSERT INTO private(rid) VALUES(?)", rid); err != nil {
+			t.Fatalf("private: %v", err)
+		}
+	}
+
+	n, err := GenerateClusters(d)
+	if err != nil {
+		t.Fatalf("GenerateClusters: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("clusters = %d, want 0 (90 non-private < 100 threshold)", n)
+	}
+}
+
+func TestGenerateClusters_PrivateStayUnclustered(t *testing.T) {
+	d := setupTestDB(t)
+
+	var privateRids []libfossil.FslID
+	for i := 0; i < 110; i++ {
+		rid, _, err := blob.Store(d, []byte(fmt.Sprintf("blob-%05d-content-padding-extra", i)))
+		if err != nil {
+			t.Fatalf("Store %d: %v", i, err)
+		}
+		if i >= 100 {
+			if _, err := d.Exec("INSERT INTO private(rid) VALUES(?)", rid); err != nil {
+				t.Fatalf("private: %v", err)
+			}
+			privateRids = append(privateRids, rid)
+		}
+	}
+
+	n, err := GenerateClusters(d)
+	if err != nil {
+		t.Fatalf("GenerateClusters: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("clusters = %d, want 1", n)
+	}
+
+	for _, rid := range privateRids {
+		var count int
+		d.QueryRow("SELECT count(*) FROM unclustered WHERE rid=?", rid).Scan(&count)
+		if count != 1 {
+			t.Fatalf("private rid=%d missing from unclustered", rid)
+		}
+	}
+}
+
 func TestGenerateClusters_ValidArtifactFormat(t *testing.T) {
 	d := setupTestDB(t)
 
