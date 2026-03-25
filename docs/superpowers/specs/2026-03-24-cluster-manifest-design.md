@@ -33,12 +33,16 @@ Mirrors Fossil's `create_cluster()` in `src/xfer.c:914-973`:
    WHERE NOT EXISTS(SELECT 1 FROM phantom WHERE rid=unclustered.rid)
    ORDER BY uuid
    ```
-4. Build cluster artifacts:
-   - Accumulate `M <uuid>\n` lines.
-   - At 800 entries (and if >100 remain), finalize: compute MD5 Z-card, store via `blob.Store()`, crosslink via `manifest.Crosslink()`.
-   - Track each cluster's rid to exclude from the final DELETE.
-5. Finalize any remaining M-cards as a last cluster.
-6. `DELETE FROM unclustered WHERE rid NOT IN (<cluster rids>) AND NOT EXISTS(SELECT 1 FROM phantom WHERE rid=unclustered.rid)`
+4. Build cluster artifacts (maintain a `clusterRIDs []int` slice):
+   - Accumulate `M <uuid>\n` lines into a `bytes.Buffer`.
+   - At 800 entries (and if >100 remain), finalize: compute MD5 Z-card, store via `blob.Store()`, crosslink via `manifest.Crosslink()`. Append the new cluster's rid to `clusterRIDs`.
+5. Finalize any remaining M-cards as a last cluster (append rid to `clusterRIDs`).
+6. Delete non-cluster, non-phantom entries from unclustered. The cluster artifacts themselves stay in `unclustered` — they are "recent" and get sent as individual igots via `sendUnclustered()`. They will be clustered into meta-clusters by a future `GenerateClusters()` call when enough accumulate. The DELETE uses the tracked slice:
+   ```sql
+   DELETE FROM unclustered
+   WHERE rid NOT IN (<clusterRIDs>)
+     AND NOT EXISTS(SELECT 1 FROM phantom WHERE rid=unclustered.rid)
+   ```
 
 **Constants:** `ClusterThreshold = 100`, `ClusterMaxSize = 800`
 
@@ -100,8 +104,10 @@ Refactor `buildIGotCards()` into two functions matching Fossil:
 | Condition | Action |
 |-----------|--------|
 | Every round | `sendUnclustered()` |
-| Round 2+ pushing, received gimmes > 0 | Also `sendAllClusters()` |
+| Round 2+ pushing, cumulative gimmes received > 0 | Also `sendAllClusters()` |
 | Round 2, pulling | Send `pragma req-clusters` card |
+
+"Cumulative gimmes received" means the total across all rounds (matching Fossil's `nGimmeRcvd` counter), not per-round. This ensures clusters are sent once the remote has demonstrated it needs blobs.
 
 #### Handler Side (`sync/handler.go`)
 
@@ -111,7 +117,7 @@ Refactor `buildIGotCards()` into two functions matching Fossil:
 
 #### `emitIGots()` Change
 
-Current handler queries `SELECT uuid FROM blob WHERE size >= 0` (all blobs). This changes to query `unclustered JOIN blob` — only send igots for unclustered entries. Clusters handle the rest via `pragma req-clusters`.
+Current handler queries `SELECT uuid FROM blob WHERE size >= 0` (all blobs). This changes to query `unclustered JOIN blob` — only send igots for unclustered entries (including recently created cluster artifacts that are still in `unclustered`). Already-clustered blobs are NOT sent as individual igots; the remote discovers them by requesting clusters via `pragma req-clusters`, receiving the cluster artifact, parsing M-cards, and marking members as known.
 
 ```sql
 SELECT b.uuid FROM unclustered u JOIN blob b ON b.rid=u.rid
@@ -159,6 +165,8 @@ We already handle pragmas for UV (`pragma uv-hash`). Add `req-clusters` as a rec
 - `sendAllClusters()` returns cluster igots, excludes clusters still in `unclustered`
 - `pragma req-clusters` triggers cluster igot response
 - Round-trip: client sends cluster igot → server gimmes → receives → crosslinks → members marked known
+- Round-aware logic: clusters not sent on round 1, sent on round 2+ when cumulative gimmes > 0
+- Pull-side: `pragma req-clusters` sent on round 2, not round 1
 
 **DST test:**
 - Seed repos with 500+ blobs, sync, verify convergence with cluster igots. Assert igot count is dramatically lower than blob count after clustering.
