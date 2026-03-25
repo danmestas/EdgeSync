@@ -776,3 +776,58 @@ func TestHandleNobodyPullOnly(t *testing.T) {
 		t.Fatal("nobody with 'o' cap should reject push")
 	}
 }
+
+func TestEmitIGots_ExcludesShunAndPrivate(t *testing.T) {
+	r := setupSyncTestRepo(t)
+
+	_, normalUUID, err := blob.Store(r.DB(), []byte("normal-blob-content"))
+	if err != nil {
+		t.Fatalf("Store normal: %v", err)
+	}
+	_, shunnedUUID, err := blob.Store(r.DB(), []byte("shunned-blob-content"))
+	if err != nil {
+		t.Fatalf("Store shunned: %v", err)
+	}
+	privRid, _, err := blob.Store(r.DB(), []byte("private-blob-content"))
+	if err != nil {
+		t.Fatalf("Store private: %v", err)
+	}
+
+	if _, err := r.DB().Exec("INSERT INTO shun(uuid, mtime) VALUES(?, 0)", shunnedUUID); err != nil {
+		t.Fatalf("shun: %v", err)
+	}
+	if _, err := r.DB().Exec("INSERT INTO private(rid) VALUES(?)", privRid); err != nil {
+		t.Fatalf("private: %v", err)
+	}
+
+	req := &xfer.Message{Cards: []xfer.Card{
+		&xfer.PullCard{ServerCode: "test", ProjectCode: "test"},
+	}}
+	resp, err := HandleSync(context.Background(), r, req)
+	if err != nil {
+		t.Fatalf("HandleSync: %v", err)
+	}
+
+	igotUUIDs := make(map[string]bool)
+	for _, c := range resp.Cards {
+		if ig, ok := c.(*xfer.IGotCard); ok {
+			igotUUIDs[ig.UUID] = true
+		}
+	}
+
+	if !igotUUIDs[normalUUID] {
+		t.Error("normal blob missing from igots")
+	}
+
+	if igotUUIDs[shunnedUUID] {
+		t.Error("shunned blob appeared in igots")
+	}
+
+	var privUUID string
+	if err := r.DB().QueryRow("SELECT uuid FROM blob WHERE rid=?", privRid).Scan(&privUUID); err != nil {
+		t.Fatalf("query privUUID: %v", err)
+	}
+	if igotUUIDs[privUUID] {
+		t.Error("private blob appeared in igots")
+	}
+}
