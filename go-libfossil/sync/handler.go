@@ -314,13 +314,11 @@ func (h *handler) handleIGot(c *xfer.IGotCard) error {
 	if !h.pullOK {
 		return nil
 	}
-	rid, exists := blob.Exists(h.repo.DB(), c.UUID)
+	_, exists := blob.Exists(h.repo.DB(), c.UUID)
 	if exists {
-		if c.IsPrivate {
-			content.MakePrivate(h.repo.DB(), int64(rid))
-		} else {
-			content.MakePublic(h.repo.DB(), int64(rid))
-		}
+		// Server already has this blob — nothing to do.
+		// Server is authoritative for private status; do NOT apply
+		// the client's IsPrivate flag to the server's private table.
 		return nil
 	}
 	if c.IsPrivate && !h.syncPrivate {

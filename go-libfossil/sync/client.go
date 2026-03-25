@@ -95,8 +95,8 @@ func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
 	gimmeCards := s.buildGimmeCards()
 	cards = append(cards, gimmeCards...)
 
-	// Private: send pragma on first round
-	if cycle == 0 && s.opts.Private {
+	// Private: send pragma every round (handler is stateless per-round).
+	if s.opts.Private {
 		cards = append(cards, &xfer.PragmaCard{Name: "send-private"})
 	}
 

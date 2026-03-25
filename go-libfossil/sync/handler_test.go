@@ -1055,10 +1055,10 @@ func TestHandlerIGotPrivate_Unauthorized(t *testing.T) {
 	}
 }
 
-func TestHandlerIGotPublic_ClearsPrivate(t *testing.T) {
+func TestHandlerIGotDoesNotChangeServerPrivateStatus(t *testing.T) {
 	r := setupSyncTestRepo(t)
 	// Store a blob and mark it private.
-	data := []byte("igot clears private")
+	data := []byte("igot does not change server private status")
 	uuid := storeTestBlob(t, r, data)
 	rid, _ := blob.Exists(r.DB(), uuid)
 	content.MakePrivate(r.DB(), int64(rid))
@@ -1066,14 +1066,15 @@ func TestHandlerIGotPublic_ClearsPrivate(t *testing.T) {
 		t.Fatal("precondition: blob should be private")
 	}
 
-	// Send a public igot for the existing blob.
+	// Client sends a public igot for the existing blob.
+	// Server is authoritative — this should NOT change the server's private status.
 	handleReq(t, r,
 		&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
 		&xfer.IGotCard{UUID: uuid, IsPrivate: false},
 	)
 
-	if content.IsPrivate(r.DB(), int64(rid)) {
-		t.Error("public igot should clear private flag on existing blob")
+	if !content.IsPrivate(r.DB(), int64(rid)) {
+		t.Error("server private status should not be changed by client igot")
 	}
 }
 
