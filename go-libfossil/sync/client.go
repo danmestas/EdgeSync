@@ -268,6 +268,20 @@ func (s *session) buildFileCards() ([]xfer.Card, error) {
 		if budget <= 0 {
 			break
 		}
+
+		// Private filtering: check if blob is private.
+		rid, ridOK := blob.Exists(s.repo.DB(), uuid)
+		if ridOK {
+			isPriv := content.IsPrivate(s.repo.DB(), int64(rid))
+			if isPriv && !s.opts.Private {
+				delete(s.pendingSend, uuid)
+				continue
+			}
+			if isPriv {
+				cards = append(cards, &xfer.PrivateCard{})
+			}
+		}
+
 		card, size, err := s.loadFileCard(uuid)
 		if err != nil {
 			// Skip files we can't load (phantoms, etc.)
@@ -320,6 +334,15 @@ func (s *session) buildGimmeCards() []xfer.Card {
 	for uuid := range s.phantoms {
 		if count >= maxGimme {
 			break
+		}
+		// Best-effort private filtering: if the blob exists locally and is
+		// private but Private mode is off, skip it. Phantoms (not yet in DB)
+		// pass through — the server is the primary gate.
+		if !s.opts.Private {
+			rid, exists := blob.Exists(s.repo.DB(), uuid)
+			if exists && content.IsPrivate(s.repo.DB(), int64(rid)) {
+				continue
+			}
 		}
 		cards = append(cards, &xfer.GimmeCard{UUID: uuid})
 		s.roundStats.GimmesSent++
