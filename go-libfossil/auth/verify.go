@@ -22,6 +22,9 @@ func VerifyLogin(d *db.DB, projectCode string, card *xfer.LoginCard) (User, erro
 	if d == nil {
 		panic("auth.VerifyLogin: d must not be nil")
 	}
+	if projectCode == "" {
+		panic("auth.VerifyLogin: projectCode must not be empty")
+	}
 	if card == nil {
 		panic("auth.VerifyLogin: card must not be nil")
 	}

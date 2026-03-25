@@ -21,6 +21,9 @@ func CreateUser(d *db.DB, projectCode, login, password, caps string) error {
 	if d == nil {
 		panic("auth.CreateUser: d must not be nil")
 	}
+	if projectCode == "" {
+		panic("auth.CreateUser: projectCode must not be empty")
+	}
 	if login == "" {
 		panic("auth.CreateUser: login must not be empty")
 	}
@@ -65,12 +68,6 @@ func GetUser(d *db.DB, login string) (User, error) {
 		u.Info = info.String
 	}
 
-	// Parse cexpire as NullString → time.Time (if needed in future)
-	// For now, CExpire remains zero value since we're not setting it
-
-	// Parse mtime (Julian day) → time.Time (if needed in future)
-	// For now, MTime remains zero value since tests don't verify it
-
 	return u, nil
 }
 
@@ -114,6 +111,9 @@ func UpdateCaps(d *db.DB, login, caps string) error {
 	if d == nil {
 		panic("auth.UpdateCaps: d must not be nil")
 	}
+	if login == "" {
+		panic("auth.UpdateCaps: login must not be empty")
+	}
 
 	result, err := d.Exec("UPDATE user SET cap=? WHERE login=?", caps, login)
 	if err != nil {
@@ -137,6 +137,9 @@ func UpdateCaps(d *db.DB, login, caps string) error {
 func SetPassword(d *db.DB, projectCode, login, password string) error {
 	if d == nil {
 		panic("auth.SetPassword: d must not be nil")
+	}
+	if projectCode == "" {
+		panic("auth.SetPassword: projectCode must not be empty")
 	}
 
 	pw := hashPassword(projectCode, login, password)
@@ -162,6 +165,9 @@ func SetPassword(d *db.DB, projectCode, login, password string) error {
 func DeleteUser(d *db.DB, login string) error {
 	if d == nil {
 		panic("auth.DeleteUser: d must not be nil")
+	}
+	if login == "" {
+		panic("auth.DeleteUser: login must not be empty")
 	}
 
 	result, err := d.Exec("DELETE FROM user WHERE login=?", login)

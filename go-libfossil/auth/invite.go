@@ -30,5 +30,11 @@ func DecodeInviteToken(s string) (InviteToken, error) {
 	if err := json.Unmarshal(b, &t); err != nil {
 		return InviteToken{}, fmt.Errorf("auth.DecodeInviteToken: %w", err)
 	}
+	if t.Login == "" {
+		return InviteToken{}, fmt.Errorf("auth.DecodeInviteToken: missing login")
+	}
+	if t.Password == "" {
+		return InviteToken{}, fmt.Errorf("auth.DecodeInviteToken: missing password")
+	}
 	return t, nil
 }
