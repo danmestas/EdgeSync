@@ -179,6 +179,14 @@ CREATE TABLE cherrypick(
   PRIMARY KEY(parentid, childid)
 ) WITHOUT ROWID;
 CREATE INDEX cherrypick_cid ON cherrypick(childid);
+CREATE TABLE forumpost(
+  fpid INTEGER PRIMARY KEY,
+  froot INT,
+  fprev INT,
+  firt INT,
+  fmtime REAL
+);
+CREATE INDEX forumpost_froot ON forumpost(froot);
 INSERT INTO rcvfrom(rcvid, uid, mtime, nonce, ipaddr) VALUES(1, 0, 0, NULL, NULL);
 `
 
@@ -207,6 +215,19 @@ func SeedUser(d *DB, login string) error {
 	_, err := d.Exec(
 		"INSERT OR IGNORE INTO user(uid, login, pw, cap, info) VALUES(1, ?, '', 's', '')",
 		login,
+	)
+	return err
+}
+
+// SeedNobody inserts a "nobody" user with the given capabilities.
+// This controls anonymous access policy for the repo.
+func SeedNobody(d *DB, caps string) error {
+	if d == nil {
+		panic("db.SeedNobody: d must not be nil")
+	}
+	_, err := d.Exec(
+		"INSERT OR IGNORE INTO user(login, pw, cap, info) VALUES('nobody', '', ?, '')",
+		caps,
 	)
 	return err
 }

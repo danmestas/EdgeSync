@@ -58,6 +58,8 @@ type RepoCmd struct {
 	Branch       RepoBranchCmd       `cmd:"" help:"Branch operations"`
 	UV           RepoUVCmd           `cmd:"" name:"uv" help:"Unversioned file operations"`
 	Schema       SchemaCmd           `cmd:"" help:"Synced table schema operations"`
+	User         RepoUserCmd         `cmd:"" help:"User management"`
+	Invite       RepoInviteCmd       `cmd:"" help:"Generate invite token for a user"`
 }
 
 type SyncCmd struct {

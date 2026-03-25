@@ -279,24 +279,24 @@ func (h *handler) resolveXRowConflict(c *xfer.XRowCard, st *SyncedTable, row map
 		// The _owner field is set on first write and immutable thereafter.
 		if localRow != nil {
 			localOwner, _ := localRow["_owner"].(string)
-			if localOwner != "" && localOwner != h.loginUser {
+			if localOwner != "" && localOwner != h.user {
 				return false, nil
 			}
 		}
-		if h.loginUser != "" {
-			row["_owner"] = h.loginUser
+		if h.user != "" {
+			row["_owner"] = h.user
 		}
 	case "owner-write":
 		// Owner-write is like self-write but the owner is the loginUser,
 		// not the PK. Only the original writer can update.
 		if localRow != nil {
 			localOwner, _ := localRow["_owner"].(string)
-			if localOwner != h.loginUser {
+			if localOwner != h.user {
 				return false, nil
 			}
 		}
-		if h.loginUser != "" {
-			row["_owner"] = h.loginUser
+		if h.user != "" {
+			row["_owner"] = h.user
 		}
 	}
 

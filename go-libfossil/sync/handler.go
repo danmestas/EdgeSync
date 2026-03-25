@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/dmestas/edgesync/go-libfossil/auth"
 	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
@@ -83,22 +84,67 @@ type handler struct {
 	cloneMode     bool // client sent a clone card
 	cloneSeq      int  // clone_seqno cursor from client
 	uvCatalogSent bool // true after sending UV catalog
+	reqClusters   bool // client sent pragma req-clusters
 	filesSent     int  // files sent in response (for observer)
 	filesRecvd    int  // files received from client (for observer)
 	syncedTables  map[string]*SyncedTable // cached table definitions
 	xrowsSent     int  // table sync rows sent
 	xrowsRecvd    int  // table sync rows received
-	loginUser     string // user from LoginCard
+
+	// Auth state
+	user   string // verified username ("nobody" if no login card)
+	caps   string // capability string from user table
+	authed bool   // whether login card was verified
+}
+
+func (h *handler) initAuth() {
+	h.user = "nobody"
+	h.caps = ""
+	h.authed = false
+	var caps string
+	err := h.repo.DB().QueryRow("SELECT cap FROM user WHERE login='nobody'").Scan(&caps)
+	if err == nil {
+		h.caps = caps
+	}
+}
+
+func (h *handler) handleLoginCard(c *xfer.LoginCard) {
+	var projectCode string
+	if err := h.repo.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projectCode); err != nil {
+		h.resp = append(h.resp, &xfer.ErrorCard{Message: "authentication failed"})
+		return
+	}
+	u, err := auth.VerifyLogin(h.repo.DB(), projectCode, c)
+	if err != nil {
+		h.resp = append(h.resp, &xfer.ErrorCard{Message: "authentication failed"})
+		return
+	}
+	h.user = u.Login
+	h.caps = u.Cap
+	h.authed = true
 }
 
 func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, error) {
+	// Initialize auth state from nobody user.
+	h.initAuth()
+
 	// Load synced tables.
 	if err := h.loadSyncedTables(); err != nil {
 		return nil, err
 	}
 
-	// First pass: extract control cards.
+	// First pass: resolve login cards before other control cards.
 	for _, card := range req.Cards {
+		if lc, ok := card.(*xfer.LoginCard); ok {
+			h.handleLoginCard(lc)
+		}
+	}
+
+	// Second pass: process other control cards with capability checks.
+	for _, card := range req.Cards {
+		if _, ok := card.(*xfer.LoginCard); ok {
+			continue // Already processed.
+		}
 		h.handleControlCard(card)
 	}
 
@@ -141,7 +187,7 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 		}
 	}
 
-	// If pull was requested, emit igot for all our blobs.
+	// If pull was requested, emit igot for all non-phantom blobs.
 	if h.pullOK {
 		if err := h.emitIGots(); err != nil {
 			return nil, err
@@ -165,7 +211,7 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 func (h *handler) handleControlCard(card xfer.Card) {
 	switch c := card.(type) {
 	case *xfer.LoginCard:
-		h.loginUser = c.User
+		return // Already processed in first pass (initAuth/handleLoginCard).
 	case *xfer.PragmaCard:
 		if c.Name == "uv-hash" && len(c.Values) >= 1 {
 			if err := h.handlePragmaUVHash(c.Values[0]); err != nil {
@@ -176,13 +222,34 @@ func (h *handler) handleControlCard(card xfer.Card) {
 		} else if c.Name == "xtable-hash" && len(c.Values) >= 2 {
 			h.handlePragmaXTableHash(c.Values[0], c.Values[1])
 		}
+		if c.Name == "req-clusters" {
+			h.reqClusters = true
+		}
 		// Acknowledge client-version, ignore other unknown pragmas.
 	case *xfer.PushCard:
-		h.pushOK = true
+		if auth.CanPush(h.caps) {
+			h.pushOK = true
+		} else {
+			h.resp = append(h.resp, &xfer.ErrorCard{
+				Message: "push denied: insufficient capabilities",
+			})
+		}
 	case *xfer.PullCard:
-		h.pullOK = true
+		if auth.CanPull(h.caps) {
+			h.pullOK = true
+		} else {
+			h.resp = append(h.resp, &xfer.ErrorCard{
+				Message: "pull denied: insufficient capabilities",
+			})
+		}
 	case *xfer.CloneCard:
-		h.cloneMode = true
+		if auth.CanClone(h.caps) {
+			h.cloneMode = true
+		} else {
+			h.resp = append(h.resp, &xfer.ErrorCard{
+				Message: "clone denied: insufficient capabilities",
+			})
+		}
 	case *xfer.CloneSeqNoCard:
 		h.cloneSeq = c.SeqNo
 	case *xfer.SchemaCard:
@@ -305,7 +372,12 @@ func (h *handler) handleReqConfig(c *xfer.ReqConfigCard) error {
 }
 
 func (h *handler) emitIGots() error {
-	rows, err := h.repo.DB().Query("SELECT uuid FROM blob WHERE size >= 0")
+	// Emit igot for all non-phantom blobs so the client can discover
+	// everything the server has. Cluster generation is a client-side
+	// optimization for push; the server always advertises all blobs.
+	rows, err := h.repo.DB().Query(
+		"SELECT uuid FROM blob WHERE size >= 0",
+	)
 	if err != nil {
 		return fmt.Errorf("handler: listing blobs: %w", err)
 	}
@@ -332,6 +404,32 @@ func (h *handler) emitIGots() error {
 		h.resp = append(h.resp, &xfer.IGotCard{UUID: uuid})
 	}
 	return nil
+}
+
+// sendAllClusters emits igot cards for all cluster artifacts that are
+// not still in unclustered (i.e., already fully clustered themselves).
+func (h *handler) sendAllClusters() error {
+	rows, err := h.repo.DB().Query(`
+		SELECT b.uuid FROM tagxref tx
+		JOIN blob b ON tx.rid = b.rid
+		WHERE tx.tagid = 7
+		  AND NOT EXISTS (SELECT 1 FROM unclustered WHERE rid = b.rid)
+		  AND NOT EXISTS (SELECT 1 FROM phantom WHERE rid = b.rid)
+		  AND b.size >= 0
+	`)
+	if err != nil {
+		return fmt.Errorf("handler: listing clusters: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var uuid string
+		if err := rows.Scan(&uuid); err != nil {
+			return err
+		}
+		h.resp = append(h.resp, &xfer.IGotCard{UUID: uuid})
+	}
+	return rows.Err()
 }
 
 func (h *handler) emitCloneBatch() error {

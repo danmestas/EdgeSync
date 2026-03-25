@@ -8,11 +8,15 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/db"
+	"github.com/dmestas/edgesync/go-libfossil/deck"
 	"github.com/dmestas/edgesync/go-libfossil/delta"
 	"github.com/dmestas/edgesync/go-libfossil/hash"
+	"github.com/dmestas/edgesync/go-libfossil/manifest"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/uv"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
+
+	libfossil "github.com/dmestas/edgesync/go-libfossil"
 )
 
 // ErrDeltaSourceMissing is returned by storeReceivedFile when the delta source
@@ -53,14 +57,32 @@ func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
 		cards = append(cards, &xfer.CookieCard{Value: s.cookie})
 	}
 
-	// 4. IGot cards from unclustered table, filtered by remoteHas
-	igotCards, err := s.buildIGotCards()
+	// 4. IGot cards: sendUnclustered every round.
+	igotCards, err := s.sendUnclustered()
 	if err != nil {
 		return nil, fmt.Errorf("buildRequest igot: %w", err)
 	}
 	s.igotSentThisRound = len(igotCards)
 	s.roundStats.IgotsSent = len(igotCards)
 	cards = append(cards, igotCards...)
+
+	// 4b. Send cluster igots on round 2+ when pushing and remote has requested blobs.
+	// cycle is 0-indexed, so cycle>=1 means round 2+.
+	if cycle >= 1 && s.opts.Push && s.nGimmeRcvd > 0 {
+		clusterCards, err := s.sendAllClusters()
+		if err != nil {
+			return nil, fmt.Errorf("buildRequest cluster igot: %w", err)
+		}
+		s.igotSentThisRound += len(clusterCards)
+		s.roundStats.IgotsSent += len(clusterCards)
+		cards = append(cards, clusterCards...)
+	}
+
+	// 4c. Request cluster catalog on round 2 when pulling.
+	// cycle is 0-indexed, so cycle==1 means round 2.
+	if cycle == 1 && s.opts.Pull {
+		cards = append(cards, &xfer.PragmaCard{Name: "req-clusters"})
+	}
 
 	// 5. File cards from pendingSend + unsent table, respecting maxSend budget
 	fileCards, err := s.buildFileCards()
@@ -129,11 +151,43 @@ func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
 	return &xfer.Message{Cards: cards}, nil
 }
 
-// buildIGotCards queries the unclustered table and produces igot cards
-// for artifacts the remote doesn't already have.
-func (s *session) buildIGotCards() ([]xfer.Card, error) {
-	rows, err := s.repo.DB().Query(
-		"SELECT b.uuid FROM unclustered u JOIN blob b ON b.rid=u.rid WHERE b.size >= 0",
+// sendUnclustered queries the unclustered table and produces igot cards
+// for artifacts the remote doesn't already have, excluding phantoms.
+func (s *session) sendUnclustered() ([]xfer.Card, error) {
+	rows, err := s.repo.DB().Query(`
+		SELECT b.uuid FROM unclustered u JOIN blob b ON b.rid=u.rid
+		WHERE b.size >= 0
+		AND NOT EXISTS(SELECT 1 FROM phantom WHERE rid=u.rid)`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cards []xfer.Card
+	for rows.Next() {
+		var uuid string
+		if err := rows.Scan(&uuid); err != nil {
+			return nil, err
+		}
+		if s.remoteHas[uuid] {
+			continue
+		}
+		cards = append(cards, &xfer.IGotCard{UUID: uuid})
+	}
+	return cards, rows.Err()
+}
+
+// sendAllClusters produces igot cards for cluster artifacts that have already
+// been clustered (not in unclustered) and are not phantoms. Sent on round 2+
+// when pushing and the remote has requested blobs (nGimmeRcvd > 0).
+func (s *session) sendAllClusters() ([]xfer.Card, error) {
+	rows, err := s.repo.DB().Query(`
+		SELECT b.uuid FROM tagxref tx JOIN blob b ON tx.rid=b.rid
+		WHERE tx.tagid=7
+		AND NOT EXISTS(SELECT 1 FROM unclustered WHERE rid=b.rid)
+		AND NOT EXISTS(SELECT 1 FROM phantom WHERE rid=b.rid)
+		AND b.size >= 0`,
 	)
 	if err != nil {
 		return nil, err
@@ -341,6 +395,7 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 
 		case *xfer.GimmeCard:
 			s.pendingSend[c.UUID] = true
+			s.nGimmeRcvd++
 			filesSent++
 
 		case *xfer.CookieCard:
@@ -527,7 +582,28 @@ func storeReceivedFile(r *repo.Repo, uuid, deltaSrc string, payload []byte) erro
 	}
 
 	return r.WithTx(func(tx *db.Tx) error {
-		if _, ok := blob.Exists(tx, uuid); ok {
+		existingRid, exists := blob.Exists(tx, uuid)
+		if exists {
+			var size int64
+			tx.QueryRow("SELECT size FROM blob WHERE rid=?", existingRid).Scan(&size)
+			if size != -1 {
+				return nil // real blob already exists
+			}
+			// Fill phantom: update blob content, remove from phantom table.
+			compressed, err := blob.Compress(fullContent)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec("UPDATE blob SET size=?, content=?, rcvid=1 WHERE rid=?",
+				len(fullContent), compressed, existingRid); err != nil {
+				return err
+			}
+			if _, err := tx.Exec("DELETE FROM phantom WHERE rid=?", existingRid); err != nil {
+				return fmt.Errorf("delete phantom rid=%d: %w", existingRid, err)
+			}
+			if _, err := tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", existingRid); err != nil {
+				return fmt.Errorf("unclustered rid=%d: %w", existingRid, err)
+			}
 			return nil
 		}
 		compressed, err := blob.Compress(fullContent)
@@ -545,15 +621,64 @@ func storeReceivedFile(r *repo.Repo, uuid, deltaSrc string, payload []byte) erro
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid)
-		return err
+		if _, err := tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid); err != nil {
+			return err
+		}
+
+		// Crosslink cluster artifacts: parse the content and if it's a
+		// cluster manifest, process its M-card UUIDs to create phantoms
+		// for blobs we don't have yet. This is how the client discovers
+		// individual blob UUIDs referenced by a cluster.
+		if d, parseErr := deck.Parse(fullContent); parseErr == nil && d.Type == deck.Cluster {
+			if err := manifest.CrosslinkCluster(tx, libfossil.FslID(rid), d); err != nil {
+				return fmt.Errorf("crosslink cluster %s: %w", uuid, err)
+			}
+		}
+
+		return nil
 	})
 }
 
+// loadDBPhantoms promotes phantom-table entries into the session's phantom
+// map. This is needed after crosslinking cluster artifacts which create
+// phantom rows for blobs referenced in the cluster.
+func (s *session) loadDBPhantoms() error {
+	if !s.opts.Pull {
+		return nil
+	}
+	rows, err := s.repo.DB().Query(
+		"SELECT b.uuid FROM phantom p JOIN blob b ON p.rid = b.rid WHERE b.size < 0",
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var uuid string
+		if err := rows.Scan(&uuid); err != nil {
+			return err
+		}
+		if !s.remoteHas[uuid] {
+			s.phantoms[uuid] = true
+		}
+	}
+	return rows.Err()
+}
+
 // handleFileCard stores a received file (or delta-file) into the repo.
+// If the stored artifact is a cluster manifest, crosslinking creates DB
+// phantoms for referenced blobs; we promote those to session phantoms so
+// gimme cards are emitted in the next round.
 func (s *session) handleFileCard(uuid, deltaSrc string, payload []byte) error {
 	if err := storeReceivedFile(s.repo, uuid, deltaSrc, payload); err != nil {
 		return err
+	}
+
+	// Promote any new DB phantoms into the session phantom map so gimme
+	// cards are emitted. This covers phantoms created by crosslinking
+	// cluster artifacts in storeReceivedFile.
+	if err := s.loadDBPhantoms(); err != nil {
+		return fmt.Errorf("handleFileCard: loadDBPhantoms: %w", err)
 	}
 
 	// BUGGIFY: simulate post-store failure to test retry/recovery logic.

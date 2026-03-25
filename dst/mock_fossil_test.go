@@ -167,10 +167,11 @@ func TestMockFossilPushBadUUID(t *testing.T) {
 	}
 }
 
-func TestMockFossilAcceptsLogin(t *testing.T) {
+func TestMockFossilRejectsBadLogin(t *testing.T) {
 	mf := createMockFossil(t)
 	ctx := context.Background()
 
+	// Bad credentials should produce an auth error.
 	req := &xfer.Message{Cards: []xfer.Card{
 		&xfer.LoginCard{User: "testuser", Nonce: "abc", Signature: "def"},
 		&xfer.PullCard{ServerCode: "sc", ProjectCode: "pc"},
@@ -180,7 +181,30 @@ func TestMockFossilAcceptsLogin(t *testing.T) {
 		t.Fatalf("Exchange: %v", err)
 	}
 
-	// Should not have error cards.
+	foundAuthError := false
+	for _, c := range resp.Cards {
+		if ec, ok := c.(*xfer.ErrorCard); ok && ec.Message == "authentication failed" {
+			foundAuthError = true
+		}
+	}
+	if !foundAuthError {
+		t.Fatal("expected authentication failed error for bad credentials")
+	}
+}
+
+func TestMockFossilAnonymousPull(t *testing.T) {
+	mf := createMockFossil(t)
+	ctx := context.Background()
+
+	// Anonymous (no login card) should work — nobody user has full caps.
+	req := &xfer.Message{Cards: []xfer.Card{
+		&xfer.PullCard{ServerCode: "sc", ProjectCode: "pc"},
+	}}
+	resp, err := mf.Exchange(ctx, req)
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+
 	for _, c := range resp.Cards {
 		if ec, ok := c.(*xfer.ErrorCard); ok {
 			t.Fatalf("unexpected error: %s", ec.Message)

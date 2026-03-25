@@ -15,7 +15,7 @@ type CloneOpts struct {
 type CloneResult struct {
 	Rounds         int
 	BlobsRecvd     int
-	CheckinsLinked int      // Manifests crosslinked into event table
+	ArtifactsLinked int     // Manifests crosslinked into event table
 	ProjectCode    string
 	ServerCode     string
 	Messages       []string // Informational messages from server
