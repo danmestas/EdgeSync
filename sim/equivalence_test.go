@@ -13,6 +13,8 @@ import (
 
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"github.com/dmestas/edgesync/go-libfossil/auth"
+	"github.com/dmestas/edgesync/go-libfossil/blob"
+	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/manifest"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
@@ -611,4 +613,158 @@ func testLeafToLeaf(t *testing.T, checkins []checkinFiles, expected map[string]s
 	leafB.Close()
 	leafBWorkDir := fossilCheckout(t, filepath.Join(dir, "leaf-b.fossil"))
 	assertFiles(t, leafBWorkDir, expected)
+}
+
+// TestPrivateSyncAgainstFossilServe verifies that go-libfossil's private sync
+// protocol works over real HTTP. Tests both our own ServeHTTP handler
+// (production code path) and optionally against real `fossil serve`.
+func TestPrivateSyncAgainstFossilServe(t *testing.T) {
+	requireFossil(t)
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+
+	// Test against our own ServeHTTP (the production code path for leaf agents).
+	t.Run("leaf_http", func(t *testing.T) {
+		testPrivateSyncOverHTTP(t)
+	})
+}
+
+// testPrivateSyncOverHTTP creates a leaf repo with public + private blobs,
+// serves it via sync.ServeHTTP, and verifies two clients:
+//   - Private=true client gets all blobs, private ones in private table
+//   - Private=false client gets only public blobs
+func testPrivateSyncOverHTTP(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+
+	// 1. Create server repo with public and private blobs.
+	srcRepo := leafRepo(t, dir, "priv-server.fossil")
+
+	// Commit a file so the repo has real content (manifest + file blob).
+	checkin(t, srcRepo, 0, []manifest.File{
+		{Name: "public.txt", Content: []byte("public content")},
+	}, "public commit")
+	manifest.Crosslink(srcRepo)
+
+	// Grant nobody 'oix' capability for push, pull, private sync.
+	srcRepo.DB().Exec("UPDATE user SET cap='oix' WHERE login='nobody'")
+
+	// Store additional blobs: 2 public, 2 private.
+	var publicUUIDs, privateUUIDs []string
+	for i := range 2 {
+		data := []byte(fmt.Sprintf("extra-public-%d", i))
+		_, uuid, err := blob.Store(srcRepo.DB(), data)
+		if err != nil {
+			t.Fatalf("blob.Store: %v", err)
+		}
+		publicUUIDs = append(publicUUIDs, uuid)
+	}
+	for i := range 2 {
+		data := []byte(fmt.Sprintf("extra-private-%d", i))
+		rid, uuid, err := blob.Store(srcRepo.DB(), data)
+		if err != nil {
+			t.Fatalf("blob.Store: %v", err)
+		}
+		content.MakePrivate(srcRepo.DB(), int64(rid))
+		privateUUIDs = append(privateUUIDs, uuid)
+	}
+
+	var totalBlobs int
+	srcRepo.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&totalBlobs)
+	t.Logf("server: %d total blobs, %d extra public, %d extra private",
+		totalBlobs, len(publicUUIDs), len(privateUUIDs))
+
+	// Read codes.
+	var projCode, srvCode string
+	srcRepo.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projCode)
+	srcRepo.DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&srvCode)
+
+	// Close and reopen so the HTTP server gets a clean handle.
+	srcRepo.Close()
+	srcReopened, err := repo.Open(filepath.Join(dir, "priv-server.fossil"))
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer srcReopened.Close()
+
+	// 2. Serve over HTTP.
+	addr, cancel := serveLeafHTTP(t, srcReopened)
+	defer cancel()
+
+	transport := &sync.HTTPTransport{URL: fmt.Sprintf("http://%s", addr)}
+	ctx, ctxCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer ctxCancel()
+
+	// 3. Sync client with Private=true.
+	clientPriv := leafRepo(t, dir, "client-priv.fossil")
+	clientPriv.DB().Exec("UPDATE config SET value=? WHERE name='project-code'", projCode)
+
+	for round := 0; round < 10; round++ {
+		result, err := sync.Sync(ctx, clientPriv, transport, sync.SyncOpts{
+			Pull: true, Push: true, Private: true,
+			ProjectCode: projCode, ServerCode: srvCode,
+		})
+		if err != nil {
+			t.Fatalf("priv sync round %d: %v", round, err)
+		}
+		t.Logf("priv round %d: rounds=%d recv=%d sent=%d errors=%v",
+			round, result.Rounds, result.FilesRecvd, result.FilesSent, result.Errors)
+		if result.FilesSent == 0 && result.FilesRecvd == 0 {
+			break
+		}
+	}
+
+	// Verify private blobs arrived and are in private table.
+	for _, uuid := range privateUUIDs {
+		rid, ok := blob.Exists(clientPriv.DB(), uuid)
+		if !ok {
+			t.Errorf("client-priv missing private blob %s", uuid)
+			continue
+		}
+		if !content.IsPrivate(clientPriv.DB(), int64(rid)) {
+			t.Errorf("blob %s should be in client's private table", uuid)
+		}
+	}
+	for _, uuid := range publicUUIDs {
+		if _, ok := blob.Exists(clientPriv.DB(), uuid); !ok {
+			t.Errorf("client-priv missing public blob %s", uuid)
+		}
+	}
+
+	var privClientCount int
+	clientPriv.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&privClientCount)
+	t.Logf("client-priv: %d blobs (server had %d)", privClientCount, totalBlobs)
+
+	// 4. Sync client with Private=false — should NOT get private blobs.
+	clientPub := leafRepo(t, dir, "client-pub.fossil")
+	clientPub.DB().Exec("UPDATE config SET value=? WHERE name='project-code'", projCode)
+
+	for round := 0; round < 10; round++ {
+		result, err := sync.Sync(ctx, clientPub, transport, sync.SyncOpts{
+			Pull: true, Push: true, Private: false,
+			ProjectCode: projCode, ServerCode: srvCode,
+		})
+		if err != nil {
+			t.Fatalf("pub sync round %d: %v", round, err)
+		}
+		if result.FilesSent == 0 && result.FilesRecvd == 0 {
+			break
+		}
+	}
+
+	for _, uuid := range privateUUIDs {
+		if _, ok := blob.Exists(clientPub.DB(), uuid); ok {
+			t.Errorf("client-pub should NOT have private blob %s", uuid)
+		}
+	}
+	for _, uuid := range publicUUIDs {
+		if _, ok := blob.Exists(clientPub.DB(), uuid); !ok {
+			t.Errorf("client-pub missing public blob %s", uuid)
+		}
+	}
+
+	var pubClientCount int
+	clientPub.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&pubClientCount)
+	t.Logf("client-pub: %d blobs (server had %d)", pubClientCount, totalBlobs)
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/db"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
+	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
 	"github.com/dmestas/edgesync/go-libfossil/uv"
 	"github.com/dmestas/edgesync/leaf/agent"
 )
@@ -631,6 +632,20 @@ func TestDST(t *testing.T) {
 			[]byte(fmt.Sprintf("sweep-content-%d-seed%d", i, seed)), int64(100+i))
 	}
 
+	// Seed private blobs so sweep exercises private sync paths.
+	for i := range 3 {
+		data := []byte(fmt.Sprintf("dst-private-%04d-seed%d", i, seed))
+		masterRepo.WithTx(func(tx *db.Tx) error {
+			rid, _, err := blob.Store(tx, data)
+			if err != nil {
+				return err
+			}
+			return content.MakePrivate(tx, int64(rid))
+		})
+	}
+	// Grant 'x' capability to nobody for private sync.
+	masterRepo.DB().Exec("UPDATE user SET cap='oixy' WHERE login='nobody'")
+
 	sim, err := New(SimConfig{
 		Seed:         seed,
 		NumLeaves:    3,
@@ -639,6 +654,7 @@ func TestDST(t *testing.T) {
 		Upstream:     mf,
 		Buggify:      sev.Buggify,
 		UV:           true,
+		Private:      true,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -681,6 +697,14 @@ func TestDST(t *testing.T) {
 		}
 		if err := sim.CheckAllUVConverged(masterRepo); err != nil {
 			t.Fatalf("UV convergence violation at seed=%d: %v", seed, err)
+		}
+		// Check private blob convergence: all leaves should have private blobs.
+		for _, id := range sim.LeafIDs() {
+			var n int
+			sim.Leaf(id).Repo().DB().QueryRow("SELECT count(*) FROM private").Scan(&n)
+			if n == 0 {
+				t.Errorf("Private convergence: %s has no private blobs at seed=%d", id, seed)
+			}
 		}
 	}
 
@@ -1486,6 +1510,155 @@ func hashPW(projectCode, login, password string) string {
 }
 
 // --- helpers ---
+
+// --- Scenario: Private Sync ---
+// Master has public + private blobs. Two leaves sync: one with 'x'
+// capability (Private: true), one without. Only the authorized leaf
+// gets private blobs.
+
+func TestScenarioPrivateSync(t *testing.T) {
+	seed := seedFor(40)
+
+	masterRepo := createMasterRepo(t)
+	mf := NewMockFossil(masterRepo)
+
+	// Grant nobody pull + push + private sync capability.
+	masterRepo.DB().Exec("UPDATE user SET cap='oix' WHERE login='nobody'")
+
+	// Seed 5 public blobs in master.
+	publicUUIDs := make([]string, 5)
+	for i := range 5 {
+		uuid, err := mf.StoreArtifact([]byte(fmt.Sprintf("private-sync-public-%d-seed%d", i, seed)))
+		if err != nil {
+			t.Fatalf("StoreArtifact public: %v", err)
+		}
+		publicUUIDs[i] = uuid
+	}
+
+	// Seed 3 private blobs in master.
+	privateUUIDs := make([]string, 3)
+	for i := range 3 {
+		data := []byte(fmt.Sprintf("private-sync-secret-%d-seed%d", i, seed))
+		var uuid string
+		masterRepo.WithTx(func(tx *db.Tx) error {
+			rid, u, err := blob.Store(tx, data)
+			if err != nil {
+				return err
+			}
+			uuid = u
+			return content.MakePrivate(tx, int64(rid))
+		})
+		privateUUIDs[i] = uuid
+	}
+
+	masterCount, _ := CountBlobs(masterRepo)
+	t.Logf("master: %d total blobs (%d public, %d private)",
+		masterCount, len(publicUUIDs), len(privateUUIDs))
+
+	// Read master's project-code and server-code.
+	var projCode, srvCode string
+	masterRepo.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projCode)
+	masterRepo.DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&srvCode)
+
+	// Create two leaf repos with matching project code.
+	tmpDir := t.TempDir()
+	simRand := simio.NewSeededRand(seed)
+
+	leafPrivPath := filepath.Join(tmpDir, "leaf-priv.fossil")
+	leafPriv, err := repo.Create(leafPrivPath, "user", simRand)
+	if err != nil {
+		t.Fatalf("create leaf-priv: %v", err)
+	}
+	t.Cleanup(func() { leafPriv.Close() })
+	leafPriv.DB().Exec("UPDATE config SET value=? WHERE name='project-code'", projCode)
+
+	leafPubPath := filepath.Join(tmpDir, "leaf-pub.fossil")
+	leafPub, err := repo.Create(leafPubPath, "user", simRand)
+	if err != nil {
+		t.Fatalf("create leaf-pub: %v", err)
+	}
+	t.Cleanup(func() { leafPub.Close() })
+	leafPub.DB().Exec("UPDATE config SET value=? WHERE name='project-code'", projCode)
+
+	ctx := context.Background()
+
+	// Sync leaf-priv with Private=true (authorized).
+	for round := 0; round < 10; round++ {
+		result, err := libsync.Sync(ctx, leafPriv, mf, libsync.SyncOpts{
+			Pull:        true,
+			Push:        true,
+			Private:     true,
+			ProjectCode: projCode,
+			ServerCode:  srvCode,
+		})
+		if err != nil {
+			t.Fatalf("leaf-priv sync round %d: %v", round, err)
+		}
+		if result.FilesSent == 0 && result.FilesRecvd == 0 {
+			t.Logf("leaf-priv converged at outer round %d", round)
+			break
+		}
+	}
+
+	// Sync leaf-pub with Private=false (no private sync).
+	for round := 0; round < 10; round++ {
+		result, err := libsync.Sync(ctx, leafPub, mf, libsync.SyncOpts{
+			Pull:        true,
+			Push:        true,
+			Private:     false,
+			ProjectCode: projCode,
+			ServerCode:  srvCode,
+		})
+		if err != nil {
+			t.Fatalf("leaf-pub sync round %d: %v", round, err)
+		}
+		if result.FilesSent == 0 && result.FilesRecvd == 0 {
+			t.Logf("leaf-pub converged at outer round %d", round)
+			break
+		}
+	}
+
+	// Verify leaf-priv has ALL blobs (public + private).
+	for _, uuid := range publicUUIDs {
+		if !HasBlob(leafPriv, uuid) {
+			t.Errorf("leaf-priv missing public blob %s", uuid)
+		}
+	}
+	for _, uuid := range privateUUIDs {
+		rid, ok := blob.Exists(leafPriv.DB(), uuid)
+		if !ok {
+			t.Errorf("leaf-priv missing private blob %s", uuid)
+			continue
+		}
+		if !content.IsPrivate(leafPriv.DB(), int64(rid)) {
+			t.Errorf("leaf-priv: blob %s should be in private table", uuid)
+		}
+	}
+
+	// Verify leaf-pub has ONLY public blobs.
+	for _, uuid := range publicUUIDs {
+		if !HasBlob(leafPub, uuid) {
+			t.Errorf("leaf-pub missing public blob %s", uuid)
+		}
+	}
+	for _, uuid := range privateUUIDs {
+		if HasBlob(leafPub, uuid) {
+			t.Errorf("leaf-pub should NOT have private blob %s", uuid)
+		}
+	}
+
+	// Safety: blob integrity on both leaves.
+	if err := CheckBlobIntegrity("leaf-priv", leafPriv); err != nil {
+		t.Fatalf("leaf-priv integrity: %v", err)
+	}
+	if err := CheckBlobIntegrity("leaf-pub", leafPub); err != nil {
+		t.Fatalf("leaf-pub integrity: %v", err)
+	}
+
+	privCount, _ := CountBlobs(leafPriv)
+	pubCount, _ := CountBlobs(leafPub)
+	t.Logf("leaf-priv: %d blobs, leaf-pub: %d blobs", privCount, pubCount)
+}
 
 func createMasterRepoAt(t *testing.T, path string) *repo.Repo {
 	t.Helper()

@@ -38,6 +38,9 @@ type Config struct {
 	// UV enables syncing unversioned files (wiki, forum, attachments).
 	UV bool
 
+	// Private enables syncing private artifacts (requires 'x' capability).
+	Private bool
+
 	// PeerID uniquely identifies this agent in the peer registry.
 	// Defaults to hostname if not set.
 	PeerID string

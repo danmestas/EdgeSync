@@ -34,6 +34,7 @@ type SyncOpts struct {
 	User, Password          string
 	MaxSend                 int
 	UV                      bool              // enable unversioned file sync
+	Private                 bool              // enable private artifact sync
 	Env                     *simio.Env        // nil defaults to RealEnv
 	Buggify                 BuggifyChecker    // nil in production
 	Observer                Observer          // nil defaults to no-op
@@ -70,6 +71,7 @@ type session struct {
 	nUvGimmeSent        int
 	nUvFileRcvd         int
 	nGimmeRcvd          int // cumulative gimmes received across all rounds
+	nextIsPrivate       bool // true when a PrivateCard precedes the next file/cfile
 	roundStats          RoundStats
 	xTableHashSent map[string]bool            // table -> true if xtable-hash pragma sent
 	xTableGimmes   map[string]map[string]bool // table -> pkHash -> true

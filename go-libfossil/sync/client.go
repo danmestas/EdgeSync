@@ -95,6 +95,22 @@ func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
 	gimmeCards := s.buildGimmeCards()
 	cards = append(cards, gimmeCards...)
 
+	// Private: send pragma every round (handler is stateless per-round).
+	if s.opts.Private {
+		cards = append(cards, &xfer.PragmaCard{Name: "send-private"})
+	}
+
+	// Private: send igot cards for private blobs
+	if s.opts.Private {
+		privCards, err := s.sendPrivate()
+		if err != nil {
+			return nil, fmt.Errorf("buildRequest sendPrivate: %w", err)
+		}
+		s.igotSentThisRound += len(privCards)
+		s.roundStats.IgotsSent += len(privCards)
+		cards = append(cards, privCards...)
+	}
+
 	// UV: pragma uv-hash on first round
 	if s.opts.UV && !s.uvHashSent {
 		if err := uv.EnsureSchema(s.repo.DB()); err != nil {
@@ -212,6 +228,37 @@ func (s *session) sendAllClusters() ([]xfer.Card, error) {
 	return cards, rows.Err()
 }
 
+// sendPrivate emits igot cards with IsPrivate=true for all blobs in the
+// private table. This advertises private artifacts to the server so it can
+// request them via gimme cards.
+func (s *session) sendPrivate() ([]xfer.Card, error) {
+	// BUGGIFY: 10% chance skip all private igots this round to test
+	// multi-round private convergence.
+	if s.opts.Buggify != nil && s.opts.Buggify.Check("sync.sendPrivate.skip", 0.10) {
+		return nil, nil
+	}
+
+	rows, err := s.repo.DB().Query(
+		"SELECT b.uuid FROM private p JOIN blob b ON p.rid=b.rid WHERE b.size >= 0",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("sendPrivate: %w", err)
+	}
+	defer rows.Close()
+	var cards []xfer.Card
+	for rows.Next() {
+		var uuid string
+		if err := rows.Scan(&uuid); err != nil {
+			return nil, err
+		}
+		if s.remoteHas[uuid] {
+			continue
+		}
+		cards = append(cards, &xfer.IGotCard{UUID: uuid, IsPrivate: true})
+	}
+	return cards, rows.Err()
+}
+
 // buildFileCards produces file cards from pendingSend and the unsent table,
 // respecting the maxSend byte budget.
 func (s *session) buildFileCards() ([]xfer.Card, error) {
@@ -227,6 +274,20 @@ func (s *session) buildFileCards() ([]xfer.Card, error) {
 		if budget <= 0 {
 			break
 		}
+
+		// Private filtering: check if blob is private.
+		rid, ridOK := blob.Exists(s.repo.DB(), uuid)
+		if ridOK {
+			isPriv := content.IsPrivate(s.repo.DB(), int64(rid))
+			if isPriv && !s.opts.Private {
+				delete(s.pendingSend, uuid)
+				continue
+			}
+			if isPriv {
+				cards = append(cards, &xfer.PrivateCard{})
+			}
+		}
+
 		card, size, err := s.loadFileCard(uuid)
 		if err != nil {
 			// Skip files we can't load (phantoms, etc.)
@@ -279,6 +340,15 @@ func (s *session) buildGimmeCards() []xfer.Card {
 	for uuid := range s.phantoms {
 		if count >= maxGimme {
 			break
+		}
+		// Best-effort private filtering: if the blob exists locally and is
+		// private but Private mode is off, skip it. Phantoms (not yet in DB)
+		// pass through — the server is the primary gate.
+		if !s.opts.Private {
+			rid, exists := blob.Exists(s.repo.DB(), uuid)
+			if exists && content.IsPrivate(s.repo.DB(), int64(rid)) {
+				continue
+			}
 		}
 		cards = append(cards, &xfer.GimmeCard{UUID: uuid})
 		s.roundStats.GimmesSent++
@@ -372,8 +442,14 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 
 	for _, card := range msg.Cards {
 		switch c := card.(type) {
+		case *xfer.PrivateCard:
+			s.nextIsPrivate = true
+
 		case *xfer.FileCard:
 			if err := s.handleFileCard(c.UUID, c.DeltaSrc, c.Content); err != nil {
+				return false, err
+			}
+			if err := s.applyPrivateStatus(c.UUID); err != nil {
 				return false, err
 			}
 			filesRecvd++
@@ -384,15 +460,30 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 			if err := s.handleFileCard(c.UUID, c.DeltaSrc, c.Content); err != nil {
 				return false, err
 			}
+			if err := s.applyPrivateStatus(c.UUID); err != nil {
+				return false, err
+			}
 			filesRecvd++
 			s.roundStats.BytesReceived += int64(len(c.Content))
 			delete(s.phantoms, c.UUID)
 
 		case *xfer.IGotCard:
 			s.remoteHas[c.UUID] = true
-			if s.opts.Pull {
-				_, exists := blob.Exists(s.repo.DB(), c.UUID)
-				if !exists {
+			rid, exists := blob.Exists(s.repo.DB(), c.UUID)
+			if c.IsPrivate {
+				if exists {
+					if err := content.MakePrivate(s.repo.DB(), int64(rid)); err != nil {
+						return false, fmt.Errorf("sync: MakePrivate %s: %w", c.UUID, err)
+					}
+				} else if s.opts.Private && s.opts.Pull {
+					s.phantoms[c.UUID] = true
+				}
+			} else {
+				if exists {
+					if err := content.MakePublic(s.repo.DB(), int64(rid)); err != nil {
+						return false, fmt.Errorf("sync: MakePublic %s: %w", c.UUID, err)
+					}
+				} else if s.opts.Pull {
 					s.phantoms[c.UUID] = true
 				}
 			}
@@ -690,6 +781,33 @@ func (s *session) handleFileCard(uuid, deltaSrc string, payload []byte) error {
 		return fmt.Errorf("buggify: simulated storage failure for %s", uuid)
 	}
 
+	return nil
+}
+
+// applyPrivateStatus marks a just-stored blob as private or public based on
+// whether a PrivateCard preceded it. Extracted from FileCard/CFileCard handlers
+// to eliminate duplication.
+func (s *session) applyPrivateStatus(uuid string) error {
+	if s.nextIsPrivate {
+		// BUGGIFY: 3% chance skip MakePrivate — leave blob as public;
+		// the next sync round should correct the status.
+		if s.opts.Buggify != nil && s.opts.Buggify.Check("sync.applyPrivateStatus.skipMakePrivate", 0.03) {
+			s.nextIsPrivate = false
+			return nil
+		}
+		rid, _ := blob.Exists(s.repo.DB(), uuid)
+		if err := content.MakePrivate(s.repo.DB(), int64(rid)); err != nil {
+			return fmt.Errorf("sync: MakePrivate %s: %w", uuid, err)
+		}
+		s.nextIsPrivate = false
+	} else {
+		rid, exists := blob.Exists(s.repo.DB(), uuid)
+		if exists {
+			if err := content.MakePublic(s.repo.DB(), int64(rid)); err != nil {
+				return fmt.Errorf("sync: MakePublic %s: %w", uuid, err)
+			}
+		}
+	}
 	return nil
 }
 

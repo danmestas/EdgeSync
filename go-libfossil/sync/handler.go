@@ -87,6 +87,8 @@ type handler struct {
 	reqClusters   bool // client sent pragma req-clusters
 	filesSent     int  // files sent in response (for observer)
 	filesRecvd    int  // files received from client (for observer)
+	syncPrivate   bool // true if pragma send-private was accepted
+	nextIsPrivate bool // true if a private card precedes the next file/cfile
 	syncedTables  map[string]*SyncedTable // cached table definitions
 	xrowsSent     int  // table sync rows sent
 	xrowsRecvd    int  // table sync rows received
@@ -163,26 +165,38 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 		}
 	}
 
-	// Second pass: handle file cards first so blobs are stored before
+	// Process data cards and emit response blobs.
+	if err := h.processDataCards(req.Cards); err != nil {
+		return nil, err
+	}
+
+	return &xfer.Message{Cards: h.resp}, nil
+}
+
+// processDataCards handles file, igot, gimme, and other data cards in the
+// correct order, then emits igot/clone batches. Extracted from process() to
+// keep each function under 70 lines.
+func (h *handler) processDataCards(cards []xfer.Card) error {
+	// File cards (and private prefix) first so blobs are stored before
 	// IGotCard checks blob.Exists. Without this, a request containing
 	// both IGotCard and FileCard for the same blob produces a spurious
 	// GimmeCard — the IGotCard runs before the FileCard stores it.
-	for _, card := range req.Cards {
+	for _, card := range cards {
 		switch card.(type) {
-		case *xfer.FileCard, *xfer.CFileCard:
+		case *xfer.FileCard, *xfer.CFileCard, *xfer.PrivateCard:
 			if err := h.handleDataCard(card); err != nil {
-				return nil, err
+				return err
 			}
 		}
 	}
-	// Third pass: handle remaining data cards (igot, gimme, etc.).
-	for _, card := range req.Cards {
+	// Remaining data cards (igot, gimme, etc.).
+	for _, card := range cards {
 		switch card.(type) {
-		case *xfer.FileCard, *xfer.CFileCard:
+		case *xfer.FileCard, *xfer.CFileCard, *xfer.PrivateCard:
 			continue // Already handled above.
 		default:
 			if err := h.handleDataCard(card); err != nil {
-				return nil, err
+				return err
 			}
 		}
 	}
@@ -190,22 +204,20 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 	// If pull was requested, emit igot for all non-phantom blobs.
 	if h.pullOK {
 		if err := h.emitIGots(); err != nil {
-			return nil, err
+			return err
 		}
-		// Emit xigots for table sync.
 		if err := h.emitXIGots(); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
 	// If clone, emit paginated file cards.
 	if h.cloneMode {
 		if err := h.emitCloneBatch(); err != nil {
-			return nil, err
+			return err
 		}
 	}
-
-	return &xfer.Message{Cards: h.resp}, nil
+	return nil
 }
 
 func (h *handler) handleControlCard(card xfer.Card) {
@@ -224,6 +236,15 @@ func (h *handler) handleControlCard(card xfer.Card) {
 		}
 		if c.Name == "req-clusters" {
 			h.reqClusters = true
+		}
+		if c.Name == "send-private" {
+			if auth.CanSyncPrivate(h.caps) {
+				h.syncPrivate = true
+			} else {
+				h.resp = append(h.resp, &xfer.ErrorCard{
+					Message: "not authorized to sync private content",
+				})
+			}
 		}
 		// Acknowledge client-version, ignore other unknown pragmas.
 	case *xfer.PushCard:
@@ -267,6 +288,16 @@ func (h *handler) handleDataCard(card xfer.Card) error {
 		return h.handleFile(c.UUID, c.DeltaSrc, c.Content)
 	case *xfer.CFileCard:
 		return h.handleFile(c.UUID, c.DeltaSrc, c.Content)
+	case *xfer.PrivateCard:
+		if !auth.CanSyncPrivate(h.caps) {
+			h.resp = append(h.resp, &xfer.ErrorCard{
+				Message: "not authorized to sync private content",
+			})
+			h.nextIsPrivate = false
+		} else {
+			h.nextIsPrivate = true
+		}
+		return nil
 	case *xfer.ReqConfigCard:
 		return h.handleReqConfig(c)
 	case *xfer.UVIGotCard:
@@ -293,9 +324,16 @@ func (h *handler) handleIGot(c *xfer.IGotCard) error {
 		return nil
 	}
 	_, exists := blob.Exists(h.repo.DB(), c.UUID)
-	if !exists {
-		h.resp = append(h.resp, &xfer.GimmeCard{UUID: c.UUID})
+	if exists {
+		// Server already has this blob — nothing to do.
+		// Server is authoritative for private status; do NOT apply
+		// the client's IsPrivate flag to the server's private table.
+		return nil
 	}
+	if c.IsPrivate && !h.syncPrivate {
+		return nil // not authorized — don't request
+	}
+	h.resp = append(h.resp, &xfer.GimmeCard{UUID: c.UUID})
 	return nil
 }
 
@@ -311,12 +349,23 @@ func (h *handler) handleGimme(c *xfer.GimmeCard) error {
 	if !ok {
 		return nil // blob not found — not fatal, skip.
 	}
+	isPriv := content.IsPrivate(h.repo.DB(), int64(rid))
+	if isPriv && !h.syncPrivate {
+		return nil // private blob, client not authorized — skip.
+	}
 	data, err := content.Expand(h.repo.DB(), rid)
 	if err != nil {
 		h.resp = append(h.resp, &xfer.ErrorCard{
 			Message: fmt.Sprintf("expand %s: %v", c.UUID, err),
 		})
 		return nil
+	}
+	if isPriv {
+		// BUGGIFY: 5% chance skip the PrivateCard prefix — client should
+		// treat the file as public; next sync round corrects the status.
+		if h.buggify == nil || !h.buggify.Check("handler.handleGimme.dropPrivateCard", 0.05) {
+			h.resp = append(h.resp, &xfer.PrivateCard{})
+		}
 	}
 	h.resp = append(h.resp, &xfer.FileCard{UUID: c.UUID, Content: data})
 	h.filesSent++
@@ -345,6 +394,17 @@ func (h *handler) handleFile(uuid, deltaSrc string, payload []byte) error {
 			Message: fmt.Sprintf("storing %s: %v", uuid, err),
 		})
 		return nil
+	}
+	rid, _ := blob.Exists(h.repo.DB(), uuid)
+	if h.nextIsPrivate {
+		if err := content.MakePrivate(h.repo.DB(), int64(rid)); err != nil {
+			return fmt.Errorf("handler: MakePrivate %s: %w", uuid, err)
+		}
+		h.nextIsPrivate = false
+	} else {
+		if err := content.MakePublic(h.repo.DB(), int64(rid)); err != nil {
+			return fmt.Errorf("handler: MakePublic %s: %w", uuid, err)
+		}
 	}
 	h.filesRecvd++
 	return nil
@@ -405,6 +465,47 @@ func (h *handler) emitIGots() error {
 	for _, uuid := range uuids {
 		h.resp = append(h.resp, &xfer.IGotCard{UUID: uuid})
 	}
+
+	if h.syncPrivate {
+		if err := h.emitPrivateIGots(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// emitPrivateIGots emits igot cards with IsPrivate=true for all blobs in
+// the private table. Only called when the client sent pragma send-private
+// and has the 'x' capability.
+func (h *handler) emitPrivateIGots() error {
+	rows, err := h.repo.DB().Query(
+		"SELECT b.uuid FROM private p JOIN blob b ON p.rid=b.rid WHERE b.size >= 0",
+	)
+	if err != nil {
+		return fmt.Errorf("handler: listing private blobs: %w", err)
+	}
+	defer rows.Close()
+
+	var uuids []string
+	for rows.Next() {
+		var uuid string
+		if err := rows.Scan(&uuid); err != nil {
+			return err
+		}
+		uuids = append(uuids, uuid)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// BUGGIFY: 10% chance truncate private igot list to test multi-round convergence.
+	if h.buggify != nil && h.buggify.Check("handler.emitPrivateIGots.truncate", 0.10) && len(uuids) > 1 {
+		uuids = uuids[:len(uuids)/2]
+	}
+
+	for _, uuid := range uuids {
+		h.resp = append(h.resp, &xfer.IGotCard{UUID: uuid, IsPrivate: true})
+	}
 	return nil
 }
 
@@ -444,8 +545,8 @@ func (h *handler) emitCloneBatch() error {
 	}
 
 	rows, err := h.repo.DB().Query(
-		"SELECT rid, uuid FROM blob WHERE rid > ? AND size >= 0 ORDER BY rid LIMIT ?",
-		h.cloneSeq, batchSize+1,
+		"SELECT rid, uuid FROM blob WHERE rid > ? AND size >= 0 ORDER BY rid",
+		h.cloneSeq,
 	)
 	if err != nil {
 		return fmt.Errorf("handler: clone batch: %w", err)
@@ -453,33 +554,45 @@ func (h *handler) emitCloneBatch() error {
 	defer rows.Close()
 
 	count := 0
-	var lastRID int
+	var lastSentRID int
+	more := false
 	for rows.Next() {
 		var rid int
 		var uuid string
 		if err := rows.Scan(&rid, &uuid); err != nil {
 			return err
 		}
-		if count >= batchSize {
-			if err := rows.Err(); err != nil {
-				return err
-			}
-			h.resp = append(h.resp, &xfer.CloneSeqNoCard{SeqNo: lastRID})
-			return nil
+
+		isPriv := content.IsPrivate(h.repo.DB(), int64(rid))
+		if isPriv && !h.syncPrivate {
+			continue // skip private blob, don't count toward batch
 		}
+
+		if count >= batchSize {
+			more = true
+			break
+		}
+
 		data, err := content.Expand(h.repo.DB(), libfossil.FslID(rid))
 		if err != nil {
 			return fmt.Errorf("handler: expanding rid %d: %w", rid, err)
 		}
+		if isPriv {
+			h.resp = append(h.resp, &xfer.PrivateCard{})
+		}
 		h.resp = append(h.resp, &xfer.FileCard{UUID: uuid, Content: data})
 		h.filesSent++
-		lastRID = rid
+		lastSentRID = rid
 		count++
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	// All blobs sent — signal completion so the client stops requesting.
-	h.resp = append(h.resp, &xfer.CloneSeqNoCard{SeqNo: 0})
+	if more {
+		h.resp = append(h.resp, &xfer.CloneSeqNoCard{SeqNo: lastSentRID})
+	} else {
+		// All blobs sent — signal completion so the client stops requesting.
+		h.resp = append(h.resp, &xfer.CloneSeqNoCard{SeqNo: 0})
+	}
 	return nil
 }
