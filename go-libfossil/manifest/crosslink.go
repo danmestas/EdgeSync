@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
+	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/db"
 	"github.com/dmestas/edgesync/go-libfossil/deck"
@@ -58,6 +59,13 @@ func Crosslink(r *repo.Repo) (int, error) {
 			continue // not a valid manifest, skip
 		}
 
+		if d.Type == deck.Cluster {
+			if err := CrosslinkCluster(r.DB(), c.rid, d); err != nil {
+				return linked, fmt.Errorf("manifest.Crosslink cluster rid=%d: %w", c.rid, err)
+			}
+			linked++
+			continue
+		}
 		if d.Type != deck.Checkin {
 			continue // only crosslink checkin manifests
 		}
@@ -250,5 +258,46 @@ func crosslinkControl(r *repo.Repo, srcRID libfossil.FslID, d *deck.Deck) error 
 			return fmt.Errorf("apply tag %q to rid=%d: %w", tc.Name, targetRID, err)
 		}
 	}
+	return nil
+}
+
+// CrosslinkCluster processes a cluster artifact: applies the cluster singleton
+// tag (tagid=7), removes clustered blobs from unclustered, and creates phantoms
+// for any referenced UUIDs not yet in the blob table.
+func CrosslinkCluster(q db.Querier, rid libfossil.FslID, d *deck.Deck) error {
+	if q == nil {
+		panic("manifest.CrosslinkCluster: q must not be nil")
+	}
+	if rid <= 0 {
+		panic("manifest.CrosslinkCluster: rid must be > 0")
+	}
+	if d == nil {
+		panic("manifest.CrosslinkCluster: d must not be nil")
+	}
+
+	// Apply cluster singleton tag (tagid=7, tagtype=1).
+	if _, err := q.Exec(
+		"INSERT OR REPLACE INTO tagxref(tagid, tagtype, srcid, origid, value, mtime, rid) VALUES(7, 1, ?, ?, NULL, 0, ?)",
+		rid, rid, rid,
+	); err != nil {
+		return fmt.Errorf("manifest.CrosslinkCluster tag: %w", err)
+	}
+
+	// Process each M-card UUID.
+	for _, uuid := range d.M {
+		memberRID, exists := blob.Exists(q, uuid)
+		if exists {
+			// Remove from unclustered — this blob is now accounted for.
+			if _, err := q.Exec("DELETE FROM unclustered WHERE rid=?", memberRID); err != nil {
+				return fmt.Errorf("manifest.CrosslinkCluster unclustered delete rid=%d: %w", memberRID, err)
+			}
+		} else {
+			// Create phantom for unknown UUID.
+			if _, err := blob.StorePhantom(q, uuid); err != nil {
+				return fmt.Errorf("manifest.CrosslinkCluster phantom %s: %w", uuid, err)
+			}
+		}
+	}
+
 	return nil
 }
