@@ -771,3 +771,82 @@ func TestCrosslinkEvent(t *testing.T) {
 		t.Errorf("event-%s tag count=%d, want 1", eventUUID, tagCount)
 	}
 }
+
+func TestCrosslinkAttachment(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Manually create an attachment manifest with wiki target
+	attachTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	d := &deck.Deck{
+		Type: deck.Attachment,
+		A: &deck.AttachmentCard{
+			Filename: "test.txt",
+			Target:   "TestPage",
+			Source:   "abc123",
+		},
+		U: "testuser",
+		D: attachTime,
+		C: "Attach test file",
+	}
+
+	// Marshal and store the attachment manifest blob
+	manifestBytes, err := d.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	rid, _, err := blob.Store(r.DB(), manifestBytes)
+	if err != nil {
+		t.Fatalf("Store manifest: %v", err)
+	}
+
+	// Clear crosslink tables to simulate post-clone
+	r.DB().Exec("DELETE FROM attachment WHERE attachid=?", rid)
+	r.DB().Exec("DELETE FROM event WHERE objid=?", rid)
+
+	// Run Crosslink
+	n, err := Crosslink(r)
+	if err != nil {
+		t.Fatalf("Crosslink: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("expected at least 1 artifact crosslinked, got %d", n)
+	}
+
+	// Verify attachment table row
+	var target, filename, src string
+	var isLatest int
+	err = r.DB().QueryRow(
+		"SELECT target, filename, src, isLatest FROM attachment WHERE attachid=?", rid,
+	).Scan(&target, &filename, &src, &isLatest)
+	if err != nil {
+		t.Fatalf("attachment query: %v", err)
+	}
+	if target != "TestPage" {
+		t.Errorf("target=%q, want 'TestPage'", target)
+	}
+	if filename != "test.txt" {
+		t.Errorf("filename=%q, want 'test.txt'", filename)
+	}
+	if src != "abc123" {
+		t.Errorf("src=%q, want 'abc123'", src)
+	}
+	if isLatest != 1 {
+		t.Errorf("isLatest=%d, want 1", isLatest)
+	}
+
+	// Verify event row (type='w' for wiki attachment)
+	var eventType, comment string
+	err = r.DB().QueryRow(
+		"SELECT type, comment FROM event WHERE objid=?", rid,
+	).Scan(&eventType, &comment)
+	if err != nil {
+		t.Fatalf("event query: %v", err)
+	}
+	if eventType != "w" {
+		t.Errorf("event type=%q, want 'w'", eventType)
+	}
+	if comment != "Add attachment test.txt to wiki page TestPage" {
+		t.Errorf("event comment=%q", comment)
+	}
+}

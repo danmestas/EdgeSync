@@ -438,7 +438,55 @@ func crosslinkEvent(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) ([]pendingI
 }
 
 func crosslinkAttachment(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
+	if d.A == nil {
+		return fmt.Errorf("attachment manifest missing A-card")
+	}
+	mtime := libfossil.TimeToJulian(d.D)
+	src, target, filename := d.A.Source, d.A.Target, d.A.Filename
+
+	if _, err := r.DB().Exec(
+		"INSERT INTO attachment(attachid, mtime, src, target, filename, comment, user) VALUES(?, ?, ?, ?, ?, ?, ?)",
+		rid, mtime, src, target, filename, d.C, d.U,
+	); err != nil {
+		return fmt.Errorf("attachment insert: %w", err)
+	}
+	r.DB().Exec(`UPDATE attachment SET isLatest = (mtime = (SELECT max(mtime) FROM attachment WHERE target=? AND filename=?)) WHERE target=? AND filename=?`,
+		target, filename, target, filename)
+
+	attachToType := byte('w')
+	if isHash(target) {
+		var dummy int
+		if r.DB().QueryRow("SELECT 1 FROM tag WHERE tagname=?", "tkt-"+target).Scan(&dummy) == nil {
+			attachToType = 't'
+		} else if r.DB().QueryRow("SELECT 1 FROM tag WHERE tagname=?", "event-"+target).Scan(&dummy) == nil {
+			attachToType = 'e'
+		}
+	}
+
+	typeName := map[byte]string{'w': "wiki page", 't': "ticket", 'e': "tech note"}[attachToType]
+	var evComment string
+	if src != "" {
+		evComment = fmt.Sprintf("Add attachment %s to %s %s", filename, typeName, target)
+	} else {
+		evComment = fmt.Sprintf("Delete attachment %q from %s %s", filename, typeName, target)
+	}
+	if _, err := r.DB().Exec("REPLACE INTO event(type, mtime, objid, user, comment) VALUES(?, ?, ?, ?, ?)",
+		string(attachToType), mtime, rid, d.U, evComment); err != nil {
+		return fmt.Errorf("attachment event: %w", err)
+	}
 	return nil
+}
+
+func isHash(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 func crosslinkCluster(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
