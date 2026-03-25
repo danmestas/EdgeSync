@@ -152,7 +152,7 @@ func TestCreateRepoSchema(t *testing.T) {
 	}
 
 	// Verify repo2 (transient) tables exist
-	repo2Tables := []string{"filename", "mlink", "plink", "leaf", "event", "phantom", "orphan", "unclustered", "unsent", "tag", "tagxref", "backlink", "attachment", "cherrypick"}
+	repo2Tables := []string{"filename", "mlink", "plink", "leaf", "event", "phantom", "orphan", "unclustered", "unsent", "tag", "tagxref", "backlink", "attachment", "cherrypick", "forumpost"}
 	for _, table := range repo2Tables {
 		var name string
 		err := d.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name)

@@ -182,20 +182,63 @@ func ApplyTag(r *repo.Repo, opts ApplyOpts) error {
 	})
 }
 
+// ApplyTagWithTx inserts a tagxref row and propagates using an existing transaction.
+// This avoids the nested-transaction problem when called from within Rebuild's
+// single wrapping transaction. Identical logic to ApplyTag but accepts a db.Querier.
+func ApplyTagWithTx(q db.Querier, opts ApplyOpts) error {
+	if q == nil {
+		panic("tag.ApplyTagWithTx: q must not be nil")
+	}
+	if opts.TagName == "" {
+		panic("tag.ApplyTagWithTx: opts.TagName must not be empty")
+	}
+	if opts.TargetRID <= 0 {
+		panic("tag.ApplyTagWithTx: opts.TargetRID must be positive")
+	}
+
+	tagid, err := ensureTag(q, opts.TagName)
+	if err != nil {
+		return fmt.Errorf("ensure tag %q: %w", opts.TagName, err)
+	}
+
+	if _, err := q.Exec(
+		`INSERT OR REPLACE INTO tagxref(tagid, tagtype, srcid, origid, value, mtime, rid)
+		 VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		tagid, opts.TagType, opts.SrcRID, opts.TargetRID, opts.Value, opts.MTime, opts.TargetRID,
+	); err != nil {
+		return fmt.Errorf("tagxref insert: %w", err)
+	}
+
+	// Special: bgcolor updates event table.
+	if opts.TagName == "bgcolor" && opts.TagType == TagPropagating {
+		if _, err := q.Exec("UPDATE event SET bgcolor=? WHERE objid=?", opts.Value, opts.TargetRID); err != nil {
+			return fmt.Errorf("bgcolor update: %w", err)
+		}
+	}
+
+	if opts.TagType == TagPropagating || opts.TagType == TagCancel {
+		if err := propagate(q, tagid, opts.TagType, opts.TargetRID, opts.MTime, opts.Value, opts.TagName, opts.TargetRID); err != nil {
+			return fmt.Errorf("propagate: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // ensureTag returns the tagid for the given tag name, creating it if it doesn't exist.
-func ensureTag(tx *db.Tx, name string) (int64, error) {
-	if tx == nil {
-		panic("tag.ensureTag: tx must not be nil")
+func ensureTag(q db.Querier, name string) (int64, error) {
+	if q == nil {
+		panic("tag.ensureTag: q must not be nil")
 	}
 	if name == "" {
 		panic("tag.ensureTag: name must not be empty")
 	}
 	var tagid int64
-	err := tx.QueryRow("SELECT tagid FROM tag WHERE tagname=?", name).Scan(&tagid)
+	err := q.QueryRow("SELECT tagid FROM tag WHERE tagname=?", name).Scan(&tagid)
 	if err == nil {
 		return tagid, nil
 	}
-	result, err := tx.Exec("INSERT INTO tag(tagname) VALUES(?)", name)
+	result, err := q.Exec("INSERT INTO tag(tagname) VALUES(?)", name)
 	if err != nil {
 		return 0, err
 	}

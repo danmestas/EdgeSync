@@ -59,6 +59,14 @@ func CreateWithEnv(path string, user string, env *simio.Env) (*Repo, error) {
 		return nil, fmt.Errorf("repo.CreateWithEnv seed user: %w", err)
 	}
 
+	if err := db.SeedNobody(d, "cghijknorswz"); err != nil {
+		d.Close()
+		if rmErr := env.Storage.Remove(path); rmErr != nil {
+			return nil, fmt.Errorf("repo.CreateWithEnv: %w (cleanup failed: %v)", err, rmErr)
+		}
+		return nil, fmt.Errorf("repo.CreateWithEnv seed nobody: %w", err)
+	}
+
 	if err := db.SeedConfig(d, env.Rand); err != nil {
 		d.Close()
 		if rmErr := env.Storage.Remove(path); rmErr != nil {

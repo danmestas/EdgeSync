@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/dmestas/edgesync/go-libfossil/auth"
 	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
@@ -86,11 +87,56 @@ type handler struct {
 	reqClusters   bool // client sent pragma req-clusters
 	filesSent     int  // files sent in response (for observer)
 	filesRecvd    int  // files received from client (for observer)
+
+	// Auth state
+	user   string // verified username ("nobody" if no login card)
+	caps   string // capability string from user table
+	authed bool   // whether login card was verified
+}
+
+func (h *handler) initAuth() {
+	h.user = "nobody"
+	h.caps = ""
+	h.authed = false
+	var caps string
+	err := h.repo.DB().QueryRow("SELECT cap FROM user WHERE login='nobody'").Scan(&caps)
+	if err == nil {
+		h.caps = caps
+	}
+}
+
+func (h *handler) handleLoginCard(c *xfer.LoginCard) {
+	var projectCode string
+	if err := h.repo.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projectCode); err != nil {
+		h.resp = append(h.resp, &xfer.ErrorCard{Message: "authentication failed"})
+		return
+	}
+	u, err := auth.VerifyLogin(h.repo.DB(), projectCode, c)
+	if err != nil {
+		h.resp = append(h.resp, &xfer.ErrorCard{Message: "authentication failed"})
+		return
+	}
+	h.user = u.Login
+	h.caps = u.Cap
+	h.authed = true
 }
 
 func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, error) {
-	// First pass: extract control cards.
+	// Initialize auth state from nobody user.
+	h.initAuth()
+
+	// First pass: resolve login cards before other control cards.
 	for _, card := range req.Cards {
+		if lc, ok := card.(*xfer.LoginCard); ok {
+			h.handleLoginCard(lc)
+		}
+	}
+
+	// Second pass: process other control cards with capability checks.
+	for _, card := range req.Cards {
+		if _, ok := card.(*xfer.LoginCard); ok {
+			continue // Already processed.
+		}
 		h.handleControlCard(card)
 	}
 
@@ -153,7 +199,7 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 func (h *handler) handleControlCard(card xfer.Card) {
 	switch c := card.(type) {
 	case *xfer.LoginCard:
-		_ = c // Accept all logins. Future: verify credentials.
+		return // Already processed in first pass.
 	case *xfer.PragmaCard:
 		if c.Name == "uv-hash" && len(c.Values) >= 1 {
 			if err := h.handlePragmaUVHash(c.Values[0]); err != nil {
@@ -167,11 +213,29 @@ func (h *handler) handleControlCard(card xfer.Card) {
 		}
 		// Acknowledge client-version, ignore other unknown pragmas.
 	case *xfer.PushCard:
-		h.pushOK = true
+		if auth.CanPush(h.caps) {
+			h.pushOK = true
+		} else {
+			h.resp = append(h.resp, &xfer.ErrorCard{
+				Message: "push denied: insufficient capabilities",
+			})
+		}
 	case *xfer.PullCard:
-		h.pullOK = true
+		if auth.CanPull(h.caps) {
+			h.pullOK = true
+		} else {
+			h.resp = append(h.resp, &xfer.ErrorCard{
+				Message: "pull denied: insufficient capabilities",
+			})
+		}
 	case *xfer.CloneCard:
-		h.cloneMode = true
+		if auth.CanClone(h.caps) {
+			h.cloneMode = true
+		} else {
+			h.resp = append(h.resp, &xfer.ErrorCard{
+				Message: "clone denied: insufficient capabilities",
+			})
+		}
 	case *xfer.CloneSeqNoCard:
 		h.cloneSeq = c.SeqNo
 	}

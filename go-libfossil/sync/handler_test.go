@@ -2,11 +2,15 @@ package sync
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"testing"
 
+	"github.com/dmestas/edgesync/go-libfossil/auth"
 	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/content"
+	"github.com/dmestas/edgesync/go-libfossil/db"
 	"github.com/dmestas/edgesync/go-libfossil/hash"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
@@ -31,6 +35,27 @@ func storeTestBlob(t *testing.T, r *repo.Repo, data []byte) string {
 		t.Fatalf("storeReceivedFile: %v", err)
 	}
 	return uuid
+}
+
+func testProjectCode(t *testing.T, d *db.DB) string {
+	t.Helper()
+	var code string
+	if err := d.QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&code); err != nil {
+		t.Fatalf("project-code: %v", err)
+	}
+	return code
+}
+
+func buildTestLoginCard(user, password, projectCode string, payload []byte) *xfer.LoginCard {
+	nonce := testSHA1Hex(payload)
+	shared := testSHA1Hex([]byte(projectCode + "/" + user + "/" + password))
+	sig := testSHA1Hex([]byte(nonce + shared))
+	return &xfer.LoginCard{User: user, Nonce: nonce, Signature: sig}
+}
+
+func testSHA1Hex(data []byte) string {
+	h := sha1.Sum(data)
+	return hex.EncodeToString(h[:])
 }
 
 
@@ -325,9 +350,8 @@ func TestHandleLoginAndPragma(t *testing.T) {
 	r := setupSyncTestRepo(t)
 	storeTestBlob(t, r, []byte("login pragma test"))
 
-	// Login + pragma should be accepted without error
+	// Pragma cards should be accepted (no login needed for pragma processing)
 	req := &xfer.Message{Cards: []xfer.Card{
-		&xfer.LoginCard{User: "test", Nonce: "abc", Signature: "def"},
 		&xfer.PragmaCard{Name: "client-version", Values: []string{"22800"}},
 		&xfer.PragmaCard{Name: "unknown-pragma", Values: []string{"ignored"}},
 		&xfer.PullCard{ServerCode: "test", ProjectCode: "test"},
@@ -342,7 +366,7 @@ func TestHandleLoginAndPragma(t *testing.T) {
 	}
 	igots := findCards[*xfer.IGotCard](resp)
 	if len(igots) == 0 {
-		t.Fatal("expected igot cards after login+pragma+pull")
+		t.Fatal("expected igot cards after pragma+pull")
 	}
 }
 
@@ -642,5 +666,113 @@ func TestPragmaReqClusters_OldClusters(t *testing.T) {
 	if len(igots) < totalBlobs {
 		t.Fatalf("igots = %d, total blobs = %d; should include all blobs",
 			len(igots), totalBlobs)
+	}
+}
+
+func TestHandlePushRequiresAuth(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	// Delete nobody so anonymous push is rejected
+	r.DB().Exec("DELETE FROM user WHERE login='nobody'")
+
+	data := []byte("auth test")
+	uuid := hash.SHA1(data)
+	req := &xfer.Message{Cards: []xfer.Card{
+		&xfer.PushCard{ServerCode: "test", ProjectCode: "test"},
+		&xfer.FileCard{UUID: uuid, Content: data},
+	}}
+	resp, err := HandleSync(context.Background(), r, req)
+	if err != nil {
+		t.Fatalf("HandleSync: %v", err)
+	}
+	errs := findCards[*xfer.ErrorCard](resp)
+	if len(errs) == 0 {
+		t.Fatal("expected error for unauthorized push")
+	}
+	if _, ok := blob.Exists(r.DB(), uuid); ok {
+		t.Fatal("blob should not be stored without push capability")
+	}
+}
+
+func TestHandlePullRequiresAuth(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	storeTestBlob(t, r, []byte("pull auth test"))
+	// Delete nobody so anonymous pull is rejected
+	r.DB().Exec("DELETE FROM user WHERE login='nobody'")
+
+	req := &xfer.Message{Cards: []xfer.Card{
+		&xfer.PullCard{ServerCode: "test", ProjectCode: "test"},
+	}}
+	resp, err := HandleSync(context.Background(), r, req)
+	if err != nil {
+		t.Fatalf("HandleSync: %v", err)
+	}
+	errs := findCards[*xfer.ErrorCard](resp)
+	if len(errs) == 0 {
+		t.Fatal("expected error for unauthorized pull")
+	}
+	igots := findCards[*xfer.IGotCard](resp)
+	if len(igots) > 0 {
+		t.Fatal("should not emit igots without pull capability")
+	}
+}
+
+func TestHandleAuthenticatedPush(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	pc := testProjectCode(t, r.DB())
+	// Delete nobody, create a user with push caps
+	r.DB().Exec("DELETE FROM user WHERE login='nobody'")
+	auth.CreateUser(r.DB(), pc, "pusher", "secret", "oi")
+
+	data := []byte("authed push")
+	uuid := hash.SHA1(data)
+
+	// Build a valid login card — nonce is SHA1 of the non-login card payload
+	loginCard := buildTestLoginCard("pusher", "secret", pc, []byte("dummy"))
+
+	req := &xfer.Message{Cards: []xfer.Card{
+		loginCard,
+		&xfer.PushCard{ServerCode: "test", ProjectCode: "test"},
+		&xfer.FileCard{UUID: uuid, Content: data},
+	}}
+	resp, err := HandleSync(context.Background(), r, req)
+	if err != nil {
+		t.Fatalf("HandleSync: %v", err)
+	}
+	errs := findCards[*xfer.ErrorCard](resp)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected error: %s", errs[0].Message)
+	}
+	if _, ok := blob.Exists(r.DB(), uuid); !ok {
+		t.Fatal("authenticated push should store blob")
+	}
+}
+
+func TestHandleNobodyPullOnly(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	storeTestBlob(t, r, []byte("nobody test"))
+	// Set nobody to pull-only
+	r.DB().Exec("UPDATE user SET cap='o' WHERE login='nobody'")
+
+	// Pull should work
+	pullReq := &xfer.Message{Cards: []xfer.Card{
+		&xfer.PullCard{ServerCode: "test", ProjectCode: "test"},
+	}}
+	pullResp, _ := HandleSync(context.Background(), r, pullReq)
+	igots := findCards[*xfer.IGotCard](pullResp)
+	if len(igots) == 0 {
+		t.Fatal("nobody with 'o' cap should allow pull")
+	}
+
+	// Push should fail
+	data := []byte("nobody push attempt")
+	uuid := hash.SHA1(data)
+	pushReq := &xfer.Message{Cards: []xfer.Card{
+		&xfer.PushCard{ServerCode: "test", ProjectCode: "test"},
+		&xfer.FileCard{UUID: uuid, Content: data},
+	}}
+	pushResp, _ := HandleSync(context.Background(), r, pushReq)
+	errs := findCards[*xfer.ErrorCard](pushResp)
+	if len(errs) == 0 {
+		t.Fatal("nobody with 'o' cap should reject push")
 	}
 }

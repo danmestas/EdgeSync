@@ -3,6 +3,7 @@ package sync
 import (
 	"fmt"
 
+	"github.com/dmestas/edgesync/go-libfossil/auth"
 	"github.com/dmestas/edgesync/go-libfossil/hash"
 	"github.com/dmestas/edgesync/go-libfossil/uv"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
@@ -123,6 +124,12 @@ func (h *handler) sendUVFile(name string) error {
 func (h *handler) handleUVFile(c *xfer.UVFileCard) error {
 	if c == nil {
 		panic("handler.handleUVFile: c must not be nil")
+	}
+	if !auth.CanPushUV(h.caps) {
+		h.resp = append(h.resp, &xfer.ErrorCard{
+			Message: fmt.Sprintf("uvfile %s denied: insufficient capabilities", c.Name),
+		})
+		return nil
 	}
 	if !h.pushOK {
 		h.resp = append(h.resp, &xfer.ErrorCard{

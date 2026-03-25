@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	libfossil "github.com/dmestas/edgesync/go-libfossil"
+	"github.com/dmestas/edgesync/go-libfossil/manifest"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
 	"github.com/dmestas/edgesync/go-libfossil/uv"
@@ -42,6 +44,7 @@ type SyncResult struct {
 	Rounds, FilesSent, FilesRecvd int
 	UVFilesSent, UVFilesRecvd     int
 	UVGimmesSent                  int
+	ArtifactsLinked               int
 	Errors                        []string
 }
 
@@ -68,6 +71,7 @@ type session struct {
 	nUvFileRcvd         int
 	nGimmeRcvd          int // cumulative gimmes received across all rounds
 	roundStats          RoundStats
+	dephantomizeHook    func(libfossil.FslID) // called after phantom→real transition
 }
 
 func newSession(r *repo.Repo, opts SyncOpts) *session {
@@ -192,6 +196,14 @@ func Sync(ctx context.Context, r *repo.Repo, t Transport, opts SyncOpts) (result
 			break
 		}
 	}
+
+	// Auto-crosslink after convergence
+	linked, xlinkErr := manifest.Crosslink(s.repo)
+	if xlinkErr != nil {
+		obs.Completed(ctx, sessionEndFromSync(&s.result, opts.ProjectCode), xlinkErr)
+		return &s.result, fmt.Errorf("sync: crosslink: %w", xlinkErr)
+	}
+	s.result.ArtifactsLinked = linked
 
 	obs.Completed(ctx, sessionEndFromSync(&s.result, opts.ProjectCode), nil)
 	return &s.result, nil
