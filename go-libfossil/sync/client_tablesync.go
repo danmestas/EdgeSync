@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/dmestas/edgesync/go-libfossil/hash"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
 )
@@ -28,9 +29,11 @@ func (s *session) buildXTableCards() ([]xfer.Card, error) {
 		if err != nil {
 			return nil, fmt.Errorf("buildXTableCards: marshal def %s: %w", info.Name, err)
 		}
+		schemaHash := hash.SHA1(defJSON)
 		cards = append(cards, &xfer.SchemaCard{
 			Table:   info.Name,
 			Version: 1,
+			Hash:    schemaHash,
 			MTime:   info.MTime,
 			Content: defJSON,
 		})

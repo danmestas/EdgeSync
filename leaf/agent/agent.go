@@ -104,7 +104,7 @@ func New(cfg Config) (*Agent, error) {
 
 	transport := NewNATSTransport(nc, projectCode, 0, cfg.SubjectPrefix)
 
-	return &Agent{
+	a := &Agent{
 		config:      cfg,
 		clock:       cfg.Clock,
 		repo:        r,
@@ -113,7 +113,17 @@ func New(cfg Config) (*Agent, error) {
 		projectCode: projectCode,
 		serverCode:  serverCode,
 		syncNow:     make(chan struct{}, 1),
-	}, nil
+	}
+
+	// Initialize peer registry (log warnings, don't fail startup).
+	if err := a.ensurePeerRegistry(); err != nil {
+		a.logf("warning: ensurePeerRegistry: %v", err)
+	}
+	if err := a.seedPeerRegistry(); err != nil {
+		a.logf("warning: seedPeerRegistry: %v", err)
+	}
+
+	return a, nil
 }
 
 // NewFromParts creates an Agent from pre-built components without performing
@@ -254,6 +264,10 @@ func (a *Agent) pollLoop(ctx context.Context) {
 			}
 			if a.config.PostSyncHook != nil {
 				a.config.PostSyncHook(act.Result)
+			}
+			// Update peer registry after successful sync.
+			if err := a.updatePeerRegistryAfterSync(); err != nil {
+				a.logf("warning: updatePeerRegistryAfterSync: %v", err)
 			}
 		}
 	}

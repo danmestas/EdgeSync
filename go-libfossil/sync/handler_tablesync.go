@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/dmestas/edgesync/go-libfossil/hash"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
 )
@@ -294,9 +295,11 @@ func (h *handler) emitXIGots() error {
 		if err != nil {
 			return fmt.Errorf("handler.emitXIGots: marshal def %s: %w", name, err)
 		}
+		schemaHash := hash.SHA1(defJSON)
 		h.resp = append(h.resp, &xfer.SchemaCard{
 			Table:   name,
 			Version: 1,
+			Hash:    schemaHash,
 			MTime:   st.Info.MTime,
 			Content: defJSON,
 		})
