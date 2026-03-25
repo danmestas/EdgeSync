@@ -281,6 +281,50 @@ func crosslinkControl(r *repo.Repo, srcRID libfossil.FslID, d *deck.Deck) error 
 			return fmt.Errorf("apply tag %q to rid=%d: %w", tc.Name, targetRID, err)
 		}
 	}
+
+	// Generate event row with type='g' and descriptive comment
+	var comment string
+	for _, tc := range d.T {
+		if tc.UUID == "*" {
+			continue
+		}
+		prefix := string(tc.Type)
+		name := tc.Name
+		val := tc.Value
+		switch {
+		case prefix == "*" && name == "branch":
+			comment += fmt.Sprintf(" Move to branch %s.", val)
+		case prefix == "*" && name == "bgcolor":
+			comment += fmt.Sprintf(" Change branch background color to %q.", val)
+		case prefix == "+" && name == "bgcolor":
+			comment += fmt.Sprintf(" Change background color to %q.", val)
+		case prefix == "-" && name == "bgcolor":
+			comment += " Cancel background color."
+		case prefix == "+" && name == "comment":
+			comment += " Edit check-in comment."
+		case prefix == "+" && name == "user":
+			comment += fmt.Sprintf(" Change user to %q.", val)
+		default:
+			switch prefix {
+			case "-":
+				comment += fmt.Sprintf(" Cancel %q.", name)
+			case "+":
+				comment += fmt.Sprintf(" Add %q.", name)
+			case "*":
+				comment += fmt.Sprintf(" Add propagating %q.", name)
+			}
+		}
+	}
+	if comment == "" {
+		comment = " "
+	}
+	if _, err := r.DB().Exec(
+		"REPLACE INTO event(type, mtime, objid, user, comment) VALUES('g', ?, ?, ?, ?)",
+		mtime, srcRID, d.U, comment,
+	); err != nil {
+		return fmt.Errorf("control event: %w", err)
+	}
+
 	return nil
 }
 

@@ -454,6 +454,63 @@ func TestCrosslinkControlArtifact(t *testing.T) {
 	}
 }
 
+func TestCrosslinkControlEventRow(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Create a checkin to target
+	rid, _, err := Checkin(r, CheckinOpts{
+		Files:   []File{{Name: "hello.txt", Content: []byte("hello")}},
+		Comment: "initial commit",
+		User:    "testuser",
+		Time:    time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("Checkin: %v", err)
+	}
+
+	// Create a control artifact via AddTag
+	controlRID, err := tag.AddTag(r, tag.TagOpts{
+		TargetRID: rid,
+		TagName:   "testlabel",
+		TagType:   tag.TagSingleton,
+		Value:     "myvalue",
+		User:      "testuser",
+		Time:      time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("AddTag: %v", err)
+	}
+
+	// Clear tagxref and event to simulate post-clone
+	r.DB().Exec("DELETE FROM tagxref")
+	r.DB().Exec("DELETE FROM event WHERE objid=?", controlRID)
+
+	// Run Crosslink
+	n, err := Crosslink(r)
+	if err != nil {
+		t.Fatalf("Crosslink: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("expected at least 1 artifact crosslinked, got %d", n)
+	}
+
+	// Verify event row (type='g') exists for the control artifact
+	var eventType, comment string
+	err = r.DB().QueryRow(
+		"SELECT type, comment FROM event WHERE objid=?", controlRID,
+	).Scan(&eventType, &comment)
+	if err != nil {
+		t.Fatalf("event query: %v", err)
+	}
+	if eventType != "g" {
+		t.Errorf("event type=%q, want 'g'", eventType)
+	}
+	if comment == "" {
+		t.Errorf("event comment is empty, expected descriptive text")
+	}
+	t.Logf("event comment: %q", comment)
+}
+
 func TestDiscoveryQueryIdempotent(t *testing.T) {
 	r := setupTestRepo(t)
 
