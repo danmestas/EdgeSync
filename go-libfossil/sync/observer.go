@@ -47,6 +47,19 @@ type HandleEnd struct {
 	Err            error
 }
 
+// TableSyncStart describes the beginning of a table sync operation.
+type TableSyncStart struct {
+	Table     string
+	LocalRows int
+}
+
+// TableSyncEnd describes the result of a table sync operation.
+type TableSyncEnd struct {
+	Table    string
+	Sent     int
+	Received int
+}
+
 // Observer receives lifecycle callbacks during sync and clone operations.
 // A single Observer instance may be shared across multiple concurrent sessions.
 // Pass nil for no-op default.
@@ -66,6 +79,10 @@ type Observer interface {
 	// Server-side request lifecycle.
 	HandleStarted(ctx context.Context, info HandleStart) context.Context
 	HandleCompleted(ctx context.Context, info HandleEnd)
+
+	// Table sync lifecycle.
+	TableSyncStarted(ctx context.Context, info TableSyncStart)
+	TableSyncCompleted(ctx context.Context, info TableSyncEnd)
 }
 
 // nopObserver is the default observer that does nothing.
@@ -78,6 +95,8 @@ func (nopObserver) Completed(_ context.Context, _ SessionEnd, _ error)          
 func (nopObserver) Error(_ context.Context, _ error)                               {}
 func (nopObserver) HandleStarted(ctx context.Context, _ HandleStart) context.Context { return ctx }
 func (nopObserver) HandleCompleted(_ context.Context, _ HandleEnd)                 {}
+func (nopObserver) TableSyncStarted(_ context.Context, _ TableSyncStart)           {}
+func (nopObserver) TableSyncCompleted(_ context.Context, _ TableSyncEnd)           {}
 
 // resolveObserver returns obs if non-nil, otherwise nopObserver{}.
 func resolveObserver(obs Observer) Observer {

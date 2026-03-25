@@ -4,6 +4,7 @@ package agent
 
 import (
 	"errors"
+	"os"
 	"time"
 
 	"github.com/dmestas/edgesync/go-libfossil/simio"
@@ -36,6 +37,10 @@ type Config struct {
 
 	// UV enables syncing unversioned files (wiki, forum, attachments).
 	UV bool
+
+	// PeerID uniquely identifies this agent in the peer registry.
+	// Defaults to hostname if not set.
+	PeerID string
 
 	// SubjectPrefix is the NATS subject prefix (default "fossil").
 	// The full subject is "<SubjectPrefix>.<project-code>.sync".
@@ -87,6 +92,13 @@ func (c *Config) applyDefaults() {
 	if !c.Push && !c.Pull {
 		c.Push = true
 		c.Pull = true
+	}
+	if c.PeerID == "" {
+		if h, err := os.Hostname(); err == nil {
+			c.PeerID = h
+		} else {
+			c.PeerID = "unknown"
+		}
 	}
 	if c.SubjectPrefix == "" {
 		c.SubjectPrefix = "fossil"

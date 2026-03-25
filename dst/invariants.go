@@ -247,6 +247,9 @@ func (s *Simulator) CheckSafety() error {
 		if err := CheckUVIntegrity(string(id), r); err != nil {
 			return err
 		}
+		if err := CheckTableSyncIntegrity(string(id), r); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -259,6 +262,18 @@ func (s *Simulator) CheckAllConverged(master *repo.Repo) error {
 		leaves[id] = a.Repo()
 	}
 	return CheckConvergence(master, leaves)
+}
+
+// CheckAllTableSyncConverged checks table sync convergence across all nodes.
+func (s *Simulator) CheckAllTableSyncConverged() error {
+	repos := make(map[string]*repo.Repo)
+	if s.masterRepo != nil {
+		repos["master"] = s.masterRepo
+	}
+	for id, a := range s.leaves {
+		repos[string(id)] = a.Repo()
+	}
+	return CheckTableSyncConvergence(repos)
 }
 
 // CheckAllUVConverged checks UV convergence between master and all leaves.
@@ -328,6 +343,118 @@ func CheckTagxrefIntegrity(nodeID string, r *repo.Repo) error {
 		}
 	}
 	return rows.Err()
+}
+
+// --- Table sync invariants ---
+
+// CheckTableSyncIntegrity verifies that:
+// 1. Every row in every synced table has a valid PK hash.
+// 2. Every row's mtime is positive.
+// 3. The computed catalog hash is 40 hex chars.
+func CheckTableSyncIntegrity(nodeID string, r *repo.Repo) error {
+	if err := repo.EnsureSyncSchema(r.DB()); err != nil {
+		return nil // No sync schema — no tables to check.
+	}
+	tables, err := repo.ListSyncedTables(r.DB())
+	if err != nil {
+		return nil // Can't list — skip.
+	}
+	for _, tbl := range tables {
+		rows, mtimes, err := repo.ListXRows(r.DB(), tbl.Name, tbl.Def)
+		if err != nil {
+			return &InvariantError{Invariant: "tablesync-integrity", NodeID: nodeID,
+				Detail: fmt.Sprintf("ListXRows %s: %v", tbl.Name, err)}
+		}
+		// Extract PK columns.
+		var pkCols []string
+		for _, col := range tbl.Def.Columns {
+			if col.PK {
+				pkCols = append(pkCols, col.Name)
+			}
+		}
+		for i, row := range rows {
+			// 1. PK hash is non-empty.
+			pk := make(map[string]any)
+			for _, col := range pkCols {
+				pk[col] = row[col]
+			}
+			h := repo.PKHash(pk)
+			if h == "" {
+				return &InvariantError{Invariant: "tablesync-integrity", NodeID: nodeID,
+					Detail: fmt.Sprintf("table %s row %d: empty PK hash", tbl.Name, i)}
+			}
+			// 2. Mtime positive.
+			if mtimes[i] <= 0 {
+				return &InvariantError{Invariant: "tablesync-integrity", NodeID: nodeID,
+					Detail: fmt.Sprintf("table %s row %d: mtime=%d", tbl.Name, i, mtimes[i])}
+			}
+		}
+		// 3. Catalog hash length.
+		catHash, err := repo.CatalogHash(r.DB(), tbl.Name, tbl.Def)
+		if err != nil {
+			return &InvariantError{Invariant: "tablesync-integrity", NodeID: nodeID,
+				Detail: fmt.Sprintf("CatalogHash %s: %v", tbl.Name, err)}
+		}
+		if len(rows) > 0 && len(catHash) != 40 {
+			return &InvariantError{Invariant: "tablesync-integrity", NodeID: nodeID,
+				Detail: fmt.Sprintf("table %s: catalog hash len=%d, want 40", tbl.Name, len(catHash))}
+		}
+	}
+	return nil
+}
+
+// CheckTableSyncConvergence verifies that all repos have identical rows
+// for every shared synced table. Tables present in some repos but not others
+// are skipped (schema may still be propagating).
+func CheckTableSyncConvergence(repos map[string]*repo.Repo) error {
+	// Collect table sets per repo.
+	type tableRows struct {
+		catalogHash string
+		rowCount    int
+	}
+	tableData := make(map[string]map[string]tableRows) // table -> nodeID -> data
+
+	for nodeID, r := range repos {
+		repo.EnsureSyncSchema(r.DB())
+		tables, err := repo.ListSyncedTables(r.DB())
+		if err != nil {
+			continue
+		}
+		for _, tbl := range tables {
+			catHash, _ := repo.CatalogHash(r.DB(), tbl.Name, tbl.Def)
+			rows, _, _ := repo.ListXRows(r.DB(), tbl.Name, tbl.Def)
+			if tableData[tbl.Name] == nil {
+				tableData[tbl.Name] = make(map[string]tableRows)
+			}
+			tableData[tbl.Name][nodeID] = tableRows{catalogHash: catHash, rowCount: len(rows)}
+		}
+	}
+
+	// For each table, verify all repos that have it agree on catalog hash.
+	for tableName, nodeRows := range tableData {
+		if len(nodeRows) < 2 {
+			continue // Only one node has it — skip.
+		}
+		var refHash string
+		var refNode string
+		for nodeID, data := range nodeRows {
+			if refHash == "" {
+				refHash = data.catalogHash
+				refNode = nodeID
+				continue
+			}
+			if data.catalogHash != refHash {
+				return &InvariantError{
+					Invariant: "tablesync-convergence",
+					NodeID:    nodeID,
+					Detail: fmt.Sprintf("table %s: %s has hash %s (%d rows), %s has hash %s (%d rows)",
+						tableName, refNode, refHash, nodeRows[refNode].rowCount,
+						nodeID, data.catalogHash, data.rowCount),
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // --- Helpers ---

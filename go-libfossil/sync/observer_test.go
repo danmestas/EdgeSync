@@ -60,6 +60,10 @@ func (r *recordingObserver) HandleCompleted(_ context.Context, _ HandleEnd) {
 	r.handleCompleted++
 }
 
+func (r *recordingObserver) TableSyncStarted(_ context.Context, _ TableSyncStart) {}
+
+func (r *recordingObserver) TableSyncCompleted(_ context.Context, _ TableSyncEnd) {}
+
 func TestNopObserverDoesNotPanic(t *testing.T) {
 	var obs nopObserver
 	ctx := context.Background()
@@ -70,6 +74,8 @@ func TestNopObserverDoesNotPanic(t *testing.T) {
 	obs.Error(ctx, nil)
 	ctx = obs.HandleStarted(ctx, HandleStart{Operation: "sync"})
 	obs.HandleCompleted(ctx, HandleEnd{})
+	obs.TableSyncStarted(ctx, TableSyncStart{Table: "test", LocalRows: 10})
+	obs.TableSyncCompleted(ctx, TableSyncEnd{Table: "test", Sent: 5, Received: 3})
 }
 
 func TestResolveObserverNil(t *testing.T) {
@@ -84,6 +90,8 @@ func TestResolveObserverNil(t *testing.T) {
 	obs.Error(ctx, nil)
 	ctx = obs.HandleStarted(ctx, HandleStart{})
 	obs.HandleCompleted(ctx, HandleEnd{})
+	obs.TableSyncStarted(ctx, TableSyncStart{})
+	obs.TableSyncCompleted(ctx, TableSyncEnd{})
 }
 
 func TestSyncCallsObserverHooks(t *testing.T) {

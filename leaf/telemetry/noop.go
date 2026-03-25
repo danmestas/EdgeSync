@@ -47,3 +47,7 @@ func (*OTelObserver) HandleStarted(ctx context.Context, _ libsync.HandleStart) c
 }
 
 func (*OTelObserver) HandleCompleted(_ context.Context, _ libsync.HandleEnd) {}
+
+func (*OTelObserver) TableSyncStarted(_ context.Context, _ libsync.TableSyncStart) {}
+
+func (*OTelObserver) TableSyncCompleted(_ context.Context, _ libsync.TableSyncEnd) {}

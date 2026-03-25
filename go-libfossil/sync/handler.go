@@ -87,6 +87,9 @@ type handler struct {
 	reqClusters   bool // client sent pragma req-clusters
 	filesSent     int  // files sent in response (for observer)
 	filesRecvd    int  // files received from client (for observer)
+	syncedTables  map[string]*SyncedTable // cached table definitions
+	xrowsSent     int  // table sync rows sent
+	xrowsRecvd    int  // table sync rows received
 
 	// Auth state
 	user   string // verified username ("nobody" if no login card)
@@ -124,6 +127,11 @@ func (h *handler) handleLoginCard(c *xfer.LoginCard) {
 func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, error) {
 	// Initialize auth state from nobody user.
 	h.initAuth()
+
+	// Load synced tables.
+	if err := h.loadSyncedTables(); err != nil {
+		return nil, err
+	}
 
 	// First pass: resolve login cards before other control cards.
 	for _, card := range req.Cards {
@@ -184,6 +192,10 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 		if err := h.emitIGots(); err != nil {
 			return nil, err
 		}
+		// Emit xigots for table sync.
+		if err := h.emitXIGots(); err != nil {
+			return nil, err
+		}
 	}
 
 	// If clone, emit paginated file cards.
@@ -199,7 +211,7 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 func (h *handler) handleControlCard(card xfer.Card) {
 	switch c := card.(type) {
 	case *xfer.LoginCard:
-		return // Already processed in first pass.
+		return // Already processed in first pass (initAuth/handleLoginCard).
 	case *xfer.PragmaCard:
 		if c.Name == "uv-hash" && len(c.Values) >= 1 {
 			if err := h.handlePragmaUVHash(c.Values[0]); err != nil {
@@ -207,6 +219,8 @@ func (h *handler) handleControlCard(card xfer.Card) {
 					Message: fmt.Sprintf("uv-hash: %v", err),
 				})
 			}
+		} else if c.Name == "xtable-hash" && len(c.Values) >= 2 {
+			h.handlePragmaXTableHash(c.Values[0], c.Values[1])
 		}
 		if c.Name == "req-clusters" {
 			h.reqClusters = true
@@ -238,6 +252,8 @@ func (h *handler) handleControlCard(card xfer.Card) {
 		}
 	case *xfer.CloneSeqNoCard:
 		h.cloneSeq = c.SeqNo
+	case *xfer.SchemaCard:
+		h.handleSchemaCard(c)
 	}
 }
 
@@ -259,6 +275,12 @@ func (h *handler) handleDataCard(card xfer.Card) error {
 		return h.handleUVGimme(c)
 	case *xfer.UVFileCard:
 		return h.handleUVFile(c)
+	case *xfer.XIGotCard:
+		return h.handleXIGot(c)
+	case *xfer.XGimmeCard:
+		return h.handleXGimme(c)
+	case *xfer.XRowCard:
+		return h.handleXRow(c)
 	}
 	return nil
 }
