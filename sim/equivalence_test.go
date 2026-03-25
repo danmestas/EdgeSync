@@ -12,6 +12,7 @@ import (
 	"time"
 
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
+	"github.com/dmestas/edgesync/go-libfossil/auth"
 	"github.com/dmestas/edgesync/go-libfossil/manifest"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
@@ -257,8 +258,8 @@ func fossilInit(t *testing.T, dir, name string) string {
 	}
 	// Grant nobody user capabilities for unauthenticated sync.
 	// fossil init may already create the nobody user, so "user new" can fail — that's fine.
-	exec.Command("fossil", "user", "new", "nobody", "", "cghijknorswz", "-R", path).Run()
-	if out, err := exec.Command("fossil", "user", "capabilities", "nobody", "cghijknorswz", "-R", path).CombinedOutput(); err != nil {
+	exec.Command("fossil", "user", "new", "nobody", "", "cghijknorswy", "-R", path).Run()
+	if out, err := exec.Command("fossil", "user", "capabilities", "nobody", "cghijknorswy", "-R", path).CombinedOutput(); err != nil {
 		t.Fatalf("fossil user capabilities nobody: %v\n%s", err, out)
 	}
 	return path
@@ -424,6 +425,65 @@ func testFossilToLeaf(t *testing.T, commits []map[string]string, messages []stri
 	// 4. fossil open the leaf repo + verify files.
 	leafWorkDir := fossilCheckout(t, leafPath)
 	assertFiles(t, leafWorkDir, expected)
+}
+
+// TestCapabilityLetterCrossCheck creates a repo with `fossil new`, reads the
+// default nobody user's capabilities, and verifies go-libfossil's auth
+// functions return the correct results. This catches capability letter
+// mismatches between Fossil and go-libfossil (e.g., using 'z' instead of 'y'
+// for WrUnver).
+func TestCapabilityLetterCrossCheck(t *testing.T) {
+	requireFossil(t)
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+
+	dir := t.TempDir()
+	repoPath := filepath.Join(dir, "caps.fossil")
+	runFossil(t, "new", repoPath)
+
+	// Read the default nobody user caps that `fossil new` creates.
+	r, err := repo.Open(repoPath)
+	if err != nil {
+		t.Fatalf("repo.Open: %v", err)
+	}
+	defer r.Close()
+
+	var fossilCaps string
+	if err := r.DB().QueryRow("SELECT cap FROM user WHERE login='nobody'").Scan(&fossilCaps); err != nil {
+		t.Fatalf("read nobody caps: %v", err)
+	}
+	t.Logf("Fossil nobody caps: %q", fossilCaps)
+
+	// Fossil's default nobody has 'o' (pull) and 'g' (clone) but NOT 'i'
+	// (push) and NOT 'y' (WrUnver). Verify our functions agree.
+	if !auth.CanPull(fossilCaps) {
+		t.Error("CanPull should be true for Fossil's default nobody")
+	}
+	if !auth.CanClone(fossilCaps) {
+		t.Error("CanClone should be true for Fossil's default nobody")
+	}
+	if auth.CanPush(fossilCaps) {
+		t.Error("CanPush should be false for Fossil's default nobody")
+	}
+	if auth.CanPushUV(fossilCaps) {
+		t.Error("CanPushUV should be false for Fossil's default nobody")
+	}
+
+	// Now grant 'y' (WrUnver) and verify CanPushUV recognizes it.
+	newCaps := fossilCaps + "y"
+	if _, err := r.DB().Exec("UPDATE user SET cap=? WHERE login='nobody'", newCaps); err != nil {
+		t.Fatalf("update caps: %v", err)
+	}
+	if !auth.CanPushUV(newCaps) {
+		t.Error("CanPushUV should be true after granting 'y'")
+	}
+
+	// Verify that 'z' (Zip) does NOT satisfy CanPushUV — this is the
+	// exact bug that was missed: 'z' is Zip download, not WrUnver.
+	if auth.CanPushUV("oiz") {
+		t.Error("CanPushUV must not accept 'z' — that's Zip, not WrUnver")
+	}
 }
 
 func TestLeafToLeaf(t *testing.T) {

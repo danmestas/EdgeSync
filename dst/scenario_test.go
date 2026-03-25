@@ -1366,7 +1366,7 @@ func TestScenarioAuthBuggifyBadNonce(t *testing.T) {
 		// Create a sync user in the master repo.
 		masterRepo.DB().Exec(
 			"INSERT OR IGNORE INTO user(login, pw, cap) VALUES(?, ?, ?)",
-			string(id), hashPW(pc, string(id), "leafpass"), "cghijknorswz",
+			string(id), hashPW(pc, string(id), "leafpass"), "cghijknorswy",
 		)
 	}
 

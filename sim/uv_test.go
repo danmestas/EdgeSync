@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
 	"github.com/dmestas/edgesync/go-libfossil/sync"
 	"github.com/dmestas/edgesync/go-libfossil/uv"
-	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
 )
 
 // TestSimUVSyncPull verifies that UV files added via fossil CLI can be
@@ -353,6 +353,111 @@ func TestSimUVRoundTrip(t *testing.T) {
 	}
 
 	t.Log("PASS: UV round-trip pull→modify→push via HTTP")
+}
+
+// TestSimUVSyncAgainstFossilServe pushes UV files from go-libfossil to a real
+// `fossil serve` instance. This catches capability letter mismatches: if
+// go-libfossil checked 'z' instead of 'y' for CanPushUV, the server-side
+// handler would gate on the wrong letter when using Fossil-created user tables.
+//
+// The test creates a Fossil repo with nobody granted 'y' (WrUnver), serves it,
+// then uses go-libfossil to push UV files and verifies they arrive.
+func TestSimUVSyncAgainstFossilServe(t *testing.T) {
+	if !hasFossil() {
+		t.Skip("fossil binary not found in PATH")
+	}
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+
+	// 1. Create Fossil repo and grant nobody UV push capability ('y').
+	repoPath := filepath.Join(dir, "fossil-server.fossil")
+	runFossil(t, "new", repoPath)
+	// Grant nobody: pull + push + UV push (o + i + y).
+	exec.Command("fossil", "user", "capabilities", "nobody", "oiy", "-R", repoPath).Run()
+
+	// Seed a UV file on the server so we can test pull too.
+	uvFile := filepath.Join(dir, "server-doc.txt")
+	os.WriteFile(uvFile, []byte("from fossil"), 0644)
+	runFossil(t, "uv", "add", uvFile, "--as", "server-doc.txt", "-R", repoPath)
+
+	// 2. Start fossil serve.
+	serverURL := startFossilServe(t, repoPath)
+
+	// 3. Create a go-libfossil repo and sync UV files.
+	clientPath := filepath.Join(dir, "leaf-client.fossil")
+	clientRepo, err := repo.Create(clientPath, "testuser", simio.CryptoRand{})
+	if err != nil {
+		t.Fatalf("repo.Create: %v", err)
+	}
+	defer clientRepo.Close()
+	uv.EnsureSchema(clientRepo.DB())
+
+	// Read project/server codes from the Fossil repo.
+	fossilRepo, err := repo.Open(repoPath)
+	if err != nil {
+		t.Fatalf("open fossil repo for codes: %v", err)
+	}
+	var projCode, srvCode string
+	fossilRepo.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projCode)
+	fossilRepo.DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&srvCode)
+	fossilRepo.Close()
+
+	// Set matching project code on client.
+	clientRepo.DB().Exec("UPDATE config SET value=? WHERE name='project-code'", projCode)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	transport := &sync.HTTPTransport{URL: serverURL}
+
+	// Pull UV files from fossil serve.
+	result, err := sync.Sync(ctx, clientRepo, transport, sync.SyncOpts{
+		Pull: true, UV: true,
+		ProjectCode: projCode, ServerCode: srvCode,
+	})
+	if err != nil {
+		t.Fatalf("Sync pull: %v", err)
+	}
+	t.Logf("Pull sync: files_recv=%d", result.FilesRecvd)
+
+	// Verify the UV file arrived.
+	content, _, _, err := uv.Read(clientRepo.DB(), "server-doc.txt")
+	if err != nil {
+		t.Fatalf("uv.Read after pull: %v", err)
+	}
+	if string(content) != "from fossil" {
+		t.Errorf("pulled UV content = %q, want %q", content, "from fossil")
+	}
+
+	// Now push a UV file back to fossil serve.
+	uv.Write(clientRepo.DB(), "leaf-doc.txt", []byte("from leaf"), time.Now().Unix())
+	_, err = sync.Sync(ctx, clientRepo, transport, sync.SyncOpts{
+		Push: true, Pull: true, UV: true,
+		ProjectCode: projCode, ServerCode: srvCode,
+	})
+	if err != nil {
+		t.Fatalf("Sync push: %v", err)
+	}
+
+	// Verify by reading the fossil repo directly.
+	fossilRepo2, err := repo.Open(repoPath)
+	if err != nil {
+		t.Fatalf("reopen fossil repo: %v", err)
+	}
+	defer fossilRepo2.Close()
+
+	pushed, _, _, err := uv.Read(fossilRepo2.DB(), "leaf-doc.txt")
+	if err != nil {
+		t.Fatalf("uv.Read pushed file: %v", err)
+	}
+	if string(pushed) != "from leaf" {
+		t.Errorf("pushed UV content = %q, want %q", pushed, "from leaf")
+	}
+
+	t.Log("PASS: UV sync (pull + push) against real fossil serve")
 }
 
 // runFossil runs a fossil command and fails the test on error.
