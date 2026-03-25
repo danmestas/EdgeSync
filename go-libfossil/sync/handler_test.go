@@ -1186,3 +1186,55 @@ func TestEmitCloneBatchIncludesPrivateWhenAuthorized(t *testing.T) {
 		t.Error("expected PrivateCard prefix for private blob in clone batch")
 	}
 }
+
+func TestSendAllClustersExcludesPrivate(t *testing.T) {
+	r := setupSyncTestRepo(t)
+
+	// Store 200 blobs so clustering triggers.
+	for i := 0; i < 200; i++ {
+		data := []byte(fmt.Sprintf("cluster-priv-blob-%04d", i))
+		if _, _, err := blob.Store(r.DB(), data); err != nil {
+			t.Fatalf("Store blob %d: %v", i, err)
+		}
+	}
+
+	n, err := content.GenerateClusters(r.DB())
+	if err != nil {
+		t.Fatalf("GenerateClusters: %v", err)
+	}
+	if n == 0 {
+		t.Fatal("expected at least 1 cluster")
+	}
+
+	// Mark the cluster artifact itself as private.
+	var clusterRid int
+	err = r.DB().QueryRow(`
+		SELECT tx.rid FROM tagxref tx
+		WHERE tx.tagid = 7
+		LIMIT 1`,
+	).Scan(&clusterRid)
+	if err != nil {
+		t.Fatalf("find cluster rid: %v", err)
+	}
+	content.MakePrivate(r.DB(), int64(clusterRid))
+
+	resp, err := HandleSync(context.Background(), r, &xfer.Message{
+		Cards: []xfer.Card{
+			&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
+			&xfer.PragmaCard{Name: "req-clusters"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleSync: %v", err)
+	}
+
+	// The private cluster should not appear in igots.
+	var clusterUUID string
+	r.DB().QueryRow("SELECT uuid FROM blob WHERE rid=?", clusterRid).Scan(&clusterUUID)
+
+	for _, c := range resp.Cards {
+		if ig, ok := c.(*xfer.IGotCard); ok && ig.UUID == clusterUUID {
+			t.Error("private cluster blob should be excluded from sendAllClusters")
+		}
+	}
+}
