@@ -1061,3 +1061,72 @@ func TestCrosslinkForum(t *testing.T) {
 		t.Errorf("event comment=%q, want 'Post: Discussion about sync'", comment)
 	}
 }
+
+func TestCrosslinkTwoPass(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Store a wiki manifest blob (Type=Wiki, L="TwoPassPage", U="test", W=content, D=time).
+	wikiTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	wikiContent := []byte("Two-pass wiki content")
+	wikiDeck := &deck.Deck{
+		Type: deck.Wiki,
+		L:    "TwoPassPage",
+		U:    "testuser",
+		W:    wikiContent,
+		D:    wikiTime,
+	}
+	wikiBytes, err := wikiDeck.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal wiki: %v", err)
+	}
+	wikiRid, _, err := blob.Store(r.DB(), wikiBytes)
+	if err != nil {
+		t.Fatalf("Store wiki: %v", err)
+	}
+
+	// Create a checkin via Checkin().
+	checkinRid, _, err := Checkin(r, CheckinOpts{
+		Files:   []File{{Name: "file.txt", Content: []byte("checkin content")}},
+		Comment: "test checkin",
+		User:    "testuser",
+		Time:    time.Date(2024, 1, 15, 11, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("Checkin: %v", err)
+	}
+
+	// Clear all event and tagxref rows to simulate post-clone state.
+	r.DB().Exec("DELETE FROM event")
+	r.DB().Exec("DELETE FROM tagxref")
+	r.DB().Exec("DELETE FROM plink")
+	r.DB().Exec("DELETE FROM leaf")
+	r.DB().Exec("DELETE FROM mlink")
+
+	// Call Crosslink once.
+	n, err := Crosslink(r)
+	if err != nil {
+		t.Fatalf("Crosslink: %v", err)
+	}
+	if n < 2 {
+		t.Fatalf("expected n >= 2 artifacts crosslinked, got %d", n)
+	}
+	t.Logf("crosslinked %d artifacts", n)
+
+	// Verify: wiki event type='w' exists.
+	var wikiEventType string
+	err = r.DB().QueryRow("SELECT type FROM event WHERE objid=?", wikiRid).Scan(&wikiEventType)
+	if err != nil {
+		t.Errorf("wiki event query: %v", err)
+	} else if wikiEventType != "w" {
+		t.Errorf("wiki event type=%q, want 'w'", wikiEventType)
+	}
+
+	// Verify: checkin event type='ci' exists.
+	var checkinEventType string
+	err = r.DB().QueryRow("SELECT type FROM event WHERE objid=?", checkinRid).Scan(&checkinEventType)
+	if err != nil {
+		t.Errorf("checkin event query: %v", err)
+	} else if checkinEventType != "ci" {
+		t.Errorf("checkin event type=%q, want 'ci'", checkinEventType)
+	}
+}
