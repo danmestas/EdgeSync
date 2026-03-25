@@ -73,7 +73,7 @@ Z <md5-checksum>
 
 ### 3. Crosslink Cluster Processing (`manifest/crosslink.go`)
 
-**New function: `crosslinkCluster(tx *db.Tx, rid int, d *deck.Deck) error`**
+**New function: `CrosslinkCluster(q db.Querier, rid FslID, d *deck.Deck) error`** (exported — called by `content.GenerateClusters()` from another package)
 
 Called when a cluster artifact is crosslinked (locally generated or received via sync):
 
