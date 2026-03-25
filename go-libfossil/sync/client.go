@@ -157,7 +157,9 @@ func (s *session) sendUnclustered() ([]xfer.Card, error) {
 	rows, err := s.repo.DB().Query(`
 		SELECT b.uuid FROM unclustered u JOIN blob b ON b.rid=u.rid
 		WHERE b.size >= 0
-		AND NOT EXISTS(SELECT 1 FROM phantom WHERE rid=u.rid)`,
+		AND NOT EXISTS(SELECT 1 FROM phantom WHERE rid=u.rid)
+		AND NOT EXISTS(SELECT 1 FROM shun WHERE uuid=b.uuid)
+		AND NOT EXISTS(SELECT 1 FROM private WHERE rid=u.rid)`,
 	)
 	if err != nil {
 		return nil, err
