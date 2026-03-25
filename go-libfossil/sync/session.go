@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
 	"github.com/dmestas/edgesync/go-libfossil/uv"
@@ -67,6 +68,7 @@ type session struct {
 	nUvGimmeSent        int
 	nUvFileRcvd         int
 	roundStats          RoundStats
+	dephantomizeHook    func(libfossil.FslID) // called after phantom→real transition
 }
 
 func newSession(r *repo.Repo, opts SyncOpts) *session {

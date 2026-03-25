@@ -503,7 +503,24 @@ func storeReceivedFile(r *repo.Repo, uuid, deltaSrc string, payload []byte) erro
 	}
 
 	return r.WithTx(func(tx *db.Tx) error {
-		if _, ok := blob.Exists(tx, uuid); ok {
+		existingRid, exists := blob.Exists(tx, uuid)
+		if exists {
+			var size int64
+			tx.QueryRow("SELECT size FROM blob WHERE rid=?", existingRid).Scan(&size)
+			if size != -1 {
+				return nil // real blob already exists
+			}
+			// Fill phantom: update blob content, remove from phantom table.
+			compressed, err := blob.Compress(fullContent)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec("UPDATE blob SET size=?, content=?, rcvid=1 WHERE rid=?",
+				len(fullContent), compressed, existingRid); err != nil {
+				return err
+			}
+			tx.Exec("DELETE FROM phantom WHERE rid=?", existingRid)
+			tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", existingRid)
 			return nil
 		}
 		compressed, err := blob.Compress(fullContent)
