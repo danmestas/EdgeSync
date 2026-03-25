@@ -63,15 +63,23 @@ Declared per-table in `_sync_schema.conflict`:
 
 ## Wire Protocol
 
-Four new card types added to the xfer protocol.
+Four new card types added to the xfer protocol. All use the same encoding conventions as existing cards: arguments are space-separated on a single line, with Fossil-encoding (`\s` for space, `\n` for newline, `\\` for backslash) applied to values that may contain special characters.
+
+### Encoding conventions
+
+**JSON payloads** (`schema` and `xrow` cards): Follow the `config` card pattern — the card header line includes a `SIZE` field, followed by `\n` and then `SIZE` bytes of raw JSON. This avoids needing to Fossil-encode the entire JSON blob.
+
+**Primary key hash** (`pk_hash`): SHA1 of the JSON-serialized primary key values, with keys sorted lexicographically. For single-column PKs: `SHA1(json.Marshal({"peer_id":"leaf-01"}))`. For composite PKs: `SHA1(json.Marshal({"col1":"a","col2":"b"}))` with keys sorted.
+
+**Catalog hash**: SHA1 of all rows' `pk_hash + " " + strconv.FormatInt(mtime, 10) + "\n"` concatenated, sorted by `pk_hash`. Matches UV's `ContentHash()` pattern.
 
 ### `schema` card
 
 ```
-schema <table_name> <version> <hash> <mtime> <json_def>
+schema <table_name> <version> <hash> <mtime> <size>\n<json_def>
 ```
 
-`json_def` is Fossil-encoded JSON:
+`json_def` is raw JSON (not Fossil-encoded), with length specified by `size`:
 
 ```json
 {
@@ -110,10 +118,10 @@ xgimme <table_name> <pk_hash>
 ### `xrow` card
 
 ```
-xrow <table_name> <pk_hash> <mtime> <json_payload>
+xrow <table_name> <pk_hash> <mtime> <size>\n<json_payload>
 ```
 
-Full row data as a JSON object. Analogous to `uvfile`.
+Full row data as raw JSON (length specified by `size`), following the `config` card pattern. Analogous to `uvfile`.
 
 ### Short-circuit optimization
 
@@ -123,7 +131,7 @@ Per-table catalog hash to skip exchange when tables are already in sync:
 pragma xtable-hash <table_name> <catalog_hash>
 ```
 
-If both sides match, skip `xigot`/`xgimme` for that table entirely. Catalog hash is computed as SHA1 of all `(pk_hash, mtime)` pairs sorted by pk_hash.
+If both sides match, skip `xigot`/`xgimme` for that table entirely. Catalog hash computation is defined in the "Encoding conventions" section above. Dispatched via `handlePragmaXTableHash(tableName, hash)` in `handler_tablesync.go`, called from `handleControlCard()` when `pragma.Name == "xtable-hash"`.
 
 ### Sync round flow
 
@@ -149,7 +157,7 @@ Client                              Server
 ### Handler phases
 
 1. **Control cards** — `login`, `push`, `pull`, `clone`, `pragma`, `schema`
-2. **Data cards** — `file`, `cfile`, `igot`, `gimme`, UV cards, `xigot`, `xgimme`, `xrow`
+2. **Data cards** — `file`, `cfile`, `igot`, `gimme`, `xigot`, `xrow`, `xgimme`, UV cards (`uvigot`, `uvfile`, `uvgimme`)
 
 Schema cards in the control phase guarantee tables exist before data arrives.
 
@@ -183,6 +191,10 @@ type syncedTableMeta struct {
 
 ### Conflict enforcement at `xrow` receipt
 
+Identity for enforcement comes from the `LoginCard.User` field (`h.loginUser`), which is already tracked by the handler. In leaf-to-leaf sync, both peers run `HandleSync` on their end of the connection — enforcement happens on the **receiving** side (the peer processing the incoming `xrow` card).
+
+For `owner-write`, an `_owner TEXT` column is automatically injected into the extension table (alongside `mtime`). It is set to `loginUser` on first insert and immutable thereafter.
+
 ```go
 func (h *handler) handleXRow(table *syncedTableMeta, card *XRowCard) error {
     switch table.Conflict {
@@ -198,7 +210,7 @@ func (h *handler) handleXRow(table *syncedTableMeta, card *XRowCard) error {
         }
     case "owner-write":
         local, _ := h.lookupRow(table.Name, card.PKHash)
-        if local != nil && local.Owner != "" && local.Owner != h.senderID {
+        if local != nil && local.Owner != "" && local.Owner != h.loginUser {
             return fmt.Errorf("owner-write violation: row owned by %s", local.Owner)
         }
     }
@@ -212,7 +224,7 @@ func (h *handler) handleXRow(table *syncedTableMeta, card *XRowCard) error {
 
 1. **On startup** — load `_sync_schema` from local repo, populate own `x_peer_registry` row.
 2. **Each sync round** — include `schema`, `pragma xtable-hash`, and `xigot` cards alongside existing cards.
-3. **After sync** — update own peer registry row (`last_sync`, `repo_hash`).
+3. **After successful sync convergence** — update own peer registry row (`last_sync`, `repo_hash`) via `PostSyncHook` (only on success, not per-round).
 
 ### Advisory policy checks
 
@@ -303,20 +315,24 @@ Sim tests in `sim/` with real NATS:
 
 ## Schema Evolution
 
+V1 supports **append-only** schema evolution (ADD COLUMN only). Type changes and column removal require manual migration (drop table + re-introduce).
+
 When a table needs new columns (v1 → v2):
 
 1. User runs `edgesync schema alter peer_registry --add-column region:text`
 2. Local `_sync_schema` version incremented, column added
-3. Schema card with new version propagates on next sync
-4. Receivers compare version: if incoming > local, run `ALTER TABLE x_<name> ADD COLUMN ...`
+3. Schema card with new version auto-propagates on next sync — receiving peers apply `ALTER TABLE` automatically when incoming version > local version
+4. Receivers run `ALTER TABLE x_<name> ADD COLUMN ...`
 5. Existing rows unaffected — new column is NULL until populated
+6. Schema downgrades are not supported — once a peer receives v2, it stays at v2
 
 ## Security Considerations
 
 - **Namespace protection**: `x_` prefix enforced. Schema cards targeting Fossil core tables rejected.
-- **Schema introduction**: Only via explicit CLI action. Peers accept schema cards from any authenticated peer (future: restrict to admin role).
-- **Conflict enforcement**: Server-side in `HandleSync`. Client-side advisory only.
-- **SQL injection**: Table and column names validated against `[a-z_][a-z0-9_]*` allowlist. JSON payloads parameterized, never interpolated.
+- **Schema introduction**: Only via explicit CLI action locally. During sync, peers accept schema cards from any authenticated peer (v1 trust model). A `_sync_schema.origin` column tracks `local` vs `remote` for future policy enforcement (e.g. admin-only schema introduction).
+- **Conflict enforcement**: Server-side in `HandleSync` (real security). Client-side advisory only (UX). In leaf-to-leaf topology, both peers enforce on their receiving side.
+- **SQL injection**: All table and column names validated by `validateTableName(name string) error` in `repo/tablesync.go` against `^[a-z_][a-z0-9_]*$` allowlist before any DDL or DML. JSON payloads always parameterized via `?` placeholders, never interpolated into SQL.
+- **Scaling**: Linear `xigot` exchange is practical up to ~1000 rows per table. Beyond that, consider Bloom filter optimization (`pragma xtable-bloom`) as future work.
 
 ## Open Questions
 
