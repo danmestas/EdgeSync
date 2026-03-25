@@ -375,8 +375,10 @@ func (h *handler) emitIGots() error {
 	// Emit igot for all non-phantom blobs so the client can discover
 	// everything the server has. Cluster generation is a client-side
 	// optimization for push; the server always advertises all blobs.
-	rows, err := h.repo.DB().Query(
-		"SELECT uuid FROM blob WHERE size >= 0",
+	rows, err := h.repo.DB().Query(`
+		SELECT uuid FROM blob WHERE size >= 0
+		AND NOT EXISTS(SELECT 1 FROM shun WHERE uuid=blob.uuid)
+		AND NOT EXISTS(SELECT 1 FROM private WHERE rid=blob.rid)`,
 	)
 	if err != nil {
 		return fmt.Errorf("handler: listing blobs: %w", err)
@@ -415,6 +417,8 @@ func (h *handler) sendAllClusters() error {
 		WHERE tx.tagid = 7
 		  AND NOT EXISTS (SELECT 1 FROM unclustered WHERE rid = b.rid)
 		  AND NOT EXISTS (SELECT 1 FROM phantom WHERE rid = b.rid)
+		  AND NOT EXISTS (SELECT 1 FROM shun WHERE uuid = b.uuid)
+		  AND NOT EXISTS (SELECT 1 FROM private WHERE rid = b.rid)
 		  AND b.size >= 0
 	`)
 	if err != nil {
