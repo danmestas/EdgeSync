@@ -182,3 +182,57 @@ func (pq *mtimeQueue) Pop() any {
 	*pq = old[0 : n-1]
 	return item
 }
+
+// PropagateAll re-propagates all tags from rid to its descendants.
+// Matches Fossil's tag_propagate_all (tag.c:118-135).
+// Singleton tags (type 1) are treated as cancel (type 0) during propagation.
+func PropagateAll(q db.Querier, rid libfossil.FslID) error {
+	if q == nil {
+		panic("tag.PropagateAll: q must not be nil")
+	}
+	if rid <= 0 {
+		return nil
+	}
+
+	rows, err := q.Query(
+		"SELECT tagid, tagtype, mtime, value, origid FROM tagxref WHERE rid=?", rid,
+	)
+	if err != nil {
+		return fmt.Errorf("tag.PropagateAll query: %w", err)
+	}
+	defer rows.Close()
+
+	type entry struct {
+		tagid   int64
+		tagtype int
+		mtime   float64
+		value   string
+		origid  libfossil.FslID
+	}
+	var entries []entry
+	for rows.Next() {
+		var e entry
+		if err := rows.Scan(&e.tagid, &e.tagtype, &e.mtime, &e.value, &e.origid); err != nil {
+			return fmt.Errorf("tag.PropagateAll scan: %w", err)
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("tag.PropagateAll rows: %w", err)
+	}
+
+	for _, e := range entries {
+		tagtype := e.tagtype
+		if tagtype == TagSingleton {
+			tagtype = TagCancel // Matches Fossil: if(tagtype==1) tagtype=0;
+		}
+		var tagname string
+		if err := q.QueryRow("SELECT tagname FROM tag WHERE tagid=?", e.tagid).Scan(&tagname); err != nil {
+			return fmt.Errorf("tag.PropagateAll tagname: %w", err)
+		}
+		if err := propagate(q, e.tagid, tagtype, e.origid, e.mtime, e.value, tagname, rid); err != nil {
+			return fmt.Errorf("tag.PropagateAll propagate tagid=%d: %w", e.tagid, err)
+		}
+	}
+	return nil
+}

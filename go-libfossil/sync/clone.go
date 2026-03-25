@@ -102,7 +102,7 @@ func Clone(ctx context.Context, path string, t Transport, opts CloneOpts) (r *re
 		err = fmt.Errorf("sync.Clone: crosslink: %w", xlinkErr)
 		return
 	}
-	cloneResult.CheckinsLinked = linked
+	cloneResult.ArtifactsLinked = linked
 
 	return r, cloneResult, nil
 }

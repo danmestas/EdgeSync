@@ -333,3 +333,111 @@ func TestApplyTag(t *testing.T) {
 		t.Errorf("B srcid=%d, want 0 (propagated)", srcid)
 	}
 }
+
+func TestPropagateAll(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Create linear chain A→B→C
+	ridA := makeCheckin(t, r, 0, "a.txt", "content A", "commit A")
+	ridB := makeCheckin(t, r, ridA, "b.txt", "content B", "commit B")
+	ridC := makeCheckin(t, r, ridB, "c.txt", "content C", "commit C")
+
+	// Add propagating "branch" tag to A with value "feature"
+	_, err := tag.AddTag(r, tag.TagOpts{
+		TargetRID: libfossil.FslID(ridA),
+		TagName:   "branch",
+		TagType:   tag.TagPropagating,
+		Value:     "feature",
+		User:      "testuser",
+		Time:      time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("tag.AddTag: %v", err)
+	}
+
+	// Verify B and C have propagated tags initially
+	var countB, countC int
+	r.DB().QueryRow(`
+		SELECT COUNT(*) FROM tagxref
+		JOIN tag ON tag.tagid = tagxref.tagid
+		WHERE tag.tagname = 'branch' AND tagxref.rid = ? AND srcid = 0
+	`, ridB).Scan(&countB)
+	r.DB().QueryRow(`
+		SELECT COUNT(*) FROM tagxref
+		JOIN tag ON tag.tagid = tagxref.tagid
+		WHERE tag.tagname = 'branch' AND tagxref.rid = ? AND srcid = 0
+	`, ridC).Scan(&countC)
+	if countB != 1 || countC != 1 {
+		t.Fatalf("initial setup check: B has %d tags, C has %d tags, want both = 1", countB, countC)
+	}
+
+	// Clear propagated tags from B and C to simulate incomplete propagation
+	if _, err := r.DB().Exec("DELETE FROM tagxref WHERE rid=? AND srcid=0", ridB); err != nil {
+		t.Fatalf("clear B tags: %v", err)
+	}
+	if _, err := r.DB().Exec("DELETE FROM tagxref WHERE rid=? AND srcid=0", ridC); err != nil {
+		t.Fatalf("clear C tags: %v", err)
+	}
+
+	// Verify cleared
+	r.DB().QueryRow(`
+		SELECT COUNT(*) FROM tagxref
+		JOIN tag ON tag.tagid = tagxref.tagid
+		WHERE tag.tagname = 'branch' AND tagxref.rid = ? AND srcid = 0
+	`, ridB).Scan(&countB)
+	r.DB().QueryRow(`
+		SELECT COUNT(*) FROM tagxref
+		JOIN tag ON tag.tagid = tagxref.tagid
+		WHERE tag.tagname = 'branch' AND tagxref.rid = ? AND srcid = 0
+	`, ridC).Scan(&countC)
+	if countB != 0 || countC != 0 {
+		t.Fatalf("after clear: B has %d tags, C has %d tags, want both = 0", countB, countC)
+	}
+
+	// Call PropagateAll on A to re-propagate
+	if err := tag.PropagateAll(r.DB(), libfossil.FslID(ridA)); err != nil {
+		t.Fatalf("tag.PropagateAll: %v", err)
+	}
+
+	// Verify B has propagated branch=feature tag (srcid=0)
+	var srcidB, tagtypeB int
+	var valueB string
+	err = r.DB().QueryRow(`
+		SELECT srcid, tagtype, value FROM tagxref
+		JOIN tag ON tag.tagid = tagxref.tagid
+		WHERE tag.tagname = 'branch' AND tagxref.rid = ?
+	`, ridB).Scan(&srcidB, &tagtypeB, &valueB)
+	if err != nil {
+		t.Fatalf("tagxref query for B: %v", err)
+	}
+	if srcidB != 0 {
+		t.Errorf("B srcid = %d, want 0 (propagated)", srcidB)
+	}
+	if tagtypeB != tag.TagPropagating {
+		t.Errorf("B tagtype = %d, want %d", tagtypeB, tag.TagPropagating)
+	}
+	if valueB != "feature" {
+		t.Errorf("B value = %q, want %q", valueB, "feature")
+	}
+
+	// Verify C has propagated branch=feature tag (srcid=0)
+	var srcidC, tagtypeC int
+	var valueC string
+	err = r.DB().QueryRow(`
+		SELECT srcid, tagtype, value FROM tagxref
+		JOIN tag ON tag.tagid = tagxref.tagid
+		WHERE tag.tagname = 'branch' AND tagxref.rid = ?
+	`, ridC).Scan(&srcidC, &tagtypeC, &valueC)
+	if err != nil {
+		t.Fatalf("tagxref query for C: %v", err)
+	}
+	if srcidC != 0 {
+		t.Errorf("C srcid = %d, want 0 (propagated)", srcidC)
+	}
+	if tagtypeC != tag.TagPropagating {
+		t.Errorf("C tagtype = %d, want %d", tagtypeC, tag.TagPropagating)
+	}
+	if valueC != "feature" {
+		t.Errorf("C value = %q, want %q", valueC, "feature")
+	}
+}
