@@ -53,14 +53,32 @@ func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
 		cards = append(cards, &xfer.CookieCard{Value: s.cookie})
 	}
 
-	// 4. IGot cards from unclustered table, filtered by remoteHas
-	igotCards, err := s.buildIGotCards()
+	// 4. IGot cards: sendUnclustered every round.
+	igotCards, err := s.sendUnclustered()
 	if err != nil {
 		return nil, fmt.Errorf("buildRequest igot: %w", err)
 	}
 	s.igotSentThisRound = len(igotCards)
 	s.roundStats.IgotsSent = len(igotCards)
 	cards = append(cards, igotCards...)
+
+	// 4b. Send cluster igots on round 2+ when pushing and remote has requested blobs.
+	// cycle is 0-indexed, so cycle>=1 means round 2+.
+	if cycle >= 1 && s.opts.Push && s.nGimmeRcvd > 0 {
+		clusterCards, err := s.sendAllClusters()
+		if err != nil {
+			return nil, fmt.Errorf("buildRequest cluster igot: %w", err)
+		}
+		s.igotSentThisRound += len(clusterCards)
+		s.roundStats.IgotsSent += len(clusterCards)
+		cards = append(cards, clusterCards...)
+	}
+
+	// 4c. Request cluster catalog on round 2 when pulling.
+	// cycle is 0-indexed, so cycle==1 means round 2.
+	if cycle == 1 && s.opts.Pull {
+		cards = append(cards, &xfer.PragmaCard{Name: "req-clusters"})
+	}
 
 	// 5. File cards from pendingSend + unsent table, respecting maxSend budget
 	fileCards, err := s.buildFileCards()
@@ -122,11 +140,43 @@ func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
 	return &xfer.Message{Cards: cards}, nil
 }
 
-// buildIGotCards queries the unclustered table and produces igot cards
-// for artifacts the remote doesn't already have.
-func (s *session) buildIGotCards() ([]xfer.Card, error) {
-	rows, err := s.repo.DB().Query(
-		"SELECT b.uuid FROM unclustered u JOIN blob b ON b.rid=u.rid WHERE b.size >= 0",
+// sendUnclustered queries the unclustered table and produces igot cards
+// for artifacts the remote doesn't already have, excluding phantoms.
+func (s *session) sendUnclustered() ([]xfer.Card, error) {
+	rows, err := s.repo.DB().Query(`
+		SELECT b.uuid FROM unclustered u JOIN blob b ON b.rid=u.rid
+		WHERE b.size >= 0
+		AND NOT EXISTS(SELECT 1 FROM phantom WHERE rid=u.rid)`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cards []xfer.Card
+	for rows.Next() {
+		var uuid string
+		if err := rows.Scan(&uuid); err != nil {
+			return nil, err
+		}
+		if s.remoteHas[uuid] {
+			continue
+		}
+		cards = append(cards, &xfer.IGotCard{UUID: uuid})
+	}
+	return cards, rows.Err()
+}
+
+// sendAllClusters produces igot cards for cluster artifacts that have already
+// been clustered (not in unclustered) and are not phantoms. Sent on round 2+
+// when pushing and the remote has requested blobs (nGimmeRcvd > 0).
+func (s *session) sendAllClusters() ([]xfer.Card, error) {
+	rows, err := s.repo.DB().Query(`
+		SELECT b.uuid FROM tagxref tx JOIN blob b ON tx.rid=b.rid
+		WHERE tx.tagid=7
+		AND NOT EXISTS(SELECT 1 FROM unclustered WHERE rid=b.rid)
+		AND NOT EXISTS(SELECT 1 FROM phantom WHERE rid=b.rid)
+		AND b.size >= 0`,
 	)
 	if err != nil {
 		return nil, err
@@ -334,6 +384,7 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 
 		case *xfer.GimmeCard:
 			s.pendingSend[c.UUID] = true
+			s.nGimmeRcvd++
 			filesSent++
 
 		case *xfer.CookieCard:
