@@ -95,6 +95,22 @@ func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
 	gimmeCards := s.buildGimmeCards()
 	cards = append(cards, gimmeCards...)
 
+	// Private: send pragma on first round
+	if cycle == 0 && s.opts.Private {
+		cards = append(cards, &xfer.PragmaCard{Name: "send-private"})
+	}
+
+	// Private: send igot cards for private blobs
+	if s.opts.Private {
+		privCards, err := s.sendPrivate()
+		if err != nil {
+			return nil, fmt.Errorf("buildRequest sendPrivate: %w", err)
+		}
+		s.igotSentThisRound += len(privCards)
+		s.roundStats.IgotsSent += len(privCards)
+		cards = append(cards, privCards...)
+	}
+
 	// UV: pragma uv-hash on first round
 	if s.opts.UV && !s.uvHashSent {
 		if err := uv.EnsureSchema(s.repo.DB()); err != nil {
@@ -208,6 +224,31 @@ func (s *session) sendAllClusters() ([]xfer.Card, error) {
 			continue
 		}
 		cards = append(cards, &xfer.IGotCard{UUID: uuid})
+	}
+	return cards, rows.Err()
+}
+
+// sendPrivate emits igot cards with IsPrivate=true for all blobs in the
+// private table. This advertises private artifacts to the server so it can
+// request them via gimme cards.
+func (s *session) sendPrivate() ([]xfer.Card, error) {
+	rows, err := s.repo.DB().Query(
+		"SELECT b.uuid FROM private p JOIN blob b ON p.rid=b.rid WHERE b.size >= 0",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("sendPrivate: %w", err)
+	}
+	defer rows.Close()
+	var cards []xfer.Card
+	for rows.Next() {
+		var uuid string
+		if err := rows.Scan(&uuid); err != nil {
+			return nil, err
+		}
+		if s.remoteHas[uuid] {
+			continue
+		}
+		cards = append(cards, &xfer.IGotCard{UUID: uuid, IsPrivate: true})
 	}
 	return cards, rows.Err()
 }
