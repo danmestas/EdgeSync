@@ -824,7 +824,9 @@ func TestEmitIGots_ExcludesShunAndPrivate(t *testing.T) {
 	}
 
 	var privUUID string
-	r.DB().QueryRow("SELECT uuid FROM blob WHERE rid=?", privRid).Scan(&privUUID)
+	if err := r.DB().QueryRow("SELECT uuid FROM blob WHERE rid=?", privRid).Scan(&privUUID); err != nil {
+		t.Fatalf("query privUUID: %v", err)
+	}
 	if igotUUIDs[privUUID] {
 		t.Error("private blob appeared in igots")
 	}

@@ -2,6 +2,7 @@ package content
 
 import (
 	"fmt"
+	"strings"
 
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"github.com/dmestas/edgesync/go-libfossil/blob"
@@ -18,39 +19,49 @@ const (
 	ClusterMaxSize = 800
 )
 
-// GenerateClusters creates cluster artifacts for unclustered, non-phantom blobs.
-// Returns the number of clusters created.
+// GenerateClusters creates cluster artifacts for unclustered blobs that are
+// not phantoms, shunned, or private. Returns the number of clusters created.
 func GenerateClusters(q db.Querier) (int, error) {
 	if q == nil {
 		panic("content.GenerateClusters: q must not be nil")
 	}
 
-	// Count non-phantom unclustered entries.
-	var count int
-	err := q.QueryRow(`
-		SELECT count(*) FROM unclustered u
-		WHERE NOT EXISTS (SELECT 1 FROM phantom WHERE rid = u.rid)
-		AND NOT EXISTS (SELECT 1 FROM shun WHERE uuid = (SELECT uuid FROM blob WHERE rid = u.rid))
-		AND NOT EXISTS (SELECT 1 FROM private WHERE rid = u.rid)
-	`).Scan(&count)
+	uuids, err := clusterableUUIDs(q)
 	if err != nil {
-		return 0, fmt.Errorf("content.GenerateClusters count: %w", err)
+		return 0, err
 	}
-	if count < ClusterThreshold {
+	if len(uuids) < ClusterThreshold {
 		return 0, nil
 	}
 
-	// Query UUIDs sorted.
+	clusterRIDs, err := buildClusters(q, uuids)
+	if err != nil {
+		return len(clusterRIDs), err
+	}
+
+	if err := cleanupUnclustered(q, clusterRIDs); err != nil {
+		return len(clusterRIDs), err
+	}
+	return len(clusterRIDs), nil
+}
+
+// clusterableUUIDs returns sorted UUIDs of unclustered blobs that are not
+// phantoms, shunned, or private.
+func clusterableUUIDs(q db.Querier) ([]string, error) {
+	if q == nil {
+		panic("content.clusterableUUIDs: q must not be nil")
+	}
+
 	rows, err := q.Query(`
 		SELECT b.uuid FROM unclustered u
 		JOIN blob b ON b.rid = u.rid
 		WHERE NOT EXISTS (SELECT 1 FROM phantom WHERE rid = u.rid)
-		AND NOT EXISTS (SELECT 1 FROM shun WHERE uuid = b.uuid)
-		AND NOT EXISTS (SELECT 1 FROM private WHERE rid = u.rid)
+		  AND NOT EXISTS (SELECT 1 FROM shun WHERE uuid = b.uuid)
+		  AND NOT EXISTS (SELECT 1 FROM private WHERE rid = u.rid)
 		ORDER BY b.uuid
 	`)
 	if err != nil {
-		return 0, fmt.Errorf("content.GenerateClusters query: %w", err)
+		return nil, fmt.Errorf("content.clusterableUUIDs query: %w", err)
 	}
 	defer rows.Close()
 
@@ -58,15 +69,23 @@ func GenerateClusters(q db.Querier) (int, error) {
 	for rows.Next() {
 		var uuid string
 		if err := rows.Scan(&uuid); err != nil {
-			return 0, fmt.Errorf("content.GenerateClusters scan: %w", err)
+			return nil, fmt.Errorf("content.clusterableUUIDs scan: %w", err)
 		}
 		uuids = append(uuids, uuid)
 	}
 	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("content.GenerateClusters rows: %w", err)
+		return nil, fmt.Errorf("content.clusterableUUIDs rows: %w", err)
+	}
+	return uuids, nil
+}
+
+// buildClusters batches UUIDs into cluster artifacts, stores them, and applies
+// the cluster tag. Returns the RIDs of created cluster blobs.
+func buildClusters(q db.Querier, uuids []string) ([]libfossil.FslID, error) {
+	if q == nil {
+		panic("content.buildClusters: q must not be nil")
 	}
 
-	// Batch into clusters.
 	var clusterRIDs []libfossil.FslID
 	for len(uuids) > 0 {
 		batchSize := ClusterMaxSize
@@ -82,53 +101,59 @@ func GenerateClusters(q db.Querier) (int, error) {
 		batch := uuids[:batchSize]
 		uuids = uuids[batchSize:]
 
-		// Build cluster artifact.
 		d := &deck.Deck{Type: deck.Cluster, M: batch}
 		data, err := d.Marshal()
 		if err != nil {
-			return len(clusterRIDs), fmt.Errorf("content.GenerateClusters marshal: %w", err)
+			return clusterRIDs, fmt.Errorf("content.buildClusters marshal: %w", err)
 		}
 
 		rid, _, err := blob.Store(q, data)
 		if err != nil {
-			return len(clusterRIDs), fmt.Errorf("content.GenerateClusters store: %w", err)
+			return clusterRIDs, fmt.Errorf("content.buildClusters store: %w", err)
 		}
 
 		// Apply cluster singleton tag (tagid=7, tagtype=1).
-		// This is the same logic as manifest.CrosslinkCluster but inlined to
-		// avoid an import cycle (content -> manifest -> content).
-		// We skip the M-card UUID resolution because all UUIDs are known to
-		// exist — we just queried them from the blob table.
+		// Inlined to avoid import cycle (content -> manifest -> content).
 		if _, err := q.Exec(
 			"INSERT OR REPLACE INTO tagxref(tagid, tagtype, srcid, origid, value, mtime, rid) VALUES(7, 1, ?, ?, NULL, 0, ?)",
 			rid, rid, rid,
 		); err != nil {
-			return len(clusterRIDs), fmt.Errorf("content.GenerateClusters tag: %w", err)
+			return clusterRIDs, fmt.Errorf("content.buildClusters tag: %w", err)
 		}
 
 		clusterRIDs = append(clusterRIDs, rid)
 	}
+	return clusterRIDs, nil
+}
 
-	// Clean up unclustered: remove all non-phantom entries except cluster RIDs.
-	// Cluster blobs themselves stay in unclustered until a future clustering pass.
-	if len(clusterRIDs) > 0 {
-		placeholders := ""
-		args := make([]any, len(clusterRIDs))
-		for i, rid := range clusterRIDs {
-			if i > 0 {
-				placeholders += ","
-			}
-			placeholders += "?"
-			args[i] = rid
-		}
-		query := fmt.Sprintf(
-			"DELETE FROM unclustered WHERE rid NOT IN (%s) AND NOT EXISTS (SELECT 1 FROM phantom WHERE rid = unclustered.rid) AND NOT EXISTS (SELECT 1 FROM shun WHERE uuid = (SELECT uuid FROM blob WHERE rid = unclustered.rid)) AND NOT EXISTS (SELECT 1 FROM private WHERE rid = unclustered.rid)",
-			placeholders,
-		)
-		if _, err := q.Exec(query, args...); err != nil {
-			return len(clusterRIDs), fmt.Errorf("content.GenerateClusters cleanup: %w", err)
-		}
+// cleanupUnclustered removes non-phantom, non-shunned, non-private entries
+// from the unclustered table, preserving only the newly created cluster blobs.
+func cleanupUnclustered(q db.Querier, clusterRIDs []libfossil.FslID) error {
+	if q == nil {
+		panic("content.cleanupUnclustered: q must not be nil")
+	}
+	if len(clusterRIDs) == 0 {
+		return nil
 	}
 
-	return len(clusterRIDs), nil
+	placeholders := make([]string, len(clusterRIDs))
+	args := make([]any, len(clusterRIDs))
+	for i, rid := range clusterRIDs {
+		placeholders[i] = "?"
+		args[i] = rid
+	}
+
+	query := fmt.Sprintf(`
+		DELETE FROM unclustered
+		WHERE rid NOT IN (%s)
+		  AND NOT EXISTS (SELECT 1 FROM phantom WHERE rid = unclustered.rid)
+		  AND NOT EXISTS (SELECT 1 FROM shun
+		      WHERE uuid = (SELECT uuid FROM blob WHERE rid = unclustered.rid))
+		  AND NOT EXISTS (SELECT 1 FROM private WHERE rid = unclustered.rid)`,
+		strings.Join(placeholders, ","),
+	)
+	if _, err := q.Exec(query, args...); err != nil {
+		return fmt.Errorf("content.cleanupUnclustered: %w", err)
+	}
+	return nil
 }

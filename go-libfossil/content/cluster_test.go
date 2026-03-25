@@ -237,7 +237,9 @@ func TestGenerateClusters_PrivateStayUnclustered(t *testing.T) {
 
 	for _, rid := range privateRids {
 		var count int
-		d.QueryRow("SELECT count(*) FROM unclustered WHERE rid=?", rid).Scan(&count)
+		if err := d.QueryRow("SELECT count(*) FROM unclustered WHERE rid=?", rid).Scan(&count); err != nil {
+			t.Fatalf("query unclustered rid=%d: %v", rid, err)
+		}
 		if count != 1 {
 			t.Fatalf("private rid=%d missing from unclustered", rid)
 		}
