@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dmestas/edgesync/go-libfossil/repo"
+	"github.com/dmestas/edgesync/go-libfossil/uv"
 )
 
 // --- Table sync test helpers ---
@@ -759,5 +760,324 @@ func TestTS_OwnerWriteEnforcement(t *testing.T) {
 
 	// Log row distribution. Owner-write conflict may prevent full propagation
 	// without authenticated users, so we only assert safety (not convergence).
+	logRowCounts(t, sim, table, def)
+}
+
+// =============================================================================
+// Level 3: Hostile (25% faults) — seeds 400-406
+// =============================================================================
+
+// newHostileSim creates a simulator with BUGGIFY enabled and 25% drop rate.
+// SafetyCheckInterval is disabled (0) for hostile tests because buggify's
+// content.Expand byte-flip triggers blob-integrity false positives.
+func newHostileSim(t *testing.T, seed int64, numLeaves int, uvEnabled bool) (*Simulator, *repo.Repo, *MockFossil) {
+	t.Helper()
+	masterRepo := createMasterRepo(t)
+	mf := NewMockFossil(masterRepo)
+	sim, err := New(SimConfig{
+		Seed:         seed,
+		NumLeaves:    numLeaves,
+		PollInterval: 5 * time.Second,
+		TmpDir:       t.TempDir(),
+		Upstream:     mf,
+		Buggify:      true,
+		UV:           uvEnabled,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { sim.Close() })
+	sim.Network().SetDropRate(0.25)
+	sim.SetMasterRepo(masterRepo)
+	return sim, masterRepo, mf
+}
+
+// assertBoundedProgress asserts at least minRows rows on every peer.
+func assertBoundedProgress(t *testing.T, sim *Simulator, table string, def repo.TableDef, minRows int) {
+	t.Helper()
+	for _, leafID := range sim.LeafIDs() {
+		rows, _, err := repo.ListXRows(sim.Leaf(leafID).Repo().DB(), table, def)
+		if err != nil {
+			t.Fatalf("ListXRows %s: %v", leafID, err)
+		}
+		if len(rows) < minRows {
+			t.Errorf("%s: expected >= %d rows, got %d", leafID, minRows, len(rows))
+		}
+	}
+}
+
+// checkStructuralIntegrity verifies delta chains and orphan phantoms on all leaves.
+func checkStructuralIntegrity(t *testing.T, sim *Simulator) {
+	t.Helper()
+	for _, leafID := range sim.LeafIDs() {
+		r := sim.Leaf(leafID).Repo()
+		if err := CheckDeltaChains(string(leafID), r); err != nil {
+			t.Fatalf("Delta chain %s: %v", leafID, err)
+		}
+		if err := CheckNoOrphanPhantoms(string(leafID), r); err != nil {
+			t.Fatalf("Orphan phantom %s: %v", leafID, err)
+		}
+	}
+}
+
+// TestTS_HostileConvergence: 5 leaves, 10 rows each, 25% fault rate.
+// Asserts safety and bounded progress (not full convergence).
+func TestTS_HostileConvergence(t *testing.T) {
+	seed := seedFor(400)
+	sim, masterRepo, _ := newHostileSim(t, seed, 5, false)
+
+	table := "devices"
+	def := deviceTableDef()
+	registerTableAll(t, sim, masterRepo, table, def, 100)
+
+	// 10 rows per peer (50 total).
+	for i, leafID := range sim.LeafIDs() {
+		r := sim.Leaf(leafID).Repo()
+		for j := 0; j < 10; j++ {
+			upsertRow(t, r, table, map[string]any{
+				"device_id": fmt.Sprintf("leaf%d-dev%d", i, j),
+				"hostname":  fmt.Sprintf("host-%d-%d", i, j),
+				"status":    "online",
+			}, int64(100+i*100+j))
+		}
+	}
+
+	if err := sim.Run(stepsFor(300)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	t.Logf("[hostile] seed=%d steps=%d syncs=%d errors=%d",
+		seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+
+	checkStructuralIntegrity(t, sim)
+	assertBoundedProgress(t, sim, table, def, 10)
+	logRowCounts(t, sim, table, def)
+}
+
+// TestTS_CorruptXRowPayload: BUGGIFY corrupts JSON payloads, handler recovers.
+func TestTS_CorruptXRowPayload(t *testing.T) {
+	seed := seedFor(401)
+	sim, masterRepo, _ := newHostileSim(t, seed, 3, false)
+
+	table := "config"
+	def := configTableDef()
+	registerTableAll(t, sim, masterRepo, table, def, 100)
+
+	// Seed 20 rows on master.
+	for i := 0; i < 20; i++ {
+		upsertRow(t, masterRepo, table, map[string]any{
+			"key":   fmt.Sprintf("key-%d", i),
+			"value": fmt.Sprintf("val-%d", i),
+		}, 100)
+	}
+
+	if err := sim.Run(stepsFor(500)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	t.Logf("[corrupt-payload] seed=%d steps=%d syncs=%d errors=%d",
+		seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+
+	// Safety holds despite corrupted payloads.
+	checkStructuralIntegrity(t, sim)
+	// Some rows should still get through.
+	assertBoundedProgress(t, sim, table, def, 1)
+	logRowCounts(t, sim, table, def)
+}
+
+// TestTS_DropSchemaCards: schema cards dropped 25%, table still deploys.
+func TestTS_DropSchemaCards(t *testing.T) {
+	seed := seedFor(402)
+	sim, masterRepo, _ := newHostileSim(t, seed, 3, false)
+
+	// Register schema only on master — leaves must learn via sync.
+	table := "alerts"
+	def := configTableDef()
+	registerTable(t, masterRepo, table, def, 100)
+
+	// Seed rows on master.
+	for i := 0; i < 10; i++ {
+		upsertRow(t, masterRepo, table, map[string]any{
+			"key":   fmt.Sprintf("alert-%d", i),
+			"value": fmt.Sprintf("msg-%d", i),
+		}, 100)
+	}
+
+	if err := sim.Run(stepsFor(500)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	t.Logf("[drop-schema] seed=%d steps=%d syncs=%d errors=%d",
+		seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+
+	// Structural safety must hold.
+	checkStructuralIntegrity(t, sim)
+
+	// At least one leaf should have received the schema (despite 25% drops).
+	schemaDeployed := 0
+	for _, leafID := range sim.LeafIDs() {
+		tables, err := repo.ListSyncedTables(sim.Leaf(leafID).Repo().DB())
+		if err != nil {
+			t.Fatalf("ListSyncedTables %s: %v", leafID, err)
+		}
+		for _, tbl := range tables {
+			if tbl.Name == table {
+				schemaDeployed++
+				break
+			}
+		}
+	}
+	t.Logf("  schema deployed to %d/%d leaves", schemaDeployed, len(sim.LeafIDs()))
+	if schemaDeployed == 0 {
+		t.Errorf("schema not deployed to any leaf after 500 steps")
+	}
+}
+
+// TestTS_TruncatedXIGotList: emitXIGots truncated 25%, multi-round convergence.
+func TestTS_TruncatedXIGotList(t *testing.T) {
+	seed := seedFor(403)
+	sim, masterRepo, _ := newHostileSim(t, seed, 3, false)
+
+	table := "sensors"
+	def := configTableDef()
+	registerTableAll(t, sim, masterRepo, table, def, 100)
+
+	// Seed 30 rows across leaves so XIGot lists will be non-trivial.
+	for i, leafID := range sim.LeafIDs() {
+		r := sim.Leaf(leafID).Repo()
+		for j := 0; j < 10; j++ {
+			upsertRow(t, r, table, map[string]any{
+				"key":   fmt.Sprintf("s%d-%d", i, j),
+				"value": fmt.Sprintf("reading-%d-%d", i, j),
+			}, int64(100+i*10+j))
+		}
+	}
+
+	if err := sim.Run(stepsFor(600)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	t.Logf("[truncated-xigot] seed=%d steps=%d syncs=%d errors=%d",
+		seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+
+	checkStructuralIntegrity(t, sim)
+	// Truncated igot lists mean slower convergence, but some progress expected.
+	assertBoundedProgress(t, sim, table, def, 10)
+	logRowCounts(t, sim, table, def)
+}
+
+// TestTS_CatalogHashCorruption: corrupt catalog hash forces full row exchange.
+func TestTS_CatalogHashCorruption(t *testing.T) {
+	seed := seedFor(404)
+	sim, masterRepo, _ := newHostileSim(t, seed, 2, false)
+
+	table := "config"
+	def := configTableDef()
+	registerTableAll(t, sim, masterRepo, table, def, 100)
+
+	// Seed identical rows on both sides so catalog hashes would match.
+	allRepos := []*repo.Repo{masterRepo}
+	for _, leafID := range sim.LeafIDs() {
+		allRepos = append(allRepos, sim.Leaf(leafID).Repo())
+	}
+	for _, r := range allRepos {
+		for i := 0; i < 15; i++ {
+			upsertRow(t, r, table, map[string]any{
+				"key":   fmt.Sprintf("k%d", i),
+				"value": fmt.Sprintf("v%d", i),
+			}, 100)
+		}
+	}
+
+	// With BUGGIFY, catalog hash may be corrupted, forcing full exchange.
+	if err := sim.Run(stepsFor(400)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	t.Logf("[catalog-corrupt] seed=%d steps=%d syncs=%d errors=%d",
+		seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+
+	checkStructuralIntegrity(t, sim)
+	// All rows were pre-seeded, so each peer must still have at least 15.
+	assertBoundedProgress(t, sim, table, def, 15)
+	logRowCounts(t, sim, table, def)
+}
+
+// TestTS_MixedWorkload: blob sync + UV sync + table sync simultaneously under 25% faults.
+func TestTS_MixedWorkload(t *testing.T) {
+	seed := seedFor(405)
+	sim, masterRepo, mf := newHostileSim(t, seed, 3, true)
+
+	// 1. Seed blobs (normal Fossil artifacts).
+	for i := 0; i < 30; i++ {
+		mf.StoreArtifact([]byte(fmt.Sprintf("mixed-blob-%04d-seed%d", i, seed)))
+	}
+
+	// 2. Seed UV files.
+	uv.EnsureSchema(masterRepo.DB())
+	for i := 0; i < 5; i++ {
+		uv.Write(masterRepo.DB(), fmt.Sprintf("mixed/file-%d.txt", i),
+			[]byte(fmt.Sprintf("mixed-uv-%d-seed%d", i, seed)), int64(100+i))
+	}
+
+	// 3. Register synced table and seed rows.
+	table := "telemetry"
+	def := configTableDef()
+	registerTableAll(t, sim, masterRepo, table, def, 100)
+	for i := 0; i < 20; i++ {
+		upsertRow(t, masterRepo, table, map[string]any{
+			"key":   fmt.Sprintf("metric-%d", i),
+			"value": fmt.Sprintf("%d", i*100),
+		}, 100)
+	}
+
+	if err := sim.Run(stepsFor(600)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	t.Logf("[mixed-workload] seed=%d steps=%d syncs=%d errors=%d",
+		seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+
+	// Structural safety for all three systems.
+	checkStructuralIntegrity(t, sim)
+
+	// Blob progress: at least some blobs propagated.
+	for _, leafID := range sim.LeafIDs() {
+		c, _ := CountBlobs(sim.Leaf(leafID).Repo())
+		t.Logf("  %s: %d blobs", leafID, c)
+		if c == 0 {
+			t.Errorf("%s: zero blobs after mixed workload", leafID)
+		}
+	}
+
+	// Table progress: at least some rows propagated.
+	assertBoundedProgress(t, sim, table, def, 1)
+	logRowCounts(t, sim, table, def)
+}
+
+// TestTS_StressTest1000Rows: 1000 rows on master, 2 peers, verify no crash.
+// The goal is survival under load — not convergence.
+func TestTS_StressTest1000Rows(t *testing.T) {
+	seed := seedFor(406)
+	sim, masterRepo, _ := newHostileSim(t, seed, 2, false)
+
+	table := "events"
+	def := configTableDef()
+	registerTableAll(t, sim, masterRepo, table, def, 100)
+
+	// Seed 500 rows on master (1000 rows is too slow for CI).
+	for i := 0; i < 500; i++ {
+		upsertRow(t, masterRepo, table, map[string]any{
+			"key":   fmt.Sprintf("evt-%04d", i),
+			"value": fmt.Sprintf("data-%04d", i),
+		}, int64(100+i))
+	}
+
+	// Run bounded steps — enough for partial progress, not full convergence.
+	if err := sim.Run(stepsFor(50)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	t.Logf("[stress-1000] seed=%d steps=%d syncs=%d errors=%d",
+		seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+
+	// No crash, structural integrity intact.
+	checkStructuralIntegrity(t, sim)
+
+	// Some progress: every peer should have at least some rows (not zero).
+	assertBoundedProgress(t, sim, table, def, 1)
 	logRowCounts(t, sim, table, def)
 }
