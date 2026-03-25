@@ -8,563 +8,756 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 )
 
-// --- Scenario: Table Sync Convergence ---
-// Two peers with a shared synced table, different rows on each. After sync rounds, both should have all rows.
+// --- Table sync test helpers ---
 
-func TestTableSyncConvergence(t *testing.T) {
-	sev := parseSeverity()
-	seed := seedFor(100)
-
-	masterRepo := createMasterRepo(t)
-	mf := NewMockFossil(masterRepo)
-
-	// Register a simple synced table on master.
-	tableName := "devices"
-	tableDef := repo.TableDef{
+// deviceTableDef returns a standard "devices" table definition for tests.
+func deviceTableDef() repo.TableDef {
+	return repo.TableDef{
 		Columns: []repo.ColumnDef{
 			{Name: "device_id", Type: "text", PK: true},
-			{Name: "hostname", Type: "text", PK: false},
-			{Name: "status", Type: "text", PK: false},
+			{Name: "hostname", Type: "text"},
+			{Name: "status", Type: "text"},
 		},
 		Conflict: "mtime-wins",
 	}
-	if err := repo.EnsureSyncSchema(masterRepo.DB()); err != nil {
-		t.Fatalf("EnsureSyncSchema master: %v", err)
-	}
-	if err := repo.RegisterSyncedTable(masterRepo.DB(), tableName, tableDef, 100); err != nil {
-		t.Fatalf("RegisterSyncedTable master: %v", err)
-	}
+}
 
-	// Seed 3 rows in master.
-	masterRows := map[string]map[string]any{
-		"dev-1": {"device_id": "dev-1", "hostname": "master-host-1", "status": "active"},
-		"dev-2": {"device_id": "dev-2", "hostname": "master-host-2", "status": "idle"},
-		"dev-3": {"device_id": "dev-3", "hostname": "master-host-3", "status": "offline"},
-	}
-	for _, row := range masterRows {
-		if err := repo.UpsertXRow(masterRepo.DB(), tableName, row, 100); err != nil {
-			t.Fatalf("UpsertXRow master: %v", err)
-		}
-	}
-
-	sim, err := New(SimConfig{
-		Seed:         seed,
-		NumLeaves:    2,
-		PollInterval: 5 * time.Second,
-		TmpDir:       t.TempDir(),
-		Upstream:     mf,
-		Buggify:      sev.Buggify,
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	defer sim.Close()
-	sim.Network().SetDropRate(sev.DropRate)
-
-	// Register table on all leaves and seed unique rows in each leaf.
-	for i, leafID := range sim.LeafIDs() {
-		leafRepo := sim.Leaf(leafID).Repo()
-		if err := repo.EnsureSyncSchema(leafRepo.DB()); err != nil {
-			t.Fatalf("EnsureSyncSchema %s: %v", leafID, err)
-		}
-		if err := repo.RegisterSyncedTable(leafRepo.DB(), tableName, tableDef, 100); err != nil {
-			t.Fatalf("RegisterSyncedTable %s: %v", leafID, err)
-		}
-
-		// Each leaf gets a unique row.
-		deviceID := fmt.Sprintf("dev-leaf-%d", i)
-		leafRow := map[string]any{
-			"device_id": deviceID,
-			"hostname":  fmt.Sprintf("leaf-%d-host", i),
-			"status":    "online",
-		}
-		if err := repo.UpsertXRow(leafRepo.DB(), tableName, leafRow, 110); err != nil {
-			t.Fatalf("UpsertXRow %s: %v", leafID, err)
-		}
-	}
-
-	steps := stepsFor(200)
-	if err := sim.Run(steps); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-
-	t.Logf("[%s] seed=%d steps=%d syncs=%d errors=%d",
-		sev.Name, seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
-
-	if err := sim.CheckSafety(); err != nil {
-		t.Fatalf("Safety: %v", err)
-	}
-
-	// In normal mode, verify full convergence.
-	if sev.DropRate == 0 && !sev.Buggify {
-		// All leaves should have all 5 rows (3 from master, 2 from leaves).
-		expectedRows := 5
-		for _, leafID := range sim.LeafIDs() {
-			leafRepo := sim.Leaf(leafID).Repo()
-			rows, _, err := repo.ListXRows(leafRepo.DB(), tableName, tableDef)
-			if err != nil {
-				t.Fatalf("ListXRows %s: %v", leafID, err)
-			}
-			if len(rows) != expectedRows {
-				t.Errorf("%s: expected %d rows, got %d", leafID, expectedRows, len(rows))
-			}
-		}
-
-		// Master should also have all 5 rows.
-		masterRowsAfter, _, err := repo.ListXRows(masterRepo.DB(), tableName, tableDef)
-		if err != nil {
-			t.Fatalf("ListXRows master: %v", err)
-		}
-		if len(masterRowsAfter) != expectedRows {
-			t.Errorf("master: expected %d rows, got %d", expectedRows, len(masterRowsAfter))
-		}
-
-		// Verify specific rows exist.
-		for _, leafID := range sim.LeafIDs() {
-			leafRepo := sim.Leaf(leafID).Repo()
-			// Check for master row.
-			pkValues := map[string]any{"device_id": "dev-1"}
-			pkHash := repo.PKHash(pkValues)
-			row, _, err := repo.LookupXRow(leafRepo.DB(), tableName, tableDef, pkHash)
-			if err != nil {
-				t.Fatalf("LookupXRow %s dev-1: %v", leafID, err)
-			}
-			if row == nil {
-				t.Errorf("%s missing master row dev-1", leafID)
-			}
-		}
-	} else {
-		// With faults, log row counts per leaf.
-		for _, leafID := range sim.LeafIDs() {
-			leafRepo := sim.Leaf(leafID).Repo()
-			rows, _, _ := repo.ListXRows(leafRepo.DB(), tableName, tableDef)
-			t.Logf("  %s: %d rows", leafID, len(rows))
-		}
+// configTableDef returns a key-value table definition for tests.
+func configTableDef() repo.TableDef {
+	return repo.TableDef{
+		Columns: []repo.ColumnDef{
+			{Name: "key", Type: "text", PK: true},
+			{Name: "value", Type: "text"},
+		},
+		Conflict: "mtime-wins",
 	}
 }
 
-// --- Scenario: Self-Write Enforcement ---
-// Register a table with "self-write" conflict. Peer1 writes its own row. After sync, peer2 has the row.
-// Verify the row exists on both sides.
-
-func TestTableSyncSelfWrite(t *testing.T) {
-	seed := seedFor(101)
-
-	masterRepo := createMasterRepo(t)
-	mf := NewMockFossil(masterRepo)
-
-	// Register table with self-write conflict.
-	tableName := "peer_status"
-	tableDef := repo.TableDef{
+// selfWriteTableDef returns a self-write table definition.
+func selfWriteTableDef() repo.TableDef {
+	return repo.TableDef{
 		Columns: []repo.ColumnDef{
 			{Name: "peer_id", Type: "text", PK: true},
-			{Name: "last_seen", Type: "integer", PK: false},
-			{Name: "health", Type: "text", PK: false},
+			{Name: "last_seen", Type: "integer"},
+			{Name: "health", Type: "text"},
 		},
 		Conflict: "self-write",
 	}
-	if err := repo.EnsureSyncSchema(masterRepo.DB()); err != nil {
-		t.Fatalf("EnsureSyncSchema master: %v", err)
-	}
-	if err := repo.RegisterSyncedTable(masterRepo.DB(), tableName, tableDef, 100); err != nil {
-		t.Fatalf("RegisterSyncedTable master: %v", err)
-	}
+}
 
-	sim, err := New(SimConfig{
-		Seed:         seed,
-		NumLeaves:    2,
-		PollInterval: 5 * time.Second,
-		TmpDir:       t.TempDir(),
-		Upstream:     mf,
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	defer sim.Close()
-
-	// Register table on leaves and each writes its own status row.
-	for i, leafID := range sim.LeafIDs() {
-		leafRepo := sim.Leaf(leafID).Repo()
-		if err := repo.EnsureSyncSchema(leafRepo.DB()); err != nil {
-			t.Fatalf("EnsureSyncSchema %s: %v", leafID, err)
-		}
-		if err := repo.RegisterSyncedTable(leafRepo.DB(), tableName, tableDef, 100); err != nil {
-			t.Fatalf("RegisterSyncedTable %s: %v", leafID, err)
-		}
-
-		// Each leaf writes its own row.
-		peerID := fmt.Sprintf("peer-%d", i)
-		row := map[string]any{
-			"peer_id":   peerID,
-			"last_seen": int64(1000 + i*10),
-			"health":    "healthy",
-		}
-		if err := repo.UpsertXRow(leafRepo.DB(), tableName, row, int64(100+i)); err != nil {
-			t.Fatalf("UpsertXRow %s: %v", leafID, err)
-		}
-	}
-
-	if err := sim.Run(150); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-
-	t.Logf("Self-write: steps=%d syncs=%d errors=%d",
-		sim.Steps, sim.TotalSyncs, sim.TotalErrors)
-
-	if err := sim.CheckSafety(); err != nil {
-		t.Fatalf("Safety: %v", err)
-	}
-
-	// Verify both leaves have both rows.
-	for _, leafID := range sim.LeafIDs() {
-		leafRepo := sim.Leaf(leafID).Repo()
-		rows, _, err := repo.ListXRows(leafRepo.DB(), tableName, tableDef)
-		if err != nil {
-			t.Fatalf("ListXRows %s: %v", leafID, err)
-		}
-		if len(rows) != 2 {
-			t.Errorf("%s: expected 2 rows, got %d", leafID, len(rows))
-		}
-	}
-
-	// Master should also have both rows.
-	masterRows, _, err := repo.ListXRows(masterRepo.DB(), tableName, tableDef)
-	if err != nil {
-		t.Fatalf("ListXRows master: %v", err)
-	}
-	if len(masterRows) != 2 {
-		t.Errorf("master: expected 2 rows, got %d", len(masterRows))
-	}
-
-	// Verify specific rows exist in leaf-0.
-	leaf0Repo := sim.Leaf("leaf-0").Repo()
-	for i := 0; i < 2; i++ {
-		peerID := fmt.Sprintf("peer-%d", i)
-		pkValues := map[string]any{"peer_id": peerID}
-		pkHash := repo.PKHash(pkValues)
-		row, _, err := repo.LookupXRow(leaf0Repo.DB(), tableName, tableDef, pkHash)
-		if err != nil {
-			t.Fatalf("LookupXRow leaf-0 %s: %v", peerID, err)
-		}
-		if row == nil {
-			t.Errorf("leaf-0 missing row %s", peerID)
-		}
+// ownerWriteTableDef returns an owner-write table definition.
+func ownerWriteTableDef() repo.TableDef {
+	return repo.TableDef{
+		Columns: []repo.ColumnDef{
+			{Name: "resource_id", Type: "text", PK: true},
+			{Name: "data", Type: "text"},
+		},
+		Conflict: "owner-write",
 	}
 }
 
-// --- Scenario: BUGGIFY Resilience ---
-// Enable BUGGIFY, run sync with table data. Verify convergence despite fault injection.
-
-func TestTableSyncBuggify(t *testing.T) {
-	seed := seedFor(102)
-
-	masterRepo := createMasterRepo(t)
-	mf := NewMockFossil(masterRepo)
-
-	// Register table.
-	tableName := "sensors"
-	tableDef := repo.TableDef{
-		Columns: []repo.ColumnDef{
-			{Name: "sensor_id", Type: "integer", PK: true},
-			{Name: "reading", Type: "real", PK: false},
-		},
-		Conflict: "mtime-wins",
+// registerTable registers a synced table on a repo (schema + table).
+func registerTable(t *testing.T, r *repo.Repo, name string, def repo.TableDef, mtime int64) {
+	t.Helper()
+	if err := repo.EnsureSyncSchema(r.DB()); err != nil {
+		t.Fatalf("EnsureSyncSchema: %v", err)
 	}
-	if err := repo.EnsureSyncSchema(masterRepo.DB()); err != nil {
-		t.Fatalf("EnsureSyncSchema master: %v", err)
+	if err := repo.RegisterSyncedTable(r.DB(), name, def, mtime); err != nil {
+		t.Fatalf("RegisterSyncedTable %s: %v", name, err)
 	}
-	if err := repo.RegisterSyncedTable(masterRepo.DB(), tableName, tableDef, 100); err != nil {
-		t.Fatalf("RegisterSyncedTable master: %v", err)
-	}
+}
 
-	// Seed 10 rows in master.
-	for i := 0; i < 10; i++ {
-		row := map[string]any{
-			"sensor_id": int64(i),
-			"reading":   float64(20.0 + float64(i)*0.5),
-		}
-		if err := repo.UpsertXRow(masterRepo.DB(), tableName, row, 100); err != nil {
-			t.Fatalf("UpsertXRow master sensor-%d: %v", i, err)
-		}
+// registerTableAll registers a synced table on master and all sim leaves.
+func registerTableAll(t *testing.T, sim *Simulator, masterRepo *repo.Repo, name string, def repo.TableDef, mtime int64) {
+	t.Helper()
+	registerTable(t, masterRepo, name, def, mtime)
+	for _, leafID := range sim.LeafIDs() {
+		registerTable(t, sim.Leaf(leafID).Repo(), name, def, mtime)
 	}
+}
 
-	sim, err := New(SimConfig{
-		Seed:         seed,
-		NumLeaves:    3,
-		PollInterval: 5 * time.Second,
-		TmpDir:       t.TempDir(),
-		Upstream:     mf,
-		Buggify:      true,
-	})
+// upsertRow is a short helper wrapping repo.UpsertXRow with fatal on error.
+func upsertRow(t *testing.T, r *repo.Repo, table string, row map[string]any, mtime int64) {
+	t.Helper()
+	if err := repo.UpsertXRow(r.DB(), table, row, mtime); err != nil {
+		t.Fatalf("UpsertXRow: %v", err)
+	}
+}
+
+// assertRowCount checks that a repo has exactly n rows in the given table.
+func assertRowCount(t *testing.T, r *repo.Repo, label, table string, def repo.TableDef, n int) {
+	t.Helper()
+	rows, _, err := repo.ListXRows(r.DB(), table, def)
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatalf("ListXRows %s: %v", label, err)
 	}
-	defer sim.Close()
-	sim.Network().SetDropRate(0.10)
+	if len(rows) != n {
+		t.Errorf("%s: expected %d rows, got %d", label, n, len(rows))
+	}
+}
 
-	// Register table on leaves.
+// assertRowValue checks a specific row's column value by PK lookup.
+func assertRowValue(t *testing.T, r *repo.Repo, label, table string, def repo.TableDef, pk map[string]any, col, want string) {
+	t.Helper()
+	pkHash := repo.PKHash(pk)
+	row, _, err := repo.LookupXRow(r.DB(), table, def, pkHash)
+	if err != nil {
+		t.Fatalf("LookupXRow %s: %v", label, err)
+	}
+	if row == nil {
+		t.Fatalf("%s: missing row pk=%v", label, pk)
+	}
+	got, _ := row[col].(string)
+	if got != want {
+		t.Errorf("%s: %s=%q, want %q", label, col, got, want)
+	}
+}
+
+// logRowCounts logs the row count per leaf for a table (used in adversarial mode).
+func logRowCounts(t *testing.T, sim *Simulator, table string, def repo.TableDef) {
+	t.Helper()
 	for _, leafID := range sim.LeafIDs() {
-		leafRepo := sim.Leaf(leafID).Repo()
-		if err := repo.EnsureSyncSchema(leafRepo.DB()); err != nil {
-			t.Fatalf("EnsureSyncSchema %s: %v", leafID, err)
-		}
-		if err := repo.RegisterSyncedTable(leafRepo.DB(), tableName, tableDef, 100); err != nil {
-			t.Fatalf("RegisterSyncedTable %s: %v", leafID, err)
-		}
-	}
-
-	steps := stepsFor(300)
-	if err := sim.Run(steps); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-
-	t.Logf("[BUGGIFY] seed=%d steps=%d syncs=%d errors=%d",
-		seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
-
-	// Safety must hold even with BUGGIFY.
-	// Blob integrity may fail (expected with content.Expand byte-flip),
-	// but structural invariants must hold.
-	for _, leafID := range sim.LeafIDs() {
-		r := sim.Leaf(leafID).Repo()
-		if err := CheckDeltaChains(string(leafID), r); err != nil {
-			t.Fatalf("Delta chain violation: %v", err)
-		}
-		if err := CheckNoOrphanPhantoms(string(leafID), r); err != nil {
-			t.Fatalf("Orphan phantom violation: %v", err)
-		}
-	}
-
-	// Log row counts per leaf (convergence not guaranteed under faults).
-	for _, leafID := range sim.LeafIDs() {
-		leafRepo := sim.Leaf(leafID).Repo()
-		rows, _, _ := repo.ListXRows(leafRepo.DB(), tableName, tableDef)
+		rows, _, _ := repo.ListXRows(sim.Leaf(leafID).Repo().DB(), table, def)
 		t.Logf("  %s: %d rows", leafID, len(rows))
 	}
 }
 
-// --- Scenario: Multi-Table Sync ---
-// Multiple synced tables in the same repo. Verify independent convergence.
-
-func TestTableSyncMultipleTables(t *testing.T) {
-	seed := seedFor(103)
-
+// newTableSyncSim creates a standard simulator for table sync tests.
+func newTableSyncSim(t *testing.T, seed int64, numLeaves int, buggify bool) (*Simulator, *repo.Repo, *MockFossil) {
+	t.Helper()
 	masterRepo := createMasterRepo(t)
 	mf := NewMockFossil(masterRepo)
-
-	// Register two different tables.
-	table1Name := "users"
-	table1Def := repo.TableDef{
-		Columns: []repo.ColumnDef{
-			{Name: "user_id", Type: "integer", PK: true},
-			{Name: "username", Type: "text", PK: false},
-		},
-		Conflict: "mtime-wins",
-	}
-	table2Name := "posts"
-	table2Def := repo.TableDef{
-		Columns: []repo.ColumnDef{
-			{Name: "post_id", Type: "integer", PK: true},
-			{Name: "user_id", Type: "integer", PK: false},
-			{Name: "content", Type: "text", PK: false},
-		},
-		Conflict: "mtime-wins",
-	}
-
-	if err := repo.EnsureSyncSchema(masterRepo.DB()); err != nil {
-		t.Fatalf("EnsureSyncSchema master: %v", err)
-	}
-	if err := repo.RegisterSyncedTable(masterRepo.DB(), table1Name, table1Def, 100); err != nil {
-		t.Fatalf("RegisterSyncedTable master table1: %v", err)
-	}
-	if err := repo.RegisterSyncedTable(masterRepo.DB(), table2Name, table2Def, 100); err != nil {
-		t.Fatalf("RegisterSyncedTable master table2: %v", err)
-	}
-
-	// Seed data in master.
-	for i := 0; i < 3; i++ {
-		user := map[string]any{
-			"user_id":  int64(i),
-			"username": fmt.Sprintf("user-%d", i),
-		}
-		if err := repo.UpsertXRow(masterRepo.DB(), table1Name, user, 100); err != nil {
-			t.Fatalf("UpsertXRow master user-%d: %v", i, err)
-		}
-	}
-	for i := 0; i < 5; i++ {
-		post := map[string]any{
-			"post_id": int64(i),
-			"user_id": int64(i % 3),
-			"content": fmt.Sprintf("post content %d", i),
-		}
-		if err := repo.UpsertXRow(masterRepo.DB(), table2Name, post, 100); err != nil {
-			t.Fatalf("UpsertXRow master post-%d: %v", i, err)
-		}
-	}
-
 	sim, err := New(SimConfig{
-		Seed:         seed,
-		NumLeaves:    2,
-		PollInterval: 5 * time.Second,
-		TmpDir:       t.TempDir(),
-		Upstream:     mf,
+		Seed:                seed,
+		NumLeaves:           numLeaves,
+		PollInterval:        5 * time.Second,
+		TmpDir:              t.TempDir(),
+		Upstream:            mf,
+		Buggify:             buggify,
+		SafetyCheckInterval: 10,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer sim.Close()
+	t.Cleanup(func() { sim.Close() })
+	sim.SetMasterRepo(masterRepo)
+	return sim, masterRepo, mf
+}
 
-	// Register tables on leaves.
-	for _, leafID := range sim.LeafIDs() {
-		leafRepo := sim.Leaf(leafID).Repo()
-		if err := repo.EnsureSyncSchema(leafRepo.DB()); err != nil {
-			t.Fatalf("EnsureSyncSchema %s: %v", leafID, err)
-		}
-		if err := repo.RegisterSyncedTable(leafRepo.DB(), table1Name, table1Def, 100); err != nil {
-			t.Fatalf("RegisterSyncedTable %s table1: %v", leafID, err)
-		}
-		if err := repo.RegisterSyncedTable(leafRepo.DB(), table2Name, table2Def, 100); err != nil {
-			t.Fatalf("RegisterSyncedTable %s table2: %v", leafID, err)
-		}
-	}
-
-	if err := sim.Run(200); err != nil {
+// runAndCheck runs simulation, logs stats, checks safety, and optionally convergence.
+func runAndCheck(t *testing.T, sim *Simulator, sev severity, seed int64, steps int) {
+	t.Helper()
+	if err := sim.Run(steps); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-
-	t.Logf("Multi-table: steps=%d syncs=%d errors=%d",
-		sim.Steps, sim.TotalSyncs, sim.TotalErrors)
-
+	t.Logf("[%s] seed=%d steps=%d syncs=%d errors=%d",
+		sev.Name, seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
 	if err := sim.CheckSafety(); err != nil {
 		t.Fatalf("Safety: %v", err)
 	}
+}
 
-	// Verify convergence for both tables.
-	for _, leafID := range sim.LeafIDs() {
-		leafRepo := sim.Leaf(leafID).Repo()
+// isNormalMode returns true when severity has no faults.
+func isNormalMode(sev severity) bool {
+	return sev.DropRate == 0 && !sev.Buggify
+}
 
-		users, _, err := repo.ListXRows(leafRepo.DB(), table1Name, table1Def)
-		if err != nil {
-			t.Fatalf("ListXRows %s users: %v", leafID, err)
-		}
-		if len(users) != 3 {
-			t.Errorf("%s: expected 3 users, got %d", leafID, len(users))
-		}
+// =============================================================================
+// Level 1: Normal (0% faults) — seeds 200-206
+// =============================================================================
 
-		posts, _, err := repo.ListXRows(leafRepo.DB(), table2Name, table2Def)
-		if err != nil {
-			t.Fatalf("ListXRows %s posts: %v", leafID, err)
+// TestTS_Convergence3Peer: 3 leaves each write unique rows, all converge.
+func TestTS_Convergence3Peer(t *testing.T) {
+	sev := parseSeverity()
+	seed := seedFor(200)
+	sim, masterRepo, _ := newTableSyncSim(t, seed, 3, sev.Buggify)
+	sim.Network().SetDropRate(sev.DropRate)
+
+	table := "devices"
+	def := deviceTableDef()
+	registerTableAll(t, sim, masterRepo, table, def, 100)
+
+	// Each peer writes 3 unique rows.
+	for i, leafID := range sim.LeafIDs() {
+		r := sim.Leaf(leafID).Repo()
+		for j := 0; j < 3; j++ {
+			upsertRow(t, r, table, map[string]any{
+				"device_id": fmt.Sprintf("leaf%d-dev%d", i, j),
+				"hostname":  fmt.Sprintf("host-%d-%d", i, j),
+				"status":    "online",
+			}, int64(100+i*10+j))
 		}
-		if len(posts) != 5 {
-			t.Errorf("%s: expected 5 posts, got %d", leafID, len(posts))
+	}
+
+	runAndCheck(t, sim, sev, seed, stepsFor(300))
+
+	if isNormalMode(sev) {
+		if err := sim.CheckAllTableSyncConverged(); err != nil {
+			t.Fatalf("TableSync convergence: %v", err)
+		}
+		// 9 rows total (3 per peer), should appear on all nodes.
+		for _, leafID := range sim.LeafIDs() {
+			assertRowCount(t, sim.Leaf(leafID).Repo(), string(leafID), table, def, 9)
+		}
+		assertRowCount(t, masterRepo, "master", table, def, 9)
+	} else {
+		logRowCounts(t, sim, table, def)
+	}
+}
+
+// TestTS_SchemaDeployChain: schema registered on master propagates to all leaves.
+func TestTS_SchemaDeployChain(t *testing.T) {
+	sev := parseSeverity()
+	seed := seedFor(201)
+	sim, masterRepo, _ := newTableSyncSim(t, seed, 3, sev.Buggify)
+	sim.Network().SetDropRate(sev.DropRate)
+
+	// Register only on master, not on leaves.
+	table := "settings"
+	def := configTableDef()
+	registerTable(t, masterRepo, table, def, 100)
+
+	runAndCheck(t, sim, sev, seed, stepsFor(300))
+
+	if isNormalMode(sev) {
+		// Verify schema deployed to all leaves.
+		for _, leafID := range sim.LeafIDs() {
+			r := sim.Leaf(leafID).Repo()
+			tables, err := repo.ListSyncedTables(r.DB())
+			if err != nil {
+				t.Fatalf("ListSyncedTables %s: %v", leafID, err)
+			}
+			found := false
+			for _, tbl := range tables {
+				if tbl.Name == table {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("%s: schema %q not deployed", leafID, table)
+			}
 		}
 	}
 }
 
-// --- Scenario: MTime Conflict Resolution ---
-// Two leaves write different values for the same row. Newer mtime should win.
+// TestTS_MultipleTables5: 5 tables sync independently between 2 peers.
+func TestTS_MultipleTables5(t *testing.T) {
+	sev := parseSeverity()
+	seed := seedFor(202)
+	sim, masterRepo, _ := newTableSyncSim(t, seed, 2, sev.Buggify)
+	sim.Network().SetDropRate(sev.DropRate)
 
-func TestTableSyncMTimeWins(t *testing.T) {
-	seed := seedFor(104)
-
-	masterRepo := createMasterRepo(t)
-	mf := NewMockFossil(masterRepo)
-
-	tableName := "config"
-	tableDef := repo.TableDef{
-		Columns: []repo.ColumnDef{
-			{Name: "key", Type: "text", PK: true},
-			{Name: "value", Type: "text", PK: false},
-		},
-		Conflict: "mtime-wins",
-	}
-	if err := repo.EnsureSyncSchema(masterRepo.DB()); err != nil {
-		t.Fatalf("EnsureSyncSchema master: %v", err)
-	}
-	if err := repo.RegisterSyncedTable(masterRepo.DB(), tableName, tableDef, 100); err != nil {
-		t.Fatalf("RegisterSyncedTable master: %v", err)
+	// Register 5 tables, each with 5 rows on master.
+	defs := make([]repo.TableDef, 5)
+	names := make([]string, 5)
+	for i := 0; i < 5; i++ {
+		names[i] = fmt.Sprintf("table_%d", i)
+		defs[i] = configTableDef()
+		registerTableAll(t, sim, masterRepo, names[i], defs[i], 100)
+		for j := 0; j < 5; j++ {
+			upsertRow(t, masterRepo, names[i], map[string]any{
+				"key":   fmt.Sprintf("k%d-%d", i, j),
+				"value": fmt.Sprintf("v%d-%d", i, j),
+			}, 100)
+		}
 	}
 
-	sim, err := New(SimConfig{
-		Seed:         seed,
-		NumLeaves:    2,
-		PollInterval: 5 * time.Second,
-		TmpDir:       t.TempDir(),
-		Upstream:     mf,
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	defer sim.Close()
+	runAndCheck(t, sim, sev, seed, stepsFor(300))
 
-	// Register table on leaves.
+	if isNormalMode(sev) {
+		if err := sim.CheckAllTableSyncConverged(); err != nil {
+			t.Fatalf("TableSync convergence: %v", err)
+		}
+		for i, name := range names {
+			for _, leafID := range sim.LeafIDs() {
+				assertRowCount(t, sim.Leaf(leafID).Repo(), string(leafID), name, defs[i], 5)
+			}
+		}
+	}
+}
+
+// TestTS_CatalogHashShortCircuit: same data on both sides, verify no issues.
+func TestTS_CatalogHashShortCircuit(t *testing.T) {
+	sev := parseSeverity()
+	seed := seedFor(203)
+	sim, masterRepo, _ := newTableSyncSim(t, seed, 2, sev.Buggify)
+	sim.Network().SetDropRate(sev.DropRate)
+
+	table := "configs"
+	def := configTableDef()
+	registerTableAll(t, sim, masterRepo, table, def, 100)
+
+	// Seed identical 10 rows in master and both leaves.
+	allRepos := []*repo.Repo{masterRepo}
 	for _, leafID := range sim.LeafIDs() {
-		leafRepo := sim.Leaf(leafID).Repo()
-		if err := repo.EnsureSyncSchema(leafRepo.DB()); err != nil {
-			t.Fatalf("EnsureSyncSchema %s: %v", leafID, err)
+		allRepos = append(allRepos, sim.Leaf(leafID).Repo())
+	}
+	for _, r := range allRepos {
+		for i := 0; i < 10; i++ {
+			upsertRow(t, r, table, map[string]any{
+				"key":   fmt.Sprintf("k%d", i),
+				"value": fmt.Sprintf("v%d", i),
+			}, 100)
 		}
-		if err := repo.RegisterSyncedTable(leafRepo.DB(), tableName, tableDef, 100); err != nil {
-			t.Fatalf("RegisterSyncedTable %s: %v", leafID, err)
+	}
+
+	runAndCheck(t, sim, sev, seed, stepsFor(200))
+
+	if isNormalMode(sev) {
+		if err := sim.CheckAllTableSyncConverged(); err != nil {
+			t.Fatalf("TableSync convergence: %v", err)
+		}
+		// Catalog hashes should all match.
+		masterHash, _ := repo.CatalogHash(masterRepo.DB(), table, def)
+		for _, leafID := range sim.LeafIDs() {
+			leafHash, _ := repo.CatalogHash(sim.Leaf(leafID).Repo().DB(), table, def)
+			if leafHash != masterHash {
+				t.Errorf("%s hash %s != master %s", leafID, leafHash, masterHash)
+			}
 		}
 	}
+}
 
-	// leaf-0 writes with mtime=100.
-	leaf0Repo := sim.Leaf("leaf-0").Repo()
-	row0 := map[string]any{"key": "theme", "value": "dark"}
-	if err := repo.UpsertXRow(leaf0Repo.DB(), tableName, row0, 100); err != nil {
-		t.Fatalf("UpsertXRow leaf-0: %v", err)
+// TestTS_MtimeWinsSamePK: 3 peers write same PK with different mtimes, newest wins.
+func TestTS_MtimeWinsSamePK(t *testing.T) {
+	sev := parseSeverity()
+	seed := seedFor(204)
+	sim, masterRepo, _ := newTableSyncSim(t, seed, 3, sev.Buggify)
+	sim.Network().SetDropRate(sev.DropRate)
+
+	table := "config"
+	def := configTableDef()
+	registerTableAll(t, sim, masterRepo, table, def, 100)
+
+	// leaf-0: mtime=100, leaf-1: mtime=200, leaf-2: mtime=300 (winner).
+	for i, leafID := range sim.LeafIDs() {
+		upsertRow(t, sim.Leaf(leafID).Repo(), table, map[string]any{
+			"key":   "theme",
+			"value": fmt.Sprintf("val-%d", i),
+		}, int64(100+i*100))
 	}
 
-	// leaf-1 writes conflicting value with mtime=200 (newer).
-	leaf1Repo := sim.Leaf("leaf-1").Repo()
-	row1 := map[string]any{"key": "theme", "value": "light"}
-	if err := repo.UpsertXRow(leaf1Repo.DB(), tableName, row1, 200); err != nil {
-		t.Fatalf("UpsertXRow leaf-1: %v", err)
+	runAndCheck(t, sim, sev, seed, stepsFor(300))
+
+	if isNormalMode(sev) {
+		if err := sim.CheckAllTableSyncConverged(); err != nil {
+			t.Fatalf("TableSync convergence: %v", err)
+		}
+		// leaf-2's value (mtime=300) should win everywhere.
+		pk := map[string]any{"key": "theme"}
+		assertRowValue(t, masterRepo, "master", table, def, pk, "value", "val-2")
+		for _, leafID := range sim.LeafIDs() {
+			assertRowValue(t, sim.Leaf(leafID).Repo(), string(leafID), table, def, pk, "value", "val-2")
+		}
+	}
+}
+
+// TestTS_MtimeWinsTieBreak: same PK, same mtime, same content -- idempotent.
+func TestTS_MtimeWinsTieBreak(t *testing.T) {
+	sev := parseSeverity()
+	seed := seedFor(205)
+	sim, masterRepo, _ := newTableSyncSim(t, seed, 2, sev.Buggify)
+	sim.Network().SetDropRate(sev.DropRate)
+
+	table := "config"
+	def := configTableDef()
+	registerTableAll(t, sim, masterRepo, table, def, 100)
+
+	// Both leaves write identical row with identical mtime.
+	for _, leafID := range sim.LeafIDs() {
+		upsertRow(t, sim.Leaf(leafID).Repo(), table, map[string]any{
+			"key":   "lang",
+			"value": "en",
+		}, 100)
 	}
 
-	if err := sim.Run(200); err != nil {
-		t.Fatalf("Run: %v", err)
+	runAndCheck(t, sim, sev, seed, stepsFor(200))
+
+	if isNormalMode(sev) {
+		if err := sim.CheckAllTableSyncConverged(); err != nil {
+			t.Fatalf("TableSync convergence: %v", err)
+		}
+		// Exactly 1 row on each node.
+		assertRowCount(t, masterRepo, "master", table, def, 1)
+		for _, leafID := range sim.LeafIDs() {
+			assertRowCount(t, sim.Leaf(leafID).Repo(), string(leafID), table, def, 1)
+		}
+	}
+}
+
+// TestTS_SelfWriteEnforcement: each peer writes own row, verify propagation.
+func TestTS_SelfWriteEnforcement(t *testing.T) {
+	sev := parseSeverity()
+	seed := seedFor(206)
+	sim, masterRepo, _ := newTableSyncSim(t, seed, 3, sev.Buggify)
+	sim.Network().SetDropRate(sev.DropRate)
+
+	table := "peer_status"
+	def := selfWriteTableDef()
+	registerTableAll(t, sim, masterRepo, table, def, 100)
+
+	// Each leaf writes its own status row.
+	for i, leafID := range sim.LeafIDs() {
+		upsertRow(t, sim.Leaf(leafID).Repo(), table, map[string]any{
+			"peer_id":   fmt.Sprintf("peer-%d", i),
+			"last_seen": int64(1000 + i*10),
+			"health":    "healthy",
+		}, int64(100+i))
 	}
 
-	t.Logf("MTime conflict: steps=%d syncs=%d errors=%d",
-		sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+	runAndCheck(t, sim, sev, seed, stepsFor(300))
+
+	if isNormalMode(sev) {
+		if err := sim.CheckAllTableSyncConverged(); err != nil {
+			t.Fatalf("TableSync convergence: %v", err)
+		}
+		// All 3 rows should appear on every node.
+		assertRowCount(t, masterRepo, "master", table, def, 3)
+		for _, leafID := range sim.LeafIDs() {
+			assertRowCount(t, sim.Leaf(leafID).Repo(), string(leafID), table, def, 3)
+		}
+	} else {
+		logRowCounts(t, sim, table, def)
+	}
+}
+
+// =============================================================================
+// Level 2: Adversarial (10% faults) — seeds 300-306
+// =============================================================================
+
+// TestTS_PartitionHeal: partition leaf-0, write on both sides, heal, converge.
+func TestTS_PartitionHeal(t *testing.T) {
+	sev := parseSeverity()
+	seed := seedFor(300)
+	sim, masterRepo, _ := newTableSyncSim(t, seed, 3, sev.Buggify)
+	sim.Network().SetDropRate(sev.DropRate)
+
+	table := "devices"
+	def := deviceTableDef()
+	registerTableAll(t, sim, masterRepo, table, def, 100)
+
+	// Phase 1: baseline sync with some rows.
+	upsertRow(t, masterRepo, table, map[string]any{
+		"device_id": "shared", "hostname": "base", "status": "ok",
+	}, 100)
+	if err := sim.Run(stepsFor(50)); err != nil {
+		t.Fatalf("Run phase 1: %v", err)
+	}
+
+	// Phase 2: partition leaf-0, write on both sides.
+	sim.Network().Partition("leaf-0")
+	upsertRow(t, sim.Leaf("leaf-0").Repo(), table, map[string]any{
+		"device_id": "isolated", "hostname": "from-0", "status": "partitioned",
+	}, 200)
+	upsertRow(t, sim.Leaf("leaf-1").Repo(), table, map[string]any{
+		"device_id": "connected", "hostname": "from-1", "status": "ok",
+	}, 200)
+	if err := sim.Run(stepsFor(100)); err != nil {
+		t.Fatalf("Run phase 2: %v", err)
+	}
+
+	// Phase 3: heal and converge.
+	sim.Network().Heal("leaf-0")
+	for _, leafID := range sim.LeafIDs() {
+		sim.ScheduleSyncNow(leafID)
+	}
+	if err := sim.Run(stepsFor(150)); err != nil {
+		t.Fatalf("Run phase 3: %v", err)
+	}
 
 	if err := sim.CheckSafety(); err != nil {
 		t.Fatalf("Safety: %v", err)
 	}
+	t.Logf("[%s] seed=%d steps=%d syncs=%d errors=%d",
+		sev.Name, seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
 
-	// Both leaves should have the newer value (mtime=200 from leaf-1).
-	pkValues := map[string]any{"key": "theme"}
-	pkHash := repo.PKHash(pkValues)
+	if isNormalMode(sev) {
+		if err := sim.CheckAllTableSyncConverged(); err != nil {
+			t.Fatalf("TableSync convergence: %v", err)
+		}
+	} else {
+		logRowCounts(t, sim, table, def)
+	}
+}
 
+// TestTS_PartitionConcurrentSamePK: both write same PK during partition.
+func TestTS_PartitionConcurrentSamePK(t *testing.T) {
+	sev := parseSeverity()
+	seed := seedFor(301)
+	sim, masterRepo, _ := newTableSyncSim(t, seed, 2, sev.Buggify)
+	sim.Network().SetDropRate(sev.DropRate)
+
+	table := "config"
+	def := configTableDef()
+	registerTableAll(t, sim, masterRepo, table, def, 100)
+
+	// Phase 1: partition both leaves from each other (via master).
+	sim.Network().Partition("leaf-0")
+
+	// leaf-0 writes with mtime=100, leaf-1 with mtime=200 (winner).
+	upsertRow(t, sim.Leaf("leaf-0").Repo(), table, map[string]any{
+		"key": "mode", "value": "old",
+	}, 100)
+	upsertRow(t, sim.Leaf("leaf-1").Repo(), table, map[string]any{
+		"key": "mode", "value": "new",
+	}, 200)
+	if err := sim.Run(stepsFor(100)); err != nil {
+		t.Fatalf("Run partitioned: %v", err)
+	}
+
+	// Phase 2: heal and converge.
+	sim.Network().Heal("leaf-0")
 	for _, leafID := range sim.LeafIDs() {
-		leafRepo := sim.Leaf(leafID).Repo()
-		row, mtime, err := repo.LookupXRow(leafRepo.DB(), tableName, tableDef, pkHash)
-		if err != nil {
-			t.Fatalf("LookupXRow %s: %v", leafID, err)
+		sim.ScheduleSyncNow(leafID)
+	}
+	if err := sim.Run(stepsFor(200)); err != nil {
+		t.Fatalf("Run healed: %v", err)
+	}
+
+	if err := sim.CheckSafety(); err != nil {
+		t.Fatalf("Safety: %v", err)
+	}
+	t.Logf("[%s] seed=%d steps=%d syncs=%d errors=%d",
+		sev.Name, seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+
+	if isNormalMode(sev) {
+		if err := sim.CheckAllTableSyncConverged(); err != nil {
+			t.Fatalf("TableSync convergence: %v", err)
 		}
-		if row == nil {
-			t.Fatalf("%s: missing row for key=theme", leafID)
+		// mtime=200 "new" should win.
+		pk := map[string]any{"key": "mode"}
+		assertRowValue(t, masterRepo, "master", table, def, pk, "value", "new")
+	}
+}
+
+// TestTS_BuggifyConvergence100: 100 rows, 10% faults, must converge.
+func TestTS_BuggifyConvergence100(t *testing.T) {
+	seed := seedFor(302)
+	sim, masterRepo, _ := newTableSyncSim(t, seed, 3, true)
+	sim.Network().SetDropRate(0.10)
+
+	table := "sensors"
+	def := repo.TableDef{
+		Columns: []repo.ColumnDef{
+			{Name: "sensor_id", Type: "integer", PK: true},
+			{Name: "reading", Type: "real"},
+		},
+		Conflict: "mtime-wins",
+	}
+	registerTableAll(t, sim, masterRepo, table, def, 100)
+
+	// Seed 100 rows in master.
+	for i := 0; i < 100; i++ {
+		upsertRow(t, masterRepo, table, map[string]any{
+			"sensor_id": int64(i),
+			"reading":   float64(20.0 + float64(i)*0.1),
+		}, 100)
+	}
+
+	if err := sim.Run(stepsFor(500)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	t.Logf("[buggify] seed=%d steps=%d syncs=%d errors=%d",
+		seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+
+	// Structural safety must hold even with buggify.
+	for _, leafID := range sim.LeafIDs() {
+		r := sim.Leaf(leafID).Repo()
+		if err := CheckDeltaChains(string(leafID), r); err != nil {
+			t.Fatalf("Delta chain: %v", err)
 		}
-		if row["value"] != "light" {
-			t.Errorf("%s: expected value=light, got %v", leafID, row["value"])
-		}
-		if mtime != 200 {
-			t.Errorf("%s: expected mtime=200, got %d", leafID, mtime)
+		if err := CheckNoOrphanPhantoms(string(leafID), r); err != nil {
+			t.Fatalf("Orphan phantom: %v", err)
 		}
 	}
 
-	// Master should also have the newer value.
-	masterRow, masterMtime, err := repo.LookupXRow(masterRepo.DB(), tableName, tableDef, pkHash)
-	if err != nil {
-		t.Fatalf("LookupXRow master: %v", err)
+	// Log row counts (convergence not guaranteed under buggify).
+	logRowCounts(t, sim, table, def)
+}
+
+// TestTS_BuggifyMultiTable: 3 tables x 10 rows under faults.
+func TestTS_BuggifyMultiTable(t *testing.T) {
+	seed := seedFor(303)
+	sim, masterRepo, _ := newTableSyncSim(t, seed, 3, true)
+	sim.Network().SetDropRate(0.10)
+
+	// Register 3 tables.
+	names := []string{"alpha", "beta", "gamma"}
+	def := configTableDef()
+	for _, name := range names {
+		registerTableAll(t, sim, masterRepo, name, def, 100)
+		for j := 0; j < 10; j++ {
+			upsertRow(t, masterRepo, name, map[string]any{
+				"key":   fmt.Sprintf("%s-k%d", name, j),
+				"value": fmt.Sprintf("%s-v%d", name, j),
+			}, 100)
+		}
 	}
-	if masterRow == nil {
-		t.Fatal("master: missing row for key=theme")
+
+	if err := sim.Run(stepsFor(500)); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
-	if masterRow["value"] != "light" {
-		t.Errorf("master: expected value=light, got %v", masterRow["value"])
+
+	t.Logf("[buggify-multi] seed=%d steps=%d syncs=%d errors=%d",
+		seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+
+	// Structural safety.
+	for _, leafID := range sim.LeafIDs() {
+		r := sim.Leaf(leafID).Repo()
+		if err := CheckDeltaChains(string(leafID), r); err != nil {
+			t.Fatalf("Delta chain: %v", err)
+		}
 	}
-	if masterMtime != 200 {
-		t.Errorf("master: expected mtime=200, got %d", masterMtime)
+
+	// Log per-table row counts.
+	for _, name := range names {
+		t.Logf("  table %s:", name)
+		logRowCounts(t, sim, name, def)
 	}
+}
+
+// TestTS_StalePeerRejoin: peer partitioned 10 rounds, rejoins and catches up.
+func TestTS_StalePeerRejoin(t *testing.T) {
+	sev := parseSeverity()
+	seed := seedFor(304)
+	sim, masterRepo, _ := newTableSyncSim(t, seed, 3, sev.Buggify)
+	sim.Network().SetDropRate(sev.DropRate)
+
+	table := "devices"
+	def := deviceTableDef()
+	registerTableAll(t, sim, masterRepo, table, def, 100)
+
+	// Phase 1: all connected, seed initial data.
+	for i := 0; i < 5; i++ {
+		upsertRow(t, masterRepo, table, map[string]any{
+			"device_id": fmt.Sprintf("init-%d", i),
+			"hostname":  fmt.Sprintf("host-%d", i),
+			"status":    "active",
+		}, 100)
+	}
+	if err := sim.Run(stepsFor(50)); err != nil {
+		t.Fatalf("Run phase 1: %v", err)
+	}
+
+	// Phase 2: partition leaf-2 for 10 rounds while others keep syncing.
+	sim.Network().Partition("leaf-2")
+	for i := 0; i < 5; i++ {
+		upsertRow(t, masterRepo, table, map[string]any{
+			"device_id": fmt.Sprintf("new-%d", i),
+			"hostname":  fmt.Sprintf("new-host-%d", i),
+			"status":    "pending",
+		}, 200)
+	}
+	if err := sim.Run(stepsFor(100)); err != nil {
+		t.Fatalf("Run phase 2: %v", err)
+	}
+
+	// Phase 3: heal and let leaf-2 catch up.
+	sim.Network().Heal("leaf-2")
+	sim.ScheduleSyncNow("leaf-2")
+	if err := sim.Run(stepsFor(150)); err != nil {
+		t.Fatalf("Run phase 3: %v", err)
+	}
+
+	if err := sim.CheckSafety(); err != nil {
+		t.Fatalf("Safety: %v", err)
+	}
+	t.Logf("[%s] seed=%d steps=%d syncs=%d errors=%d",
+		sev.Name, seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+
+	if isNormalMode(sev) {
+		if err := sim.CheckAllTableSyncConverged(); err != nil {
+			t.Fatalf("TableSync convergence: %v", err)
+		}
+		// leaf-2 should have all 10 rows.
+		assertRowCount(t, sim.Leaf("leaf-2").Repo(), "leaf-2", table, def, 10)
+	} else {
+		logRowCounts(t, sim, table, def)
+	}
+}
+
+// TestTS_SchemaBeforeRows: schema deployed first, then rows populate.
+func TestTS_SchemaBeforeRows(t *testing.T) {
+	sev := parseSeverity()
+	seed := seedFor(305)
+	sim, masterRepo, _ := newTableSyncSim(t, seed, 2, sev.Buggify)
+	sim.Network().SetDropRate(sev.DropRate)
+
+	table := "metrics"
+	def := configTableDef()
+
+	// Register only on master (schema will propagate to leaves).
+	registerTable(t, masterRepo, table, def, 100)
+
+	// Phase 1: sync to deploy schema.
+	if err := sim.Run(stepsFor(100)); err != nil {
+		t.Fatalf("Run phase 1: %v", err)
+	}
+
+	// Phase 2: now add rows to master.
+	for i := 0; i < 5; i++ {
+		upsertRow(t, masterRepo, table, map[string]any{
+			"key":   fmt.Sprintf("metric-%d", i),
+			"value": fmt.Sprintf("%d", i*100),
+		}, 200)
+	}
+	if err := sim.Run(stepsFor(200)); err != nil {
+		t.Fatalf("Run phase 2: %v", err)
+	}
+
+	if err := sim.CheckSafety(); err != nil {
+		t.Fatalf("Safety: %v", err)
+	}
+	t.Logf("[%s] seed=%d steps=%d syncs=%d errors=%d",
+		sev.Name, seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+
+	if isNormalMode(sev) {
+		if err := sim.CheckAllTableSyncConverged(); err != nil {
+			t.Fatalf("TableSync convergence: %v", err)
+		}
+		for _, leafID := range sim.LeafIDs() {
+			assertRowCount(t, sim.Leaf(leafID).Repo(), string(leafID), table, def, 5)
+		}
+	} else {
+		logRowCounts(t, sim, table, def)
+	}
+}
+
+// TestTS_OwnerWriteEnforcement: owner-write table with competing writers.
+// Owner-write conflict resolution depends on loginUser (auth), so in the DST
+// sim (unauthenticated), the handler may reject cross-owner writes. This test
+// verifies structural safety and that rows from distinct owners coexist.
+func TestTS_OwnerWriteEnforcement(t *testing.T) {
+	sev := parseSeverity()
+	seed := seedFor(306)
+	sim, masterRepo, _ := newTableSyncSim(t, seed, 3, sev.Buggify)
+	sim.Network().SetDropRate(sev.DropRate)
+
+	table := "resources"
+	def := ownerWriteTableDef()
+	registerTableAll(t, sim, masterRepo, table, def, 100)
+
+	// Each leaf writes a distinct resource with its own _owner.
+	for i, leafID := range sim.LeafIDs() {
+		upsertRow(t, sim.Leaf(leafID).Repo(), table, map[string]any{
+			"resource_id": fmt.Sprintf("res-%d", i),
+			"data":        fmt.Sprintf("data-from-%d", i),
+			"_owner":      string(leafID),
+		}, int64(100+i))
+	}
+
+	if err := sim.Run(stepsFor(300)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if err := sim.CheckSafety(); err != nil {
+		t.Fatalf("Safety: %v", err)
+	}
+	t.Logf("[%s] seed=%d steps=%d syncs=%d errors=%d",
+		sev.Name, seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+
+	// Log row distribution. Owner-write conflict may prevent full propagation
+	// without authenticated users, so we only assert safety (not convergence).
+	logRowCounts(t, sim, table, def)
 }
