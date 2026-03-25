@@ -490,6 +490,21 @@ func isHash(s string) bool {
 }
 
 func crosslinkCluster(r *repo.Repo, rid libfossil.FslID, d *deck.Deck) error {
+	if err := tag.ApplyTag(r, tag.ApplyOpts{
+		TargetRID: rid,
+		SrcRID:    rid,
+		TagName:   "cluster",
+		TagType:   tag.TagSingleton,
+		MTime:     libfossil.TimeToJulian(d.D),
+	}); err != nil {
+		return fmt.Errorf("cluster tag: %w", err)
+	}
+	for _, memberUUID := range d.M {
+		var memberRid int64
+		if r.DB().QueryRow("SELECT rid FROM blob WHERE uuid=?", memberUUID).Scan(&memberRid) == nil {
+			r.DB().Exec("DELETE FROM unclustered WHERE rid=?", memberRid)
+		}
+	}
 	return nil
 }
 

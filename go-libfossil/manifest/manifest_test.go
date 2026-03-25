@@ -850,3 +850,83 @@ func TestCrosslinkAttachment(t *testing.T) {
 		t.Errorf("event comment=%q", comment)
 	}
 }
+
+func TestCrosslinkCluster(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Store 2 blobs that will be members of the cluster
+	blob1Data := []byte("test blob 1")
+	rid1, uuid1, err := blob.Store(r.DB(), blob1Data)
+	if err != nil {
+		t.Fatalf("Store blob1: %v", err)
+	}
+
+	blob2Data := []byte("test blob 2")
+	rid2, uuid2, err := blob.Store(r.DB(), blob2Data)
+	if err != nil {
+		t.Fatalf("Store blob2: %v", err)
+	}
+
+	// Verify both blobs are initially in unclustered table
+	r.DB().Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid1)
+	r.DB().Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid2)
+
+	var count1, count2 int
+	r.DB().QueryRow("SELECT count(*) FROM unclustered WHERE rid=?", rid1).Scan(&count1)
+	r.DB().QueryRow("SELECT count(*) FROM unclustered WHERE rid=?", rid2).Scan(&count2)
+	if count1 != 1 || count2 != 1 {
+		t.Fatalf("blobs not in unclustered: rid1=%d rid2=%d", count1, count2)
+	}
+
+	// Create a cluster manifest with these two blobs as members
+	clusterTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	d := &deck.Deck{
+		Type: deck.Cluster,
+		M:    []string{uuid1, uuid2},
+		D:    clusterTime,
+	}
+
+	// Marshal and store the cluster manifest blob
+	manifestBytes, err := d.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	rid, _, err := blob.Store(r.DB(), manifestBytes)
+	if err != nil {
+		t.Fatalf("Store manifest: %v", err)
+	}
+
+	// Clear crosslink tables to simulate post-clone
+	r.DB().Exec("DELETE FROM tagxref WHERE rid=?", rid)
+
+	// Run Crosslink
+	n, err := Crosslink(r)
+	if err != nil {
+		t.Fatalf("Crosslink: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("expected at least 1 artifact crosslinked, got %d", n)
+	}
+
+	// Verify cluster tag
+	var tagCount int
+	r.DB().QueryRow(`
+		SELECT count(*) FROM tagxref
+		JOIN tag USING(tagid)
+		WHERE tagname='cluster' AND rid=?
+	`, rid).Scan(&tagCount)
+	if tagCount != 1 {
+		t.Errorf("cluster tag count=%d, want 1", tagCount)
+	}
+
+	// Verify both blobs were removed from unclustered table
+	r.DB().QueryRow("SELECT count(*) FROM unclustered WHERE rid=?", rid1).Scan(&count1)
+	r.DB().QueryRow("SELECT count(*) FROM unclustered WHERE rid=?", rid2).Scan(&count2)
+	if count1 != 0 {
+		t.Errorf("rid1 still in unclustered, count=%d", count1)
+	}
+	if count2 != 0 {
+		t.Errorf("rid2 still in unclustered, count=%d", count2)
+	}
+}
