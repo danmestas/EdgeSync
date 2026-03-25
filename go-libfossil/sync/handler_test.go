@@ -866,3 +866,84 @@ func TestHandlerPragmaSendPrivate_Rejected(t *testing.T) {
 		t.Error("expected 'not authorized to sync private content' error")
 	}
 }
+
+func TestHandlerPrivateCardAccepted(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	r.DB().Exec("UPDATE user SET cap='oix' WHERE login='nobody'")
+	data := []byte("private blob data")
+	uuid := hash.SHA1(data)
+
+	resp := handleReq(t, r,
+		&xfer.PushCard{ServerCode: "s", ProjectCode: "p"},
+		&xfer.PrivateCard{},
+		&xfer.FileCard{UUID: uuid, Content: data},
+	)
+
+	for _, c := range resp.Cards {
+		if e, ok := c.(*xfer.ErrorCard); ok {
+			t.Errorf("unexpected error: %s", e.Message)
+		}
+	}
+
+	rid, ok := blob.Exists(r.DB(), uuid)
+	if !ok {
+		t.Fatal("blob not stored")
+	}
+	if !content.IsPrivate(r.DB(), int64(rid)) {
+		t.Error("blob should be marked private")
+	}
+}
+
+func TestHandlerPrivateCardRejected(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	r.DB().Exec("UPDATE user SET cap='oi' WHERE login='nobody'")
+	data := []byte("private blob rejected")
+	uuid := hash.SHA1(data)
+
+	resp := handleReq(t, r,
+		&xfer.PushCard{ServerCode: "s", ProjectCode: "p"},
+		&xfer.PrivateCard{},
+		&xfer.FileCard{UUID: uuid, Content: data},
+	)
+
+	errors := findCards[*xfer.ErrorCard](resp)
+	found := false
+	for _, e := range errors {
+		if e.Message == "not authorized to sync private content" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected 'not authorized to sync private content' error")
+	}
+}
+
+func TestHandlerPublicFileClearsPrivate(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	data := []byte("was private now public")
+	uuid := hash.SHA1(data)
+
+	// Pre-store as private.
+	storeReceivedFile(r, uuid, "", data)
+	rid, _ := blob.Exists(r.DB(), uuid)
+	content.MakePrivate(r.DB(), int64(rid))
+	if !content.IsPrivate(r.DB(), int64(rid)) {
+		t.Fatal("precondition: blob should be private")
+	}
+
+	// Push same blob WITHOUT private card — should clear private.
+	resp := handleReq(t, r,
+		&xfer.PushCard{ServerCode: "s", ProjectCode: "p"},
+		&xfer.FileCard{UUID: uuid, Content: data},
+	)
+
+	for _, c := range resp.Cards {
+		if e, ok := c.(*xfer.ErrorCard); ok {
+			t.Errorf("unexpected error: %s", e.Message)
+		}
+	}
+
+	if content.IsPrivate(r.DB(), int64(rid)) {
+		t.Error("blob should no longer be private after public file push")
+	}
+}

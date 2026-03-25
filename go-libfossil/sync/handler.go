@@ -165,13 +165,14 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 		}
 	}
 
-	// Second pass: handle file cards first so blobs are stored before
-	// IGotCard checks blob.Exists. Without this, a request containing
-	// both IGotCard and FileCard for the same blob produces a spurious
-	// GimmeCard — the IGotCard runs before the FileCard stores it.
+	// Second pass: handle file cards (and private prefix) first so blobs
+	// are stored before IGotCard checks blob.Exists. Without this, a
+	// request containing both IGotCard and FileCard for the same blob
+	// produces a spurious GimmeCard — the IGotCard runs before the
+	// FileCard stores it.
 	for _, card := range req.Cards {
 		switch card.(type) {
-		case *xfer.FileCard, *xfer.CFileCard:
+		case *xfer.FileCard, *xfer.CFileCard, *xfer.PrivateCard:
 			if err := h.handleDataCard(card); err != nil {
 				return nil, err
 			}
@@ -180,7 +181,7 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 	// Third pass: handle remaining data cards (igot, gimme, etc.).
 	for _, card := range req.Cards {
 		switch card.(type) {
-		case *xfer.FileCard, *xfer.CFileCard:
+		case *xfer.FileCard, *xfer.CFileCard, *xfer.PrivateCard:
 			continue // Already handled above.
 		default:
 			if err := h.handleDataCard(card); err != nil {
@@ -278,6 +279,16 @@ func (h *handler) handleDataCard(card xfer.Card) error {
 		return h.handleFile(c.UUID, c.DeltaSrc, c.Content)
 	case *xfer.CFileCard:
 		return h.handleFile(c.UUID, c.DeltaSrc, c.Content)
+	case *xfer.PrivateCard:
+		if !auth.CanSyncPrivate(h.caps) {
+			h.resp = append(h.resp, &xfer.ErrorCard{
+				Message: "not authorized to sync private content",
+			})
+			h.nextIsPrivate = false
+		} else {
+			h.nextIsPrivate = true
+		}
+		return nil
 	case *xfer.ReqConfigCard:
 		return h.handleReqConfig(c)
 	case *xfer.UVIGotCard:
@@ -356,6 +367,13 @@ func (h *handler) handleFile(uuid, deltaSrc string, payload []byte) error {
 			Message: fmt.Sprintf("storing %s: %v", uuid, err),
 		})
 		return nil
+	}
+	rid, _ := blob.Exists(h.repo.DB(), uuid)
+	if h.nextIsPrivate {
+		content.MakePrivate(h.repo.DB(), int64(rid))
+		h.nextIsPrivate = false
+	} else {
+		content.MakePublic(h.repo.DB(), int64(rid))
 	}
 	h.filesRecvd++
 	return nil
