@@ -87,6 +87,8 @@ type handler struct {
 	reqClusters   bool // client sent pragma req-clusters
 	filesSent     int  // files sent in response (for observer)
 	filesRecvd    int  // files received from client (for observer)
+	syncPrivate   bool // true if pragma send-private was accepted
+	nextIsPrivate bool // true if a private card precedes the next file/cfile
 	syncedTables  map[string]*SyncedTable // cached table definitions
 	xrowsSent     int  // table sync rows sent
 	xrowsRecvd    int  // table sync rows received
@@ -224,6 +226,15 @@ func (h *handler) handleControlCard(card xfer.Card) {
 		}
 		if c.Name == "req-clusters" {
 			h.reqClusters = true
+		}
+		if c.Name == "send-private" {
+			if auth.CanSyncPrivate(h.caps) {
+				h.syncPrivate = true
+			} else {
+				h.resp = append(h.resp, &xfer.ErrorCard{
+					Message: "not authorized to sync private content",
+				})
+			}
 		}
 		// Acknowledge client-version, ignore other unknown pragmas.
 	case *xfer.PushCard:

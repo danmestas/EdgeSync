@@ -831,3 +831,38 @@ func TestEmitIGots_ExcludesShunAndPrivate(t *testing.T) {
 		t.Error("private blob appeared in igots")
 	}
 }
+
+func TestHandlerPragmaSendPrivate_Accepted(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	r.DB().Exec("UPDATE user SET cap='oix' WHERE login='nobody'")
+	resp := handleReq(t, r,
+		&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
+		&xfer.PragmaCard{Name: "send-private"},
+	)
+	for _, c := range resp.Cards {
+		if e, ok := c.(*xfer.ErrorCard); ok {
+			if e.Message == "not authorized to sync private content" {
+				t.Error("should not get auth error with 'x' capability")
+			}
+		}
+	}
+}
+
+func TestHandlerPragmaSendPrivate_Rejected(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	r.DB().Exec("UPDATE user SET cap='oi' WHERE login='nobody'")
+	resp := handleReq(t, r,
+		&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
+		&xfer.PragmaCard{Name: "send-private"},
+	)
+	errors := findCards[*xfer.ErrorCard](resp)
+	found := false
+	for _, e := range errors {
+		if e.Message == "not authorized to sync private content" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected 'not authorized to sync private content' error")
+	}
+}
