@@ -13,6 +13,7 @@ import (
 
 	natsserver "github.com/nats-io/nats-server/v2/server"
 
+	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
 	"github.com/dmestas/edgesync/go-libfossil/sync"
@@ -542,6 +543,134 @@ func TestAgentServeHTTPFossilClone(t *testing.T) {
 	}
 
 	t.Logf("PASS: agent.Start() ServeHTTP → fossil clone — %d blobs, healthz + xfer verified", len(uuids))
+}
+
+// TestShunPrivateNotPropagated verifies that shunned and private blobs on a
+// server are never sent to a syncing client. Exercises the real client-side
+// sendUnclustered + emitIGots code paths via HTTP sync.
+func TestShunPrivateNotPropagated(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	dir := t.TempDir()
+	projCode := "shuntest0123456789abcdef0123456789abcdef"
+
+	// 1. Create server repo with normal + shunned + private blobs.
+	pathSrv := filepath.Join(dir, "server.fossil")
+	rSrv, err := repo.Create(pathSrv, "testuser", simio.CryptoRand{})
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+	rSrv.DB().Exec("UPDATE config SET value=? WHERE name='project-code'", projCode)
+
+	normalData := []byte("normal-blob-content-for-sync-test")
+	shunnedData := []byte("shunned-blob-should-not-propagate")
+	privateData := []byte("private-blob-should-not-propagate")
+
+	_, normalUUID, err := blob.Store(rSrv.DB(), normalData)
+	if err != nil {
+		t.Fatalf("store normal: %v", err)
+	}
+	_, shunnedUUID, err := blob.Store(rSrv.DB(), shunnedData)
+	if err != nil {
+		t.Fatalf("store shunned: %v", err)
+	}
+	privRid, _, err := blob.Store(rSrv.DB(), privateData)
+	if err != nil {
+		t.Fatalf("store private: %v", err)
+	}
+
+	if _, err := rSrv.DB().Exec("INSERT INTO shun(uuid, mtime) VALUES(?, 0)", shunnedUUID); err != nil {
+		t.Fatalf("insert shun: %v", err)
+	}
+	if _, err := rSrv.DB().Exec("INSERT INTO private(rid) VALUES(?)", privRid); err != nil {
+		t.Fatalf("insert private: %v", err)
+	}
+
+	var privUUID string
+	if err := rSrv.DB().QueryRow("SELECT uuid FROM blob WHERE rid=?", privRid).Scan(&privUUID); err != nil {
+		t.Fatalf("query privUUID: %v", err)
+	}
+	rSrv.Close()
+
+	// 2. Create client repo — empty, same project code.
+	pathCli := filepath.Join(dir, "client.fossil")
+	rCli, err := repo.Create(pathCli, "testuser", simio.CryptoRand{})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	rCli.DB().Exec("UPDATE config SET value=? WHERE name='project-code'", projCode)
+	var srvCode string
+	if err := rCli.DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&srvCode); err != nil {
+		t.Fatalf("query server-code: %v", err)
+	}
+	rCli.Close()
+
+	// 3. Start server via ServeHTTP.
+	rSrv, err = repo.Open(pathSrv)
+	if err != nil {
+		t.Fatalf("reopen server: %v", err)
+	}
+	defer rSrv.Close()
+
+	addr := freeAddr(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go sync.ServeHTTP(ctx, addr, rSrv, sync.HandleSync)
+	waitForAddr(t, addr, 5*time.Second)
+
+	// 4. Client syncs from server.
+	rCli, err = repo.Open(pathCli)
+	if err != nil {
+		t.Fatalf("reopen client: %v", err)
+	}
+	defer rCli.Close()
+
+	transport := &sync.HTTPTransport{URL: fmt.Sprintf("http://%s", addr)}
+	for round := 0; round < 10; round++ {
+		result, err := sync.Sync(ctx, rCli, transport, sync.SyncOpts{
+			Pull:        true,
+			ProjectCode: projCode,
+			ServerCode:  srvCode,
+		})
+		if err != nil {
+			t.Fatalf("sync round %d: %v", round, err)
+		}
+		t.Logf("round %d: recv=%d", round, result.FilesRecvd)
+		if result.FilesRecvd == 0 {
+			break
+		}
+	}
+
+	// 5. Verify: normal blob present, shunned + private absent.
+	var normalCount int
+	if err := rCli.DB().QueryRow("SELECT count(*) FROM blob WHERE uuid=?", normalUUID).Scan(&normalCount); err != nil {
+		t.Fatalf("query normal: %v", err)
+	}
+	if normalCount != 1 {
+		t.Errorf("normal blob missing from client (count=%d)", normalCount)
+	}
+
+	var shunnedCount int
+	if err := rCli.DB().QueryRow("SELECT count(*) FROM blob WHERE uuid=?", shunnedUUID).Scan(&shunnedCount); err != nil {
+		t.Fatalf("query shunned: %v", err)
+	}
+	if shunnedCount != 0 {
+		t.Errorf("shunned blob propagated to client (count=%d)", shunnedCount)
+	}
+
+	var privateCount int
+	if err := rCli.DB().QueryRow("SELECT count(*) FROM blob WHERE uuid=?", privUUID).Scan(&privateCount); err != nil {
+		t.Fatalf("query private: %v", err)
+	}
+	if privateCount != 0 {
+		t.Errorf("private blob propagated to client (count=%d)", privateCount)
+	}
+
+	t.Logf("PASS: shun/private exclusion — normal=%d shunned=%d private=%d",
+		normalCount, shunnedCount, privateCount)
 }
 
 // --- helpers ---
