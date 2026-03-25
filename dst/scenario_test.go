@@ -632,6 +632,20 @@ func TestDST(t *testing.T) {
 			[]byte(fmt.Sprintf("sweep-content-%d-seed%d", i, seed)), int64(100+i))
 	}
 
+	// Seed private blobs so sweep exercises private sync paths.
+	for i := range 3 {
+		data := []byte(fmt.Sprintf("dst-private-%04d-seed%d", i, seed))
+		masterRepo.WithTx(func(tx *db.Tx) error {
+			rid, _, err := blob.Store(tx, data)
+			if err != nil {
+				return err
+			}
+			return content.MakePrivate(tx, int64(rid))
+		})
+	}
+	// Grant 'x' capability to nobody for private sync.
+	masterRepo.DB().Exec("UPDATE user SET cap='oixy' WHERE login='nobody'")
+
 	sim, err := New(SimConfig{
 		Seed:         seed,
 		NumLeaves:    3,
@@ -640,6 +654,7 @@ func TestDST(t *testing.T) {
 		Upstream:     mf,
 		Buggify:      sev.Buggify,
 		UV:           true,
+		Private:      true,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -682,6 +697,14 @@ func TestDST(t *testing.T) {
 		}
 		if err := sim.CheckAllUVConverged(masterRepo); err != nil {
 			t.Fatalf("UV convergence violation at seed=%d: %v", seed, err)
+		}
+		// Check private blob convergence: all leaves should have private blobs.
+		for _, id := range sim.LeafIDs() {
+			var n int
+			sim.Leaf(id).Repo().DB().QueryRow("SELECT count(*) FROM private").Scan(&n)
+			if n == 0 {
+				t.Errorf("Private convergence: %s has no private blobs at seed=%d", id, seed)
+			}
 		}
 	}
 

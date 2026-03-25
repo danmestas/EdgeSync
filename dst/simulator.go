@@ -62,6 +62,7 @@ type SimConfig struct {
 	Upstream            sync.Transport // mock Fossil master
 	Buggify             bool           // enable BUGGIFY fault injection
 	UV                  bool           // sync unversioned files
+	Private             bool           // sync private artifacts
 	SafetyCheckInterval int            // run CheckSafety() every N steps; 0 = disabled
 }
 
@@ -130,6 +131,7 @@ func New(cfg SimConfig) (*Simulator, error) {
 			Clock:        clock,
 			PollInterval: cfg.PollInterval,
 			UV:           cfg.UV,
+			Private:      cfg.Private,
 		}, r, transport, projCode, srvCode)
 
 		s.leaves[id] = a
