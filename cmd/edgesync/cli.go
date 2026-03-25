@@ -57,6 +57,7 @@ type RepoCmd struct {
 	Blame        RepoBlameCmd        `cmd:"" help:"Alias for annotate"`
 	Branch       RepoBranchCmd       `cmd:"" help:"Branch operations"`
 	UV           RepoUVCmd           `cmd:"" name:"uv" help:"Unversioned file operations"`
+	Schema       SchemaCmd           `cmd:"" help:"Synced table schema operations"`
 }
 
 type SyncCmd struct {
