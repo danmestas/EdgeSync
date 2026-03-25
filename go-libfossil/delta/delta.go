@@ -103,9 +103,9 @@ func Apply(source, delta []byte) (result []byte, err error) {
 		}
 
 		switch cmd {
-		case '@':
-			offset := cnt
-			cnt, err = r.getInt()
+			case '@':
+			// Fossil delta format: count@offset, (first int = byte count, second = source offset)
+			offset, err := r.getInt()
 			if err != nil {
 				return nil, err
 			}
@@ -157,16 +157,34 @@ func Apply(source, delta []byte) (result []byte, err error) {
 	return nil, fmt.Errorf("%w: missing terminator", ErrInvalidDelta)
 }
 
+// Checksum computes Fossil's delta checksum, matching delta.c's checksum().
+// Sum of 4-byte big-endian words, with trailing bytes in big-endian position.
 func Checksum(data []byte) uint32 {
 	if data == nil {
 		panic("delta.Checksum: data must not be nil")
 	}
-	var sum0, sum1 uint16
-	for _, b := range data {
-		sum0 += uint16(b)
-		sum1 += sum0
+	var sum uint32
+	i := 0
+	n := len(data)
+
+	for n >= 4 {
+		sum += uint32(data[i])<<24 | uint32(data[i+1])<<16 | uint32(data[i+2])<<8 | uint32(data[i+3])
+		i += 4
+		n -= 4
 	}
-	return uint32(sum0) | (uint32(sum1) << 16)
+
+	switch n {
+	case 3:
+		sum += uint32(data[i+2]) << 8
+		fallthrough
+	case 2:
+		sum += uint32(data[i+1]) << 16
+		fallthrough
+	case 1:
+		sum += uint32(data[i]) << 24
+	}
+
+	return sum
 }
 
 const zDigitsEnc = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz~"
@@ -279,9 +297,10 @@ func emitMatches(source, target []byte, heads []int, entries []hashEntry, mask i
 
 		if bestLen >= nHash {
 			flushInsert()
-			buf = appendInt(buf, uint64(bestOff))
-			buf = append(buf, '@')
+			// Fossil delta format: count@offset,
 			buf = appendInt(buf, uint64(bestLen))
+			buf = append(buf, '@')
+			buf = appendInt(buf, uint64(bestOff))
 			buf = append(buf, ',')
 			tPos += bestLen
 		} else {
