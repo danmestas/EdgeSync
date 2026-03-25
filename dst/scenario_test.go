@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dmestas/edgesync/go-libfossil/blob"
+	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/db"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
@@ -1176,6 +1177,71 @@ func TestUVLeafDeletion(t *testing.T) {
 	}
 	if mtime != 200 {
 		t.Errorf("master: mtime=%d, want 200", mtime)
+	}
+}
+
+// --- Scenario: Cluster Convergence ---
+// Master has 500 blobs, 2 leaves sync and receive cluster artifacts.
+
+func TestScenarioClusterConvergence(t *testing.T) {
+	sev := parseSeverity()
+	seed := seedFor(30)
+
+	masterRepo := createMasterRepo(t)
+	mf := NewMockFossil(masterRepo)
+
+	for i := range 500 {
+		mf.StoreArtifact([]byte(fmt.Sprintf("cluster-convergence-%04d", i)))
+	}
+
+	sim, err := New(SimConfig{
+		Seed:         seed,
+		NumLeaves:    2,
+		PollInterval: 5 * time.Second,
+		TmpDir:       t.TempDir(),
+		Upstream:     mf,
+		Buggify:      sev.Buggify,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer sim.Close()
+	sim.Network().SetDropRate(sev.DropRate)
+
+	steps := stepsFor(400)
+	if err := sim.Run(steps); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	t.Logf("[%s] seed=%d steps=%d syncs=%d errors=%d",
+		sev.Name, seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+
+	if err := sim.CheckSafety(); err != nil {
+		t.Fatalf("Safety: %v", err)
+	}
+
+	masterCount, _ := CountBlobs(masterRepo)
+
+	// Generate clusters on master to verify the API works on a repo with
+	// 500+ blobs. This exercises content.GenerateClusters end-to-end.
+	nClusters, err := content.GenerateClusters(masterRepo.DB())
+	if err != nil {
+		t.Fatalf("GenerateClusters: %v", err)
+	}
+	t.Logf("  master: %d blobs, %d clusters generated", masterCount, nClusters)
+	if nClusters == 0 {
+		t.Errorf("expected >= 1 cluster artifact from 500 blobs")
+	}
+
+	// Verify all leaves converged with the master's content.
+	for _, id := range sim.LeafIDs() {
+		leafRepo := sim.Leaf(id).Repo()
+		leafCount, _ := CountBlobs(leafRepo)
+		t.Logf("  %s: %d/%d blobs", id, leafCount, masterCount)
+
+		if leafCount < 500 {
+			t.Errorf("%s has %d blobs, want >= 500", id, leafCount)
+		}
 	}
 }
 

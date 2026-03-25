@@ -8,11 +8,15 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/db"
+	"github.com/dmestas/edgesync/go-libfossil/deck"
 	"github.com/dmestas/edgesync/go-libfossil/delta"
 	"github.com/dmestas/edgesync/go-libfossil/hash"
+	"github.com/dmestas/edgesync/go-libfossil/manifest"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/uv"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
+
+	libfossil "github.com/dmestas/edgesync/go-libfossil"
 )
 
 // ErrDeltaSourceMissing is returned by storeReceivedFile when the delta source
@@ -572,15 +576,64 @@ func storeReceivedFile(r *repo.Repo, uuid, deltaSrc string, payload []byte) erro
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid)
-		return err
+		if _, err := tx.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid); err != nil {
+			return err
+		}
+
+		// Crosslink cluster artifacts: parse the content and if it's a
+		// cluster manifest, process its M-card UUIDs to create phantoms
+		// for blobs we don't have yet. This is how the client discovers
+		// individual blob UUIDs referenced by a cluster.
+		if d, parseErr := deck.Parse(fullContent); parseErr == nil && d.Type == deck.Cluster {
+			if err := manifest.CrosslinkCluster(tx, libfossil.FslID(rid), d); err != nil {
+				return fmt.Errorf("crosslink cluster %s: %w", uuid, err)
+			}
+		}
+
+		return nil
 	})
 }
 
+// loadDBPhantoms promotes phantom-table entries into the session's phantom
+// map. This is needed after crosslinking cluster artifacts which create
+// phantom rows for blobs referenced in the cluster.
+func (s *session) loadDBPhantoms() error {
+	if !s.opts.Pull {
+		return nil
+	}
+	rows, err := s.repo.DB().Query(
+		"SELECT b.uuid FROM phantom p JOIN blob b ON p.rid = b.rid WHERE b.size < 0",
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var uuid string
+		if err := rows.Scan(&uuid); err != nil {
+			return err
+		}
+		if !s.remoteHas[uuid] {
+			s.phantoms[uuid] = true
+		}
+	}
+	return rows.Err()
+}
+
 // handleFileCard stores a received file (or delta-file) into the repo.
+// If the stored artifact is a cluster manifest, crosslinking creates DB
+// phantoms for referenced blobs; we promote those to session phantoms so
+// gimme cards are emitted in the next round.
 func (s *session) handleFileCard(uuid, deltaSrc string, payload []byte) error {
 	if err := storeReceivedFile(s.repo, uuid, deltaSrc, payload); err != nil {
 		return err
+	}
+
+	// Promote any new DB phantoms into the session phantom map so gimme
+	// cards are emitted. This covers phantoms created by crosslinking
+	// cluster artifacts in storeReceivedFile.
+	if err := s.loadDBPhantoms(); err != nil {
+		return fmt.Errorf("handleFileCard: loadDBPhantoms: %w", err)
 	}
 
 	// BUGGIFY: simulate post-store failure to test retry/recovery logic.

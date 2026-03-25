@@ -133,16 +133,9 @@ func (h *handler) process(_ context.Context, req *xfer.Message) (*xfer.Message, 
 		}
 	}
 
-	// If pull was requested, emit igot for unclustered blobs.
+	// If pull was requested, emit igot for all non-phantom blobs.
 	if h.pullOK {
 		if err := h.emitIGots(); err != nil {
-			return nil, err
-		}
-	}
-
-	// If the client requested clusters, send all cluster igots.
-	if h.reqClusters {
-		if err := h.sendAllClusters(); err != nil {
 			return nil, err
 		}
 	}
@@ -293,20 +286,14 @@ func (h *handler) handleReqConfig(c *xfer.ReqConfigCard) error {
 }
 
 func (h *handler) emitIGots() error {
-	// Generate clusters first so unclustered is up-to-date.
-	if _, err := content.GenerateClusters(h.repo.DB()); err != nil {
-		return fmt.Errorf("handler: generating clusters: %w", err)
-	}
-
-	// Query only unclustered blobs, excluding phantoms.
-	rows, err := h.repo.DB().Query(`
-		SELECT b.uuid FROM unclustered u
-		JOIN blob b ON b.rid = u.rid
-		WHERE b.size >= 0
-		  AND NOT EXISTS (SELECT 1 FROM phantom WHERE rid = u.rid)
-	`)
+	// Emit igot for all non-phantom blobs so the client can discover
+	// everything the server has. Cluster generation is a client-side
+	// optimization for push; the server always advertises all blobs.
+	rows, err := h.repo.DB().Query(
+		"SELECT uuid FROM blob WHERE size >= 0",
+	)
 	if err != nil {
-		return fmt.Errorf("handler: listing unclustered blobs: %w", err)
+		return fmt.Errorf("handler: listing blobs: %w", err)
 	}
 	defer rows.Close()
 

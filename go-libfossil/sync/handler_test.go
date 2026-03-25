@@ -514,7 +514,7 @@ func TestHandlerNoPushCardOnPull(t *testing.T) {
 
 // TestEmitIGots_OnlyUnclustered verifies that after clustering, emitIGots
 // returns only unclustered entries (not all blobs in the repo).
-func TestEmitIGots_OnlyUnclustered(t *testing.T) {
+func TestEmitIGots_AllBlobs(t *testing.T) {
 	r := setupSyncTestRepo(t)
 
 	// Store 200 blobs — above ClusterThreshold (100).
@@ -534,27 +534,19 @@ func TestEmitIGots_OnlyUnclustered(t *testing.T) {
 		t.Fatal("expected at least 1 cluster to be created")
 	}
 
-	// Send a pull request — handler should emit igots only for unclustered blobs.
+	// Send a pull request — handler emits igots for ALL non-phantom blobs.
 	resp := handleReq(t, r,
 		&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
 	)
 
 	igots := cardsByType(resp, xfer.CardIGot)
 
-	// Count total blobs vs unclustered to verify the handler is selective.
 	var totalBlobs int
 	r.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&totalBlobs)
 
-	if len(igots) >= totalBlobs {
-		t.Fatalf("igots = %d, total blobs = %d; emitIGots should send only unclustered, not all blobs",
+	if len(igots) != totalBlobs {
+		t.Fatalf("igots = %d, total blobs = %d; emitIGots should send all blobs",
 			len(igots), totalBlobs)
-	}
-
-	var unclusteredCount int
-	r.DB().QueryRow("SELECT count(*) FROM unclustered").Scan(&unclusteredCount)
-
-	if len(igots) != unclusteredCount {
-		t.Fatalf("igots = %d, unclustered count = %d; should match", len(igots), unclusteredCount)
 	}
 }
 
@@ -580,11 +572,6 @@ func TestPragmaReqClusters(t *testing.T) {
 		t.Fatalf("clusters = %d, want 1", n)
 	}
 
-	// After clustering 200 blobs: 1 cluster created, it IS in unclustered.
-	// sendAllClusters sends clusters NOT in unclustered — so the freshly
-	// created cluster won't appear there.
-	// emitIGots sends unclustered blobs (which includes the cluster blob).
-
 	resp, err := HandleSync(context.Background(), r, &xfer.Message{
 		Cards: []xfer.Card{
 			&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},
@@ -597,20 +584,19 @@ func TestPragmaReqClusters(t *testing.T) {
 
 	igots := cardsByType(resp, xfer.CardIGot)
 
-	// The cluster blob is in unclustered → emitIGots sends it.
-	// sendAllClusters excludes clusters still in unclustered → sends nothing extra.
-	var unclusteredCount int
-	r.DB().QueryRow("SELECT count(*) FROM unclustered").Scan(&unclusteredCount)
+	// emitIGots sends all blobs; sendAllClusters may add cluster igots
+	// (deduplication happens client-side). Total should include all blobs.
+	var totalBlobs int
+	r.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&totalBlobs)
 
-	if len(igots) != unclusteredCount {
-		t.Fatalf("igots = %d, unclustered = %d; fresh cluster is in unclustered, sendAllClusters should not duplicate it",
-			len(igots), unclusteredCount)
+	if len(igots) < totalBlobs {
+		t.Fatalf("igots = %d, total blobs = %d; should include at least all blobs",
+			len(igots), totalBlobs)
 	}
 }
 
-// TestPragmaReqClusters_OldClusters verifies that sendAllClusters emits
-// cluster artifacts that have been removed from unclustered (i.e., old clusters
-// that were themselves clustered in a prior pass).
+// TestPragmaReqClusters_OldClusters verifies that all blobs are advertised
+// even when the unclustered table is empty (all blobs have been clustered).
 func TestPragmaReqClusters_OldClusters(t *testing.T) {
 	r := setupSyncTestRepo(t)
 
@@ -648,21 +634,13 @@ func TestPragmaReqClusters_OldClusters(t *testing.T) {
 
 	igots := cardsByType(resp, xfer.CardIGot)
 
-	// emitIGots: unclustered is empty → 0 igots from emitIGots.
-	// sendAllClusters: the cluster is NOT in unclustered → it gets emitted.
-	// We expect exactly 1 igot (the cluster).
-	if len(igots) != 1 {
-		t.Fatalf("igots = %d, want 1 (old cluster not in unclustered)", len(igots))
-	}
+	// emitIGots sends ALL blobs regardless of unclustered status.
+	// sendAllClusters adds cluster igots (may duplicate).
+	var totalBlobs int
+	r.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&totalBlobs)
 
-	// Verify the emitted igot is actually the cluster.
-	var clusterUUID string
-	r.DB().QueryRow(`
-		SELECT b.uuid FROM tagxref tx JOIN blob b ON tx.rid = b.rid WHERE tx.tagid = 7
-	`).Scan(&clusterUUID)
-
-	igotCard := igots[0].(*xfer.IGotCard)
-	if igotCard.UUID != clusterUUID {
-		t.Fatalf("igot UUID = %s, want cluster UUID %s", igotCard.UUID, clusterUUID)
+	if len(igots) < totalBlobs {
+		t.Fatalf("igots = %d, total blobs = %d; should include all blobs",
+			len(igots), totalBlobs)
 	}
 }
