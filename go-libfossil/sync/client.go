@@ -232,6 +232,12 @@ func (s *session) sendAllClusters() ([]xfer.Card, error) {
 // private table. This advertises private artifacts to the server so it can
 // request them via gimme cards.
 func (s *session) sendPrivate() ([]xfer.Card, error) {
+	// BUGGIFY: 10% chance skip all private igots this round to test
+	// multi-round private convergence.
+	if s.opts.Buggify != nil && s.opts.Buggify.Check("sync.sendPrivate.skip", 0.10) {
+		return nil, nil
+	}
+
 	rows, err := s.repo.DB().Query(
 		"SELECT b.uuid FROM private p JOIN blob b ON p.rid=b.rid WHERE b.size >= 0",
 	)
@@ -783,6 +789,12 @@ func (s *session) handleFileCard(uuid, deltaSrc string, payload []byte) error {
 // to eliminate duplication.
 func (s *session) applyPrivateStatus(uuid string) error {
 	if s.nextIsPrivate {
+		// BUGGIFY: 3% chance skip MakePrivate — leave blob as public;
+		// the next sync round should correct the status.
+		if s.opts.Buggify != nil && s.opts.Buggify.Check("sync.applyPrivateStatus.skipMakePrivate", 0.03) {
+			s.nextIsPrivate = false
+			return nil
+		}
 		rid, _ := blob.Exists(s.repo.DB(), uuid)
 		if err := content.MakePrivate(s.repo.DB(), int64(rid)); err != nil {
 			return fmt.Errorf("sync: MakePrivate %s: %w", uuid, err)

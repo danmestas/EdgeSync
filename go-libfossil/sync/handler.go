@@ -361,7 +361,11 @@ func (h *handler) handleGimme(c *xfer.GimmeCard) error {
 		return nil
 	}
 	if isPriv {
-		h.resp = append(h.resp, &xfer.PrivateCard{})
+		// BUGGIFY: 5% chance skip the PrivateCard prefix — client should
+		// treat the file as public; next sync round corrects the status.
+		if h.buggify == nil || !h.buggify.Check("handler.handleGimme.dropPrivateCard", 0.05) {
+			h.resp = append(h.resp, &xfer.PrivateCard{})
+		}
 	}
 	h.resp = append(h.resp, &xfer.FileCard{UUID: c.UUID, Content: data})
 	h.filesSent++
@@ -482,14 +486,27 @@ func (h *handler) emitPrivateIGots() error {
 	}
 	defer rows.Close()
 
+	var uuids []string
 	for rows.Next() {
 		var uuid string
 		if err := rows.Scan(&uuid); err != nil {
 			return err
 		}
+		uuids = append(uuids, uuid)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// BUGGIFY: 10% chance truncate private igot list to test multi-round convergence.
+	if h.buggify != nil && h.buggify.Check("handler.emitPrivateIGots.truncate", 0.10) && len(uuids) > 1 {
+		uuids = uuids[:len(uuids)/2]
+	}
+
+	for _, uuid := range uuids {
 		h.resp = append(h.resp, &xfer.IGotCard{UUID: uuid, IsPrivate: true})
 	}
-	return rows.Err()
+	return nil
 }
 
 // sendAllClusters emits igot cards for all cluster artifacts that are
