@@ -3,7 +3,7 @@
 // Fossil's /xfer HTTP endpoint, with NO database dependency.
 package xfer
 
-// CardType enumerates the 20 card types in Fossil's sync protocol.
+// CardType enumerates the 24 card types in Fossil's sync protocol.
 type CardType int
 
 const (
@@ -27,6 +27,10 @@ const (
 	CardError                      // 17 — error
 	CardMessage                    // 18 — message
 	CardUnknown                    // 19 — unrecognized card
+	CardSchema                     // 20 — schema (table sync)
+	CardXIGot                      // 21 — xigot (table sync row announcement)
+	CardXGimme                     // 22 — xgimme (table sync row request)
+	CardXRow                       // 23 — xrow (table sync row payload)
 )
 
 // Card is the interface implemented by every xfer card type.
