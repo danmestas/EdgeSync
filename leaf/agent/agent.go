@@ -4,6 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"time"
 
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
@@ -49,6 +55,8 @@ type Agent struct {
 	cancel      context.CancelFunc
 	done        chan struct{}
 	syncNow     chan struct{} // buffer 1
+	irohSidecar *sidecar     // nil when iroh is disabled
+	irohSock    string       // Unix socket path for iroh sidecar
 }
 
 // New creates a new Agent from the given configuration.
@@ -201,6 +209,52 @@ func (a *Agent) Start() error {
 		}()
 	}
 
+	// Iroh sidecar
+	if a.config.IrohEnabled {
+		binPath, err := a.findIrohBinary()
+		if err != nil {
+			return fmt.Errorf("agent: iroh: %w", err)
+		}
+
+		a.irohSock = fmt.Sprintf("/tmp/iroh-%d.sock", os.Getpid())
+		callbackURL := "http://127.0.0.1" + a.config.ServeHTTPAddr
+		if a.config.ServeHTTPAddr == "" {
+			// Need an HTTP listener for iroh callbacks.
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				return fmt.Errorf("agent: iroh callback listener: %w", err)
+			}
+			callbackURL = "http://" + ln.Addr().String()
+			mux := http.NewServeMux()
+			mux.Handle("/", sync.XferHandler(a.repo, sync.HandleSync))
+			srv := &http.Server{Handler: mux}
+			go func() {
+				<-ctx.Done()
+				srv.Close()
+			}()
+			go srv.Serve(ln)
+		}
+
+		a.irohSidecar = &sidecar{
+			binPath:     binPath,
+			socketPath:  a.irohSock,
+			keyPath:     a.config.IrohKeyPath,
+			callbackURL: callbackURL,
+			alpn:        "/edgesync/xfer/1",
+		}
+
+		if err := a.irohSidecar.spawn(); err != nil {
+			return fmt.Errorf("agent: iroh sidecar: %w", err)
+		}
+
+		status, err := a.irohSidecar.waitReady(10 * time.Second)
+		if err != nil {
+			a.irohSidecar.kill()
+			return fmt.Errorf("agent: iroh sidecar: %w", err)
+		}
+		a.logf("iroh sidecar ready, endpoint_id=%s", status.EndpointID)
+	}
+
 	return nil
 }
 
@@ -212,6 +266,9 @@ func (a *Agent) Stop() error {
 	}
 	if a.done != nil {
 		<-a.done
+	}
+	if a.irohSidecar != nil {
+		a.irohSidecar.shutdown()
 	}
 	if a.conn != nil {
 		a.conn.Close()
@@ -270,7 +327,54 @@ func (a *Agent) pollLoop(ctx context.Context) {
 				a.logf("warning: updatePeerRegistryAfterSync: %v", err)
 			}
 		}
+
+		// Sync with iroh peers.
+		if a.config.IrohEnabled && a.irohSock != "" {
+			for _, peerID := range a.config.IrohPeers {
+				transport := NewIrohTransport(a.irohSock, peerID)
+				opts := sync.SyncOpts{
+					Push:        a.config.Push,
+					Pull:        a.config.Pull,
+					ProjectCode: a.projectCode,
+					ServerCode:  a.serverCode,
+					User:        a.config.User,
+					Password:    a.config.Password,
+					Buggify:     a.config.Buggify,
+					UV:          a.config.UV,
+					Private:     a.config.Private,
+					Observer:    a.config.Observer,
+				}
+				result, err := sync.Sync(ctx, a.repo, transport, opts)
+				if err != nil {
+					a.logf("iroh sync with %s: %v", peerID, err)
+					slog.ErrorContext(ctx, "iroh sync error", "peer", peerID, "error", err)
+					continue
+				}
+				a.logf("iroh sync with %s: ↑%d ↓%d rounds=%d", peerID, result.FilesSent, result.FilesRecvd, result.Rounds)
+				if a.config.PostSyncHook != nil {
+					a.config.PostSyncHook(result)
+				}
+			}
+		}
 	}
+}
+
+// findIrohBinary looks for the iroh-sidecar binary next to the leaf binary,
+// then in PATH.
+func (a *Agent) findIrohBinary() (string, error) {
+	exe, err := os.Executable()
+	if err == nil {
+		candidate := filepath.Join(filepath.Dir(exe), "iroh-sidecar")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+
+	path, err := exec.LookPath("iroh-sidecar")
+	if err != nil {
+		return "", fmt.Errorf("iroh-sidecar binary not found (not next to leaf binary, not in PATH)")
+	}
+	return path, nil
 }
 
 // runSync performs one sync cycle against the transport.
