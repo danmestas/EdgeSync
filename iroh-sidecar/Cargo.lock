@@ -1677,6 +1677,7 @@ dependencies = [
  "hyper-util",
  "iroh",
  "rand",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
