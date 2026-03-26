@@ -2,19 +2,26 @@ package sim
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/db"
+	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
 	"github.com/dmestas/edgesync/go-libfossil/delta"
 	"github.com/dmestas/edgesync/go-libfossil/hash"
-	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
+	"github.com/dmestas/edgesync/go-libfossil/manifest"
+	"github.com/dmestas/edgesync/go-libfossil/repo"
+	"github.com/dmestas/edgesync/go-libfossil/sync"
+	"github.com/dmestas/edgesync/go-libfossil/uv"
 )
 
 // verifyAllBlobs queries all non-phantom blobs from the database,
@@ -380,6 +387,596 @@ func TestInterop(t *testing.T) {
 					t.Logf("SUCCESS: go→fossil round trip")
 				}
 			})
+		})
+	})
+
+	// Task 3: Clone from us (Go serves, fossil clones)
+	t.Run("clone_from_us", func(t *testing.T) {
+		t.Run("single_commit", func(t *testing.T) {
+			dir := t.TempDir()
+
+			// Create Go repo with one checkin
+			r := leafRepo(t, dir, "test-repo")
+			defer r.Close()
+
+			files := []manifest.File{
+				{Name: "README.md", Content: []byte("# Test Repository\n\nThis is a test.")},
+				{Name: "main.go", Content: []byte("package main\n\nfunc main() {}\n")},
+			}
+			checkin(t, r, 0, files, "Initial commit")
+
+			// Crosslink before serving
+			if _, err := manifest.Crosslink(r); err != nil {
+				t.Fatalf("crosslink: %v", err)
+			}
+			r.Close()
+
+			// Reopen and serve
+			r2, err := repo.Open(r.Path())
+			if err != nil {
+				t.Fatalf("reopen repo: %v", err)
+			}
+			defer r2.Close()
+
+			addr, cancel := serveLeafHTTP(t, r2)
+			defer cancel()
+
+			// Fossil clone from our HTTP server
+			clonePath := filepath.Join(dir, "clone.fossil")
+			fossilExec(t, "clone", "http://"+addr, clonePath)
+
+			// Verify with fossil rebuild
+			verifyWithFossilRebuild(t, clonePath)
+
+			// Checkout and verify files
+			workDir := fossilCheckout(t, clonePath)
+			assertFiles(t, workDir, map[string]string{
+				"README.md": "# Test Repository\n\nThis is a test.",
+				"main.go":   "package main\n\nfunc main() {}\n",
+			})
+		})
+
+		t.Run("commit_chain", func(t *testing.T) {
+			dir := t.TempDir()
+
+			// Create repo with 5 sequential commits (large enough to trigger deltas)
+			r := leafRepo(t, dir, "chain-repo")
+			defer r.Close()
+
+			var parent int64
+			for i := 1; i <= 5; i++ {
+				// Pad content to 200+ bytes to encourage delta formation
+				var files []manifest.File
+				// Keep all previous files plus new one
+				for j := 1; j <= i; j++ {
+					fileContent := fmt.Sprintf("Commit %d\n%s", j, strings.Repeat("x", 200))
+					files = append(files, manifest.File{
+						Name:    fmt.Sprintf("file%d.txt", j),
+						Content: []byte(fileContent),
+					})
+				}
+				parent = checkin(t, r, parent, files, fmt.Sprintf("Commit %d", i))
+			}
+
+			if _, err := manifest.Crosslink(r); err != nil {
+				t.Fatalf("crosslink: %v", err)
+			}
+			r.Close()
+
+			// Reopen and serve
+			r2, err := repo.Open(r.Path())
+			if err != nil {
+				t.Fatalf("reopen repo: %v", err)
+			}
+			defer r2.Close()
+
+			addr, cancel := serveLeafHTTP(t, r2)
+			defer cancel()
+
+			// Clone and rebuild
+			clonePath := filepath.Join(dir, "clone.fossil")
+			fossilExec(t, "clone", "http://"+addr, clonePath)
+			verifyWithFossilRebuild(t, clonePath)
+		})
+
+		t.Run("with_uv_files", func(t *testing.T) {
+			dir := t.TempDir()
+
+			// Create repo with checkin and UV files
+			r := leafRepo(t, dir, "uv-repo")
+			defer r.Close()
+
+			files := []manifest.File{
+				{Name: "README.md", Content: []byte("# UV Test\n")},
+			}
+			checkin(t, r, 0, files, "Initial commit")
+
+			// Ensure UV schema exists
+			if err := uv.EnsureSchema(r.DB()); err != nil {
+				t.Fatalf("ensure UV schema: %v", err)
+			}
+
+			// Write UV files
+			textContent := []byte("This is an unversioned text file.\n")
+			if err := uv.Write(r.DB(), "text-file.txt", textContent, 0); err != nil {
+				t.Fatalf("write UV text file: %v", err)
+			}
+
+			// Write 4KB binary UV file
+			binaryContent := make([]byte, 4096)
+			rng := rand.New(rand.NewSource(42))
+			rng.Read(binaryContent)
+			if err := uv.Write(r.DB(), "binary-file.bin", binaryContent, 0); err != nil {
+				t.Fatalf("write UV binary file: %v", err)
+			}
+
+			if _, err := manifest.Crosslink(r); err != nil {
+				t.Fatalf("crosslink: %v", err)
+			}
+			r.Close()
+
+			// Reopen and serve
+			r2, err := repo.Open(r.Path())
+			if err != nil {
+				t.Fatalf("reopen repo: %v", err)
+			}
+			defer r2.Close()
+
+			addr, cancel := serveLeafHTTP(t, r2)
+			defer cancel()
+
+			// Clone with --unversioned flag to pull UV files
+			clonePath := filepath.Join(dir, "clone.fossil")
+			fossilExec(t, "clone", "--unversioned", "http://"+addr, clonePath)
+			verifyWithFossilRebuild(t, clonePath)
+
+			// Verify UV files
+			uvList := fossilExec(t, "uv", "list", "-R", clonePath)
+			if !strings.Contains(uvList, "text-file.txt") {
+				t.Errorf("UV list missing text-file.txt: %s", uvList)
+			}
+			if !strings.Contains(uvList, "binary-file.bin") {
+				t.Errorf("UV list missing binary-file.bin: %s", uvList)
+			}
+
+			uvText := fossilExec(t, "uv", "cat", "text-file.txt", "-R", clonePath)
+			if uvText != string(textContent) {
+				t.Errorf("UV text content mismatch:\ngot:  %q\nwant: %q", uvText, string(textContent))
+			}
+		})
+	})
+
+	// Task 4: Clone from fossil (fossil serves, we clone)
+	t.Run("clone_from_fossil", func(t *testing.T) {
+		t.Run("single_commit", func(t *testing.T) {
+			dir := t.TempDir()
+
+			// Create fossil repo
+			fossilPath := fossilInit(t, dir, "fossil-repo")
+			workDir := fossilCheckout(t, fossilPath)
+
+			files := map[string]string{
+				"hello.txt": "Hello, Fossil!\n",
+			}
+			fossilCommitFiles(t, fossilPath, workDir, files, "Initial commit")
+
+			// Serve fossil
+			serverURL := startFossilServe(t, fossilPath)
+
+			// Clone with our Go implementation
+			leafPath := filepath.Join(dir, "leaf.fossil")
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			transport := &sync.HTTPTransport{URL: serverURL}
+			leafR, _, err := sync.Clone(ctx, leafPath, transport, sync.CloneOpts{})
+			if err != nil {
+				t.Fatalf("sync.Clone: %v", err)
+			}
+			defer leafR.Close()
+
+			// Verify all blobs
+			verifyAllBlobs(t, leafR.DB())
+		})
+
+		t.Run("commit_chain_with_deltas", func(t *testing.T) {
+			dir := t.TempDir()
+
+			// Create fossil repo with 5 commits
+			fossilPath := fossilInit(t, dir, "fossil-chain")
+			workDir := fossilCheckout(t, fossilPath)
+
+			for i := 1; i <= 5; i++ {
+				content := fmt.Sprintf("Commit %d\n%s", i, strings.Repeat("y", 300))
+				files := map[string]string{
+					fmt.Sprintf("file%d.txt", i): content,
+				}
+				fossilCommitFiles(t, fossilPath, workDir, files, fmt.Sprintf("Commit %d", i))
+			}
+
+			serverURL := startFossilServe(t, fossilPath)
+
+			leafPath := filepath.Join(dir, "leaf.fossil")
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			transport := &sync.HTTPTransport{URL: serverURL}
+			leafR, _, err := sync.Clone(ctx, leafPath, transport, sync.CloneOpts{})
+			if err != nil {
+				t.Fatalf("sync.Clone: %v", err)
+			}
+			defer leafR.Close()
+
+			verifyAllBlobs(t, leafR.DB())
+		})
+
+		t.Run("expand_and_verify_all", func(t *testing.T) {
+			dir := t.TempDir()
+
+			// Create fossil repo with larger files (add new files each iteration to avoid detection issues)
+			fossilPath := fossilInit(t, dir, "fossil-large")
+			workDir := fossilCheckout(t, fossilPath)
+
+			for i := 1; i <= 3; i++ {
+				// Create unique file for each commit (4KB+ each)
+				content := strings.Repeat(fmt.Sprintf("=== File %d line %%d ===\n", i), 300)
+				files := map[string]string{
+					fmt.Sprintf("file%d.txt", i): fmt.Sprintf(content, i),
+				}
+				fossilCommitFiles(t, fossilPath, workDir, files, fmt.Sprintf("Commit %d", i))
+			}
+
+			serverURL := startFossilServe(t, fossilPath)
+
+			leafPath := filepath.Join(dir, "leaf.fossil")
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			transport := &sync.HTTPTransport{URL: serverURL}
+			leafR, _, err := sync.Clone(ctx, leafPath, transport, sync.CloneOpts{})
+			if err != nil {
+				t.Fatalf("sync.Clone: %v", err)
+			}
+			defer leafR.Close()
+
+			verifyAllBlobs(t, leafR.DB())
+			// Note: Not running fossil rebuild on leaf repo - it was created by sync.Clone,
+			// and verifyAllBlobs already ensures all content expands correctly.
+		})
+	})
+
+	// Task 5: Incremental sync (bidirectional sync with fossil)
+	t.Run("incremental_sync", func(t *testing.T) {
+		t.Run("fossil_commits_we_pull", func(t *testing.T) {
+			dir := t.TempDir()
+
+			// Create and clone from fossil
+			fossilPath := fossilInit(t, dir, "fossil-pull")
+			workDir := fossilCheckout(t, fossilPath)
+
+			files := map[string]string{"initial.txt": "Initial\n"}
+			fossilCommitFiles(t, fossilPath, workDir, files, "Initial")
+
+			serverURL := startFossilServe(t, fossilPath)
+
+			leafPath := filepath.Join(dir, "leaf.fossil")
+			ctx := context.Background()
+			transport := &sync.HTTPTransport{URL: serverURL}
+			leafR, _, err := sync.Clone(ctx, leafPath, transport, sync.CloneOpts{})
+			if err != nil {
+				t.Fatalf("sync.Clone: %v", err)
+			}
+			leafR.Close()
+
+			// Fossil makes 3 more commits
+			for i := 1; i <= 3; i++ {
+				files := map[string]string{
+					fmt.Sprintf("file%d.txt", i): fmt.Sprintf("Content %d\n", i),
+				}
+				fossilCommitFiles(t, fossilPath, workDir, files, fmt.Sprintf("Commit %d", i))
+			}
+
+			// Pull changes
+			leafR, err = repo.Open(leafPath)
+			if err != nil {
+				t.Fatalf("reopen leaf: %v", err)
+			}
+			defer leafR.Close()
+
+			var projCode string
+			leafR.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projCode)
+
+			_, err = sync.Sync(ctx, leafR, transport, sync.SyncOpts{
+				ProjectCode: projCode,
+				Pull:        true,
+			})
+			if err != nil {
+				t.Fatalf("sync.Sync pull: %v", err)
+			}
+
+			verifyAllBlobs(t, leafR.DB())
+		})
+
+		t.Run("we_push_fossil_pulls", func(t *testing.T) {
+			dir := t.TempDir()
+
+			// Clone from fossil
+			fossilPath := fossilInit(t, dir, "fossil-push")
+			workDir := fossilCheckout(t, fossilPath)
+
+			files := map[string]string{"base.txt": "Base\n"}
+			fossilCommitFiles(t, fossilPath, workDir, files, "Base")
+
+			serverURL := startFossilServe(t, fossilPath)
+
+			leafPath := filepath.Join(dir, "leaf.fossil")
+			ctx := context.Background()
+			transport := &sync.HTTPTransport{URL: serverURL}
+			leafR, _, err := sync.Clone(ctx, leafPath, transport, sync.CloneOpts{})
+			if err != nil {
+				t.Fatalf("sync.Clone: %v", err)
+			}
+
+			// Add content to leaf
+			rng := rand.New(rand.NewSource(99))
+			_, err = SeedLeaf(leafR, rng, 3, 1024)
+			if err != nil {
+				t.Fatalf("SeedLeaf: %v", err)
+			}
+
+			var projCode string
+			leafR.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projCode)
+
+			// Push to fossil
+			_, err = sync.Sync(ctx, leafR, transport, sync.SyncOpts{
+				ProjectCode: projCode,
+				Push:        true,
+			})
+			if err != nil {
+				t.Fatalf("sync.Sync push: %v", err)
+			}
+			leafR.Close()
+
+			// Verify fossil can read with rebuild
+			verifyWithFossilRebuild(t, fossilPath)
+
+			// Sample one artifact from leaf
+			d, err := db.Open(leafPath)
+			if err != nil {
+				t.Fatalf("open leaf db: %v", err)
+			}
+			defer d.Close()
+
+			var uuid string
+			err = d.QueryRow("SELECT uuid FROM blob WHERE size >= 0 LIMIT 1").Scan(&uuid)
+			if err != nil {
+				t.Fatalf("query uuid: %v", err)
+			}
+
+			artifactOut := fossilExec(t, "artifact", uuid, "-R", fossilPath)
+			if len(artifactOut) == 0 {
+				t.Errorf("fossil artifact returned empty for uuid=%s", uuid)
+			}
+		})
+
+		t.Run("bidirectional", func(t *testing.T) {
+			dir := t.TempDir()
+
+			// Initial setup
+			fossilPath := fossilInit(t, dir, "fossil-bidir")
+			workDir := fossilCheckout(t, fossilPath)
+
+			files := map[string]string{"start.txt": "Start\n"}
+			fossilCommitFiles(t, fossilPath, workDir, files, "Start")
+
+			serverURL := startFossilServe(t, fossilPath)
+
+			leafPath := filepath.Join(dir, "leaf.fossil")
+			ctx := context.Background()
+			transport := &sync.HTTPTransport{URL: serverURL}
+			leafR, _, err := sync.Clone(ctx, leafPath, transport, sync.CloneOpts{})
+			if err != nil {
+				t.Fatalf("sync.Clone: %v", err)
+			}
+
+			// Both sides add content
+			// Fossil side
+			for i := 1; i <= 2; i++ {
+				files := map[string]string{
+					fmt.Sprintf("fossil%d.txt", i): fmt.Sprintf("From fossil %d\n", i),
+				}
+				fossilCommitFiles(t, fossilPath, workDir, files, fmt.Sprintf("Fossil %d", i))
+			}
+
+			// Leaf side
+			rng := rand.New(rand.NewSource(123))
+			_, err = SeedLeaf(leafR, rng, 2, 512)
+			if err != nil {
+				t.Fatalf("SeedLeaf: %v", err)
+			}
+
+			var projCode string
+			leafR.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projCode)
+
+			// Sync until convergence
+			maxRounds := 5
+			for round := 0; round < maxRounds; round++ {
+				result, err := sync.Sync(ctx, leafR, transport, sync.SyncOpts{
+					ProjectCode: projCode,
+					Push:        true,
+					Pull:        true,
+				})
+				if err != nil {
+					t.Fatalf("sync round %d: %v", round, err)
+				}
+
+				t.Logf("Round %d: sent=%d received=%d", round, result.FilesSent, result.FilesRecvd)
+
+				if result.FilesSent == 0 && result.FilesRecvd == 0 {
+					t.Logf("Converged after %d rounds", round+1)
+					break
+				}
+
+				if round == maxRounds-1 {
+					t.Errorf("Did not converge after %d rounds", maxRounds)
+				}
+			}
+
+			verifyAllBlobs(t, leafR.DB())
+			leafR.Close()
+
+			verifyWithFossilRebuild(t, fossilPath)
+		})
+	})
+
+	// Task 6: Hash compatibility
+	t.Run("hash_compat", func(t *testing.T) {
+		t.Run("sha1_vs_fossil", func(t *testing.T) {
+			dir := t.TempDir()
+			sizes := []int{0, 1, 15, 16, 17, 255, 256, 257, 1024, 65536}
+
+			rng := rand.New(rand.NewSource(54321))
+
+			for _, size := range sizes {
+				t.Run(fmt.Sprintf("size_%d", size), func(t *testing.T) {
+					data := make([]byte, size)
+					rng.Read(data)
+
+					// Our hash
+					ourHash := hash.SHA1(data)
+
+					// Fossil hash
+					filePath := filepath.Join(dir, fmt.Sprintf("data_%d.bin", size))
+					if err := os.WriteFile(filePath, data, 0644); err != nil {
+						t.Fatalf("write file: %v", err)
+					}
+
+					fossilOut := fossilExec(t, "sha1sum", filePath)
+					fields := strings.Fields(fossilOut)
+					if len(fields) == 0 {
+						t.Fatalf("fossil sha1sum returned empty")
+					}
+					fossilHash := fields[0]
+
+					if ourHash != fossilHash {
+						t.Errorf("SHA1 mismatch for size %d:\nours:   %s\nfossil: %s",
+							size, ourHash, fossilHash)
+					}
+				})
+			}
+		})
+
+		t.Run("sha3_vs_fossil", func(t *testing.T) {
+			dir := t.TempDir()
+			sizes := []int{0, 1, 15, 16, 17, 255, 256, 257, 1024, 65536}
+
+			rng := rand.New(rand.NewSource(98765))
+
+			for _, size := range sizes {
+				t.Run(fmt.Sprintf("size_%d", size), func(t *testing.T) {
+					data := make([]byte, size)
+					rng.Read(data)
+
+					// Our hash
+					ourHash := hash.SHA3(data)
+
+					// Fossil hash
+					filePath := filepath.Join(dir, fmt.Sprintf("data_%d.bin", size))
+					if err := os.WriteFile(filePath, data, 0644); err != nil {
+						t.Fatalf("write file: %v", err)
+					}
+
+					fossilOut := fossilExec(t, "sha3sum", filePath)
+					fields := strings.Fields(fossilOut)
+					if len(fields) == 0 {
+						t.Fatalf("fossil sha3sum returned empty")
+					}
+					fossilHash := fields[0]
+
+					if ourHash != fossilHash {
+						t.Errorf("SHA3 mismatch for size %d:\nours:   %s\nfossil: %s",
+							size, ourHash, fossilHash)
+					}
+				})
+			}
+		})
+	})
+
+	// Task 7: Large repo (Tier 2)
+	t.Run("large_repo", func(t *testing.T) {
+		if testing.Short() {
+			t.Skip("Skipping large repo tests in short mode")
+		}
+
+		t.Run("clone_and_expand_all", func(t *testing.T) {
+			repoPath := cloneFossilSCMRepo(t)
+
+			d, err := db.Open(repoPath)
+			if err != nil {
+				t.Fatalf("open fossil.fossil: %v", err)
+			}
+			defer d.Close()
+
+			verifyAllBlobs(t, d)
+		})
+
+		t.Run("verify_hash_integrity", func(t *testing.T) {
+			repoPath := cloneFossilSCMRepo(t)
+
+			d, err := db.Open(repoPath)
+			if err != nil {
+				t.Fatalf("open fossil.fossil: %v", err)
+			}
+			defer d.Close()
+
+			// Sample 500 random blobs
+			rows, err := d.Query(`
+				SELECT rid, uuid
+				FROM blob
+				WHERE size >= 0 AND content IS NOT NULL
+				ORDER BY RANDOM()
+				LIMIT 500
+			`)
+			if err != nil {
+				t.Fatalf("query random blobs: %v", err)
+			}
+			defer rows.Close()
+
+			var count, errors int
+			for rows.Next() {
+				var rid int64
+				var uuid string
+				if err := rows.Scan(&rid, &uuid); err != nil {
+					t.Errorf("scan: %v", err)
+					errors++
+					continue
+				}
+
+				// Expand with our implementation
+				ourContent, err := content.Expand(d, libfossil.FslID(rid))
+				if err != nil {
+					t.Errorf("expand rid=%d uuid=%s: %v", rid, uuid, err)
+					errors++
+					continue
+				}
+
+				// Get from fossil
+				fossilContent := fossilExec(t, "artifact", uuid, "-R", repoPath)
+
+				if !bytes.Equal(ourContent, []byte(fossilContent)) {
+					t.Errorf("content mismatch for rid=%d uuid=%s:\nour size: %d\nfossil size: %d",
+						rid, uuid, len(ourContent), len(fossilContent))
+					errors++
+				}
+
+				count++
+			}
+
+			if err := rows.Err(); err != nil {
+				t.Errorf("iterate: %v", err)
+			}
+
+			t.Logf("Verified %d random blobs, %d errors", count, errors)
 		})
 	})
 }
