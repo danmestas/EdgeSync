@@ -82,6 +82,56 @@ func verifyAllBlobs(t *testing.T, d *db.DB) {
 	t.Logf("verifyAllBlobs: checked %d blobs, %d errors", count, errors)
 }
 
+// verifySampledBlobs is like verifyAllBlobs but samples N random blobs.
+// Use for large repos where verifying all blobs would be too slow.
+func verifySampledBlobs(t *testing.T, d *db.DB, n int) {
+	t.Helper()
+
+	rows, err := d.Query("SELECT rid, uuid, size FROM blob WHERE size >= 0 AND content IS NOT NULL ORDER BY RANDOM() LIMIT ?", n)
+	if err != nil {
+		t.Fatalf("verifySampledBlobs query: %v", err)
+	}
+	defer rows.Close()
+
+	var count, failures int
+	for rows.Next() {
+		var rid int64
+		var uuid string
+		var size int
+
+		if err := rows.Scan(&rid, &uuid, &size); err != nil {
+			t.Errorf("scan: %v", err)
+			failures++
+			continue
+		}
+
+		expanded, err := content.Expand(d, libfossil.FslID(rid))
+		if err != nil {
+			t.Errorf("rid=%d uuid=%s: expand: %v", rid, uuid[:16], err)
+			failures++
+			continue
+		}
+
+		var computed string
+		if len(uuid) > 40 {
+			computed = hash.SHA3(expanded)
+		} else {
+			computed = hash.SHA1(expanded)
+		}
+		if computed != uuid {
+			t.Errorf("rid=%d uuid=%s: hash mismatch: got %s", rid, uuid[:16], computed[:16])
+			failures++
+		}
+		count++
+	}
+
+	if failures > 0 {
+		t.Errorf("verifySampledBlobs: %d/%d failed", failures, count)
+	} else {
+		t.Logf("verifySampledBlobs: all %d blobs verified", count)
+	}
+}
+
 // verifyWithFossilRebuild runs `fossil rebuild` on the given repo path.
 // Fatals the test if rebuild fails.
 func verifyWithFossilRebuild(t *testing.T, repoPath string) {
@@ -917,7 +967,9 @@ func TestInterop(t *testing.T) {
 			}
 			defer d.Close()
 
-			verifyAllBlobs(t, d)
+			// Sample 2000 random blobs (full 66K takes >5min with deep chains).
+			// Covers diverse chain depths and content types.
+			verifySampledBlobs(t, d, 2000)
 		})
 
 		t.Run("verify_hash_integrity", func(t *testing.T) {

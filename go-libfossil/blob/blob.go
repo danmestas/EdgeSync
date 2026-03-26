@@ -184,12 +184,23 @@ func Load(q db.Querier, rid libfossil.FslID) (result []byte, err error) {
 		return nil, fmt.Errorf("blob.Load: rid %d has NULL content", rid)
 	}
 
-	// Fossil convention: if stored bytes == declared size, content is uncompressed.
-	// If stored bytes < declared size, content is zlib-compressed
-	// (with 4-byte BE size prefix handled by Decompress).
+	// Fossil stores blobs as [4-byte BE uncompressed-size][zlib data].
+	// When the compressed form happens to be the same length as the
+	// uncompressed content (rare but real — ~2 in 66K in the Fossil SCM
+	// repo), we must still decompress. Detect compressed content by
+	// checking for the 4-byte BE prefix matching the declared size
+	// followed by a zlib header (0x78).
+	if len(content) >= 6 {
+		prefixSize := int64(content[0])<<24 | int64(content[1])<<16 | int64(content[2])<<8 | int64(content[3])
+		if prefixSize == size && content[4] == 0x78 {
+			return Decompress(content)
+		}
+	}
+	// No compression prefix — content is stored uncompressed.
 	if int64(len(content)) == size {
 		return content, nil
 	}
+	// Stored bytes < declared size — compressed.
 	return Decompress(content)
 }
 
