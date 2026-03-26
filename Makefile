@@ -1,4 +1,4 @@
-.PHONY: build test clean leaf bridge edgesync wasm-wasi wasm-browser wasm dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks drivers test-interop
+.PHONY: build test clean leaf bridge edgesync iroh-sidecar wasm-wasi wasm-browser wasm dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks drivers test-interop
 
 # --- Build ---
 
@@ -12,6 +12,10 @@ leaf:
 
 bridge:
 	cd bridge && go build -buildvcs=false -o ../bin/bridge ./cmd/bridge
+
+iroh-sidecar:
+	cd iroh-sidecar && PATH="$(HOME)/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$(PATH)" cargo build --release
+	cp iroh-sidecar/target/release/iroh-sidecar bin/
 
 wasm-wasi:
 	GOOS=wasip1 GOARCH=wasm go build -buildvcs=false -o bin/leaf.wasm ./leaf/cmd/leaf/
