@@ -28,6 +28,11 @@ func main() {
 	serveHTTP := flag.String("serve-http", envOrDefault("LEAF_SERVE_HTTP", ""), "HTTP listen address (e.g. :8080) to serve fossil clone/sync")
 	serveNATS := flag.Bool("serve-nats", false, "enable NATS request/reply listener for leaf-to-leaf sync")
 	uv := flag.Bool("uv", false, "enable unversioned file sync (wiki, forum, attachments)")
+	iroh := flag.Bool("iroh", false, "enable iroh sidecar for peer-to-peer sync")
+	irohKeyPath := flag.String("iroh-key", "", "path to iroh Ed25519 keypair (default: <repo>.iroh-key)")
+
+	var irohPeers stringSlice
+	flag.Var(&irohPeers, "iroh-peer", "remote iroh EndpointId to sync with (repeatable)")
 
 	// OTel flags (fall back to standard OTEL_* env vars)
 	otelEndpoint := flag.String("otel-endpoint", envOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""), "OTel OTLP endpoint")
@@ -70,6 +75,9 @@ func main() {
 		ServeHTTPAddr:    *serveHTTP,
 		ServeNATSEnabled: *serveNATS,
 		Observer:         obs,
+		IrohEnabled:      *iroh,
+		IrohPeers:        irohPeers,
+		IrohKeyPath:      *irohKeyPath,
 	}
 
 	a, err := agent.New(cfg)
@@ -134,4 +142,13 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// stringSlice implements flag.Value for repeatable string flags.
+type stringSlice []string
+
+func (s *stringSlice) String() string { return fmt.Sprintf("%v", *s) }
+func (s *stringSlice) Set(v string) error {
+	*s = append(*s, v)
+	return nil
 }

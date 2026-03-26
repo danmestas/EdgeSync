@@ -80,6 +80,16 @@ type Config struct {
 	// PostSyncHook is called after each successful sync with the result.
 	// Use for crosslinking received manifests or refreshing UI state.
 	PostSyncHook func(result *libsync.SyncResult)
+
+	// IrohEnabled starts the iroh sidecar for peer-to-peer sync.
+	IrohEnabled bool
+
+	// IrohPeers is a list of remote EndpointIds to sync with.
+	IrohPeers []string
+
+	// IrohKeyPath is the path to the persistent Ed25519 keypair.
+	// Defaults to "<repo-dir>.iroh-key" (adjacent to the repo file).
+	IrohKeyPath string
 }
 
 // applyDefaults fills in zero-valued fields with sensible defaults.
@@ -108,6 +118,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Clock == nil {
 		c.Clock = simio.RealClock{}
+	}
+	if c.IrohEnabled && c.IrohKeyPath == "" {
+		c.IrohKeyPath = c.RepoPath + ".iroh-key"
 	}
 }
 
