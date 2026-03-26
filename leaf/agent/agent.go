@@ -332,19 +332,7 @@ func (a *Agent) pollLoop(ctx context.Context) {
 		if a.config.IrohEnabled && a.irohSock != "" {
 			for _, peerID := range a.config.IrohPeers {
 				transport := NewIrohTransport(a.irohSock, peerID)
-				opts := sync.SyncOpts{
-					Push:        a.config.Push,
-					Pull:        a.config.Pull,
-					ProjectCode: a.projectCode,
-					ServerCode:  a.serverCode,
-					User:        a.config.User,
-					Password:    a.config.Password,
-					Buggify:     a.config.Buggify,
-					UV:          a.config.UV,
-					Private:     a.config.Private,
-					Observer:    a.config.Observer,
-				}
-				result, err := sync.Sync(ctx, a.repo, transport, opts)
+				result, err := sync.Sync(ctx, a.repo, transport, a.buildSyncOpts())
 				if err != nil {
 					a.logf("iroh sync with %s: %v", peerID, err)
 					slog.ErrorContext(ctx, "iroh sync error", "peer", peerID, "error", err)
@@ -377,9 +365,9 @@ func (a *Agent) findIrohBinary() (string, error) {
 	return path, nil
 }
 
-// runSync performs one sync cycle against the transport.
-func (a *Agent) runSync(ctx context.Context) (*sync.SyncResult, error) {
-	opts := sync.SyncOpts{
+// buildSyncOpts constructs SyncOpts from the agent's config.
+func (a *Agent) buildSyncOpts() sync.SyncOpts {
+	return sync.SyncOpts{
 		Push:        a.config.Push,
 		Pull:        a.config.Pull,
 		ProjectCode: a.projectCode,
@@ -391,5 +379,9 @@ func (a *Agent) runSync(ctx context.Context) (*sync.SyncResult, error) {
 		Private:     a.config.Private,
 		Observer:    a.config.Observer,
 	}
-	return sync.Sync(ctx, a.repo, a.transport, opts)
+}
+
+// runSync performs one sync cycle against the transport.
+func (a *Agent) runSync(ctx context.Context) (*sync.SyncResult, error) {
+	return sync.Sync(ctx, a.repo, a.transport, a.buildSyncOpts())
 }
