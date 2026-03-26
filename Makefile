@@ -1,4 +1,4 @@
-.PHONY: build test clean leaf bridge edgesync wasm-wasi wasm-browser wasm dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks drivers
+.PHONY: build test clean leaf bridge edgesync wasm-wasi wasm-browser wasm dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks drivers test-interop
 
 # --- Build ---
 
@@ -34,6 +34,7 @@ test:
 	go test ./dst/ -run 'TestScenario|TestE2E|TestMockFossil|TestSimulator|TestCheck' -count=1
 	go test ./sim/ -run 'TestFaultProxy|TestGenerateSchedule|TestBuggify' -count=1
 	go test ./sim/ -run 'TestServeHTTP|TestLeafToLeaf|TestAgentServe' -count=1 -timeout=120s
+	go test ./sim/ -run 'TestInterop' -count=1 -short -timeout=60s
 
 # --- Pre-commit hook setup ---
 
@@ -108,6 +109,10 @@ sim-full:
 		done; \
 	done
 	@echo "=== Sim full done ==="
+
+# Fossil interop: Tier 1 + Tier 2 (requires fossil binary, Tier 2 clones fossil-scm.org)
+test-interop:
+	go test -buildvcs=false ./sim/ -run TestInterop -timeout=300s -v
 
 # --- Driver matrix — run locally ---
 
