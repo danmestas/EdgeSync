@@ -110,9 +110,9 @@ sim-full:
 	done
 	@echo "=== Sim full done ==="
 
-# Fossil interop: Tier 1 + Tier 2 (requires fossil binary, Tier 2 clones fossil-scm.org)
+# Fossil interop: Tier 1 + Tier 2 (requires fossil binary, Tier 2 samples 5K+2K blobs)
 test-interop:
-	go test -buildvcs=false ./sim/ -run TestInterop -timeout=300s -v
+	go test -buildvcs=false ./sim/ -run TestInterop -timeout=10m -v
 
 # --- Driver matrix — run locally ---
 

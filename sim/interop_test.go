@@ -967,9 +967,7 @@ func TestInterop(t *testing.T) {
 			}
 			defer d.Close()
 
-			// Sample 2000 random blobs (full 66K takes >5min with deep chains).
-			// Covers diverse chain depths and content types.
-			verifySampledBlobs(t, d, 2000)
+			verifySampledBlobs(t, d, 5000)
 		})
 
 		t.Run("verify_hash_integrity", func(t *testing.T) {
@@ -981,13 +979,13 @@ func TestInterop(t *testing.T) {
 			}
 			defer d.Close()
 
-			// Sample 500 random blobs
+			// Sample 2000 random blobs and cross-check against fossil artifact
 			rows, err := d.Query(`
 				SELECT rid, uuid
 				FROM blob
 				WHERE size >= 0 AND content IS NOT NULL
 				ORDER BY RANDOM()
-				LIMIT 500
+				LIMIT 2000
 			`)
 			if err != nil {
 				t.Fatalf("query random blobs: %v", err)
