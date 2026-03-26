@@ -1,3 +1,5 @@
+mod endpoint;
+
 use clap::Parser;
 use std::path::PathBuf;
 
@@ -27,6 +29,15 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     tracing::info!(socket = %args.socket.display(), "iroh-sidecar starting");
 
-    // Placeholder — will be filled in subsequent tasks.
-    todo!("start iroh endpoint and HTTP server")
+    let (ep, endpoint_id) = endpoint::create_endpoint(
+        &args.key_path,
+        args.alpn.as_bytes(),
+    ).await?;
+
+    tracing::info!(%endpoint_id, "iroh endpoint ready");
+
+    // Placeholder — HTTP server and accept loop added in subsequent tasks.
+    tokio::signal::ctrl_c().await?;
+    ep.close().await;
+    Ok(())
 }

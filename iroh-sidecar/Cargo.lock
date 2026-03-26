@@ -1676,6 +1676,7 @@ dependencies = [
  "clap",
  "hyper-util",
  "iroh",
+ "rand",
  "serde",
  "serde_json",
  "tokio",
