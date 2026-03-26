@@ -369,7 +369,12 @@ func parseCFile(r *bufio.Reader, args []string) (Card, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(decompressed) != usize {
+	// For non-delta cfiles, decompressed size == usize (full content).
+	// For delta cfiles, decompressed size is the delta payload size, which
+	// is smaller than usize (the fully expanded content size). Fossil's
+	// send_compressed_file sets usize = blob.size (full content) regardless.
+	// Only validate for non-delta cards where the sizes must match.
+	if c.DeltaSrc == "" && len(decompressed) != usize {
 		return nil, fmt.Errorf("xfer: cfile usize mismatch: header says %d, got %d", usize, len(decompressed))
 	}
 	c.USize = usize

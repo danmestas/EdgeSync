@@ -180,9 +180,10 @@ func manualDelta(targetLen uint64, ops []deltaOp, checksum uint32) []byte {
 	for _, op := range ops {
 		switch op.opType {
 		case '@':
-			writeInt(&buf, op.offset)
-			buf.WriteByte('@')
+			// Fossil format: count@offset,
 			writeInt(&buf, op.length)
+			buf.WriteByte('@')
+			writeInt(&buf, op.offset)
 			buf.WriteByte(',')
 		case ':':
 			writeInt(&buf, uint64(len(op.data)))
