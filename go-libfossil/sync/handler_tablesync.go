@@ -146,8 +146,12 @@ func (h *handler) handleXIGot(c *xfer.XIGotCard) error {
 		return nil
 	}
 
-	// Compare mtimes: if local is newer, push it; otherwise no-op.
+	// Compare mtimes: if local is newer, push it (or send xdelete if tombstone).
 	if localMtime > c.MTime {
+		if repo.IsTombstone(st.Def, localRow) {
+			h.sendXDelete(c.Table, st, c.PKHash, localMtime, localRow)
+			return nil
+		}
 		return h.sendXRow(c.Table, st, c.PKHash)
 	}
 
@@ -390,6 +394,75 @@ func (h *handler) emitXIGotsForTable(table string, st *SyncedTable) error {
 		})
 	}
 	return nil
+}
+
+// handleXDelete processes a table sync deletion card.
+func (h *handler) handleXDelete(c *xfer.XDeleteCard) error {
+	if c == nil {
+		panic("handler.handleXDelete: c must not be nil")
+	}
+	if !h.pushOK {
+		h.resp = append(h.resp, &xfer.ErrorCard{
+			Message: fmt.Sprintf("xdelete %s/%s rejected: no push card", c.Table, c.PKHash),
+		})
+		return nil
+	}
+
+	st, ok := h.syncedTables[c.Table]
+	if !ok {
+		return nil
+	}
+
+	deleted, err := repo.DeleteXRowByPKHash(h.repo.DB(), c.Table, st.Def, c.PKHash, c.MTime)
+	if err != nil {
+		return fmt.Errorf("handler.handleXDelete: %w", err)
+	}
+
+	// If row didn't exist locally, insert tombstone using PKData.
+	if !deleted {
+		existingRow, _, lookupErr := repo.LookupXRow(h.repo.DB(), c.Table, st.Def, c.PKHash)
+		if lookupErr != nil {
+			return fmt.Errorf("handler.handleXDelete: lookup: %w", lookupErr)
+		}
+		if existingRow == nil && len(c.PKData) > 0 {
+			var pkValues map[string]any
+			if err := json.Unmarshal(c.PKData, &pkValues); err != nil {
+				h.resp = append(h.resp, &xfer.ErrorCard{
+					Message: fmt.Sprintf("xdelete %s/%s: bad PKData: %v", c.Table, c.PKHash, err),
+				})
+				return nil
+			}
+			// Insert tombstone row with only PK values (value cols will be NULL).
+			if err := repo.UpsertXRow(h.repo.DB(), c.Table, pkValues, c.MTime); err != nil {
+				return fmt.Errorf("handler.handleXDelete: insert tombstone: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// sendXDelete sends a tombstone deletion card to the client.
+func (h *handler) sendXDelete(table string, st *SyncedTable, pkHash string, mtime int64, row map[string]any) {
+	pkCols := extractPKColumns(st.Def)
+	pkValues := make(map[string]any)
+	for _, col := range pkCols {
+		pkValues[col] = row[col]
+	}
+	pkData, err := json.Marshal(pkValues)
+	if err != nil {
+		h.resp = append(h.resp, &xfer.ErrorCard{
+			Message: fmt.Sprintf("xdelete %s/%s: marshal PKData: %v", table, pkHash, err),
+		})
+		return
+	}
+
+	h.resp = append(h.resp, &xfer.XDeleteCard{
+		Table:  table,
+		PKHash: pkHash,
+		MTime:  mtime,
+		PKData: pkData,
+	})
 }
 
 // extractPKColumns is defined in client_tablesync.go as a package-level

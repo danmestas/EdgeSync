@@ -321,6 +321,8 @@ func (h *handler) handleDataCard(card xfer.Card) error {
 		return h.handleXGimme(c)
 	case *xfer.XRowCard:
 		return h.handleXRow(c)
+	case *xfer.XDeleteCard:
+		return h.handleXDelete(c)
 	}
 	return nil
 }
