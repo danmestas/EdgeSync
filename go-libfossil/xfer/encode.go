@@ -267,16 +267,34 @@ func encodeSchema(w *bytes.Buffer, c *SchemaCard) error {
 }
 
 func encodeXIGot(w *bytes.Buffer, c *XIGotCard) error {
+	if c.Table == "" {
+		panic("encodeXIGot: Table must not be empty")
+	}
+	if c.PKHash == "" {
+		panic("encodeXIGot: PKHash must not be empty")
+	}
 	fmt.Fprintf(w, "xigot %s %s %d\n", c.Table, c.PKHash, c.MTime)
 	return nil
 }
 
 func encodeXGimme(w *bytes.Buffer, c *XGimmeCard) error {
+	if c.Table == "" {
+		panic("encodeXGimme: Table must not be empty")
+	}
+	if c.PKHash == "" {
+		panic("encodeXGimme: PKHash must not be empty")
+	}
 	fmt.Fprintf(w, "xgimme %s %s\n", c.Table, c.PKHash)
 	return nil
 }
 
 func encodeXRow(w *bytes.Buffer, c *XRowCard) error {
+	if c.Table == "" {
+		panic("encodeXRow: Table must not be empty")
+	}
+	if c.PKHash == "" {
+		panic("encodeXRow: PKHash must not be empty")
+	}
 	fmt.Fprintf(w, "xrow %s %s %d %d\n", c.Table, c.PKHash, c.MTime, len(c.Content))
 	w.Write(c.Content)
 	w.WriteByte('\n')
@@ -284,6 +302,12 @@ func encodeXRow(w *bytes.Buffer, c *XRowCard) error {
 }
 
 func encodeXDelete(w *bytes.Buffer, c *XDeleteCard) error {
+	if c.Table == "" {
+		panic("encodeXDelete: Table must not be empty")
+	}
+	if c.PKHash == "" {
+		panic("encodeXDelete: PKHash must not be empty")
+	}
 	fmt.Fprintf(w, "xdelete %s %s %d %d\n", c.Table, c.PKHash, c.MTime, len(c.PKData))
 	w.Write(c.PKData)
 	w.WriteByte('\n')

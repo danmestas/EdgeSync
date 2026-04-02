@@ -168,6 +168,9 @@ func (s *session) buildTableSendCards(info repo.TableInfo) ([]xfer.Card, error) 
 
 // processXTableCard dispatches incoming table sync cards to their handlers.
 func (s *session) processXTableCard(card xfer.Card) error {
+	if card == nil {
+		panic("session.processXTableCard: card must not be nil")
+	}
 	switch c := card.(type) {
 	case *xfer.SchemaCard:
 		return s.handleXSchemaCard(c)
@@ -321,29 +324,8 @@ func (s *session) handleXDeleteResponse(c *xfer.XDeleteCard) error {
 		return nil
 	}
 
-	deleted, err := repo.DeleteXRowByPKHash(s.repo.DB(), c.Table, *def, c.PKHash, c.MTime)
-	if err != nil {
-		return fmt.Errorf("handleXDeleteResponse: delete %s/%s: %w", c.Table, c.PKHash, err)
-	}
-
-	// If row didn't exist locally, insert tombstone using PKData.
-	if !deleted {
-		existingRow, _, lookupErr := repo.LookupXRow(s.repo.DB(), c.Table, *def, c.PKHash)
-		if lookupErr != nil {
-			return fmt.Errorf("handleXDeleteResponse: lookup: %w", lookupErr)
-		}
-		if existingRow == nil && len(c.PKData) > 0 {
-			var pkValues map[string]any
-			pkDec := json.NewDecoder(bytesReader(c.PKData))
-			pkDec.UseNumber()
-			if err := pkDec.Decode(&pkValues); err != nil {
-				return fmt.Errorf("handleXDeleteResponse: bad PKData: %w", err)
-			}
-			coerceJSONNumbers(pkValues, *def)
-			if err := repo.UpsertXRow(s.repo.DB(), c.Table, pkValues, c.MTime); err != nil {
-				return fmt.Errorf("handleXDeleteResponse: insert tombstone: %w", err)
-			}
-		}
+	if err := applyXDeleteLocally(s.repo.DB(), c.Table, *def, c.PKHash, c.MTime, c.PKData); err != nil {
+		return err
 	}
 
 	// Remove from gimmes if present.
@@ -357,6 +339,9 @@ func (s *session) handleXDeleteResponse(c *xfer.XDeleteCard) error {
 // extractPKColumns returns the names of all primary key columns from a TableDef.
 // This is a package-level function shared by both client and handler.
 func extractPKColumns(def repo.TableDef) []string {
+	if len(def.Columns) == 0 {
+		panic("extractPKColumns: def.Columns must not be empty")
+	}
 	var pkCols []string
 	for _, col := range def.Columns {
 		if col.PK {
@@ -368,6 +353,9 @@ func extractPKColumns(def repo.TableDef) []string {
 
 // extractPKColumnDefs returns the ColumnDef of all PK columns from a TableDef.
 func extractPKColumnDefs(def repo.TableDef) []repo.ColumnDef {
+	if len(def.Columns) == 0 {
+		panic("extractPKColumnDefs: def.Columns must not be empty")
+	}
 	var pkCols []repo.ColumnDef
 	for _, col := range def.Columns {
 		if col.PK {

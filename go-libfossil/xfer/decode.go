@@ -478,6 +478,10 @@ func parseSchema(r *bufio.Reader, args []string) (Card, error) {
 	if err != nil {
 		return nil, fmt.Errorf("xfer: schema size: %w", err)
 	}
+	const maxSchemaSize = 64 << 20 // 64 MiB — schema payloads should be small JSON.
+	if size < 0 || size > maxSchemaSize {
+		return nil, fmt.Errorf("xfer: schema size out of bounds: %d", size)
+	}
 	content, err := readPayloadWithTrailingNewline(r, size)
 	if err != nil {
 		return nil, fmt.Errorf("xfer: schema payload: %w", err)
@@ -537,6 +541,10 @@ func parseXRow(r *bufio.Reader, args []string) (Card, error) {
 	size, err := strconv.Atoi(args[3])
 	if err != nil {
 		return nil, fmt.Errorf("xfer: xrow size: %w", err)
+	}
+	const maxXRowSize = 64 << 20 // 64 MiB — row payloads should be small JSON.
+	if size < 0 || size > maxXRowSize {
+		return nil, fmt.Errorf("xfer: xrow size out of bounds: %d", size)
 	}
 	content, err := readPayloadWithTrailingNewline(r, size)
 	if err != nil {

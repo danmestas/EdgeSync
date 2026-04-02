@@ -235,6 +235,9 @@ func ListSyncedTables(d *db.DB) ([]TableInfo, error) {
 // based on the declared column type. This ensures PK hashes are identical
 // regardless of how the value arrived (JSON unmarshal, SQLite scan, etc.).
 func normalizeValue(colType string, v any) string {
+	if v == nil {
+		panic(fmt.Sprintf("repo.normalizeValue: value must not be nil for column type %q", colType))
+	}
 	switch colType {
 	case "integer":
 		switch n := v.(type) {
@@ -244,8 +247,14 @@ func normalizeValue(colType string, v any) string {
 			return strconv.FormatInt(int64(n), 10)
 		case int:
 			return strconv.FormatInt(int64(n), 10)
+		case json.Number:
+			i, err := n.Int64()
+			if err != nil {
+				panic(fmt.Sprintf("repo.normalizeValue: integer column got non-integer json.Number %q", n))
+			}
+			return strconv.FormatInt(i, 10)
 		default:
-			return fmt.Sprintf("%v", v)
+			panic(fmt.Sprintf("repo.normalizeValue: integer column got unexpected type %T", v))
 		}
 	case "real":
 		switch n := v.(type) {
@@ -253,17 +262,29 @@ func normalizeValue(colType string, v any) string {
 			return strconv.FormatFloat(n, 'f', -1, 64)
 		case int64:
 			return strconv.FormatFloat(float64(n), 'f', -1, 64)
+		case json.Number:
+			f, err := n.Float64()
+			if err != nil {
+				panic(fmt.Sprintf("repo.normalizeValue: real column got non-float json.Number %q", n))
+			}
+			return strconv.FormatFloat(f, 'f', -1, 64)
 		default:
-			return fmt.Sprintf("%v", v)
+			panic(fmt.Sprintf("repo.normalizeValue: real column got unexpected type %T", v))
 		}
 	case "text":
-		s, _ := v.(string)
+		s, ok := v.(string)
+		if !ok {
+			panic(fmt.Sprintf("repo.normalizeValue: text column got unexpected type %T", v))
+		}
 		return s
 	case "blob":
-		b, _ := v.([]byte)
+		b, ok := v.([]byte)
+		if !ok {
+			panic(fmt.Sprintf("repo.normalizeValue: blob column got unexpected type %T", v))
+		}
 		return hex.EncodeToString(b)
 	default:
-		return fmt.Sprintf("%v", v)
+		panic(fmt.Sprintf("repo.normalizeValue: unsupported column type %q", colType))
 	}
 }
 
@@ -442,6 +463,12 @@ func LookupXRow(d *db.DB, tableName string, def TableDef, pkHash string) (map[st
 // A tombstone represents a deleted row (UV-style convention).
 // Returns false for tables with only PK columns (no value columns to NULL).
 func IsTombstone(def TableDef, row map[string]any) bool {
+	if row == nil {
+		panic("repo.IsTombstone: row must not be nil")
+	}
+	if len(def.Columns) == 0 {
+		panic("repo.IsTombstone: def.Columns must not be empty")
+	}
 	hasValueCol := false
 	for _, col := range def.Columns {
 		if col.PK {
@@ -461,6 +488,15 @@ func IsTombstone(def TableDef, row map[string]any) bool {
 func DeleteXRowByPKHash(d *db.DB, tableName string, def TableDef, pkHash string, mtime int64) (bool, error) {
 	if d == nil {
 		panic("repo.DeleteXRowByPKHash: d must not be nil")
+	}
+	if tableName == "" {
+		panic("repo.DeleteXRowByPKHash: tableName must not be empty")
+	}
+	if pkHash == "" {
+		panic("repo.DeleteXRowByPKHash: pkHash must not be empty")
+	}
+	if len(def.Columns) == 0 {
+		panic("repo.DeleteXRowByPKHash: def.Columns must not be empty")
 	}
 
 	row, currentMtime, err := LookupXRow(d, tableName, def, pkHash)
