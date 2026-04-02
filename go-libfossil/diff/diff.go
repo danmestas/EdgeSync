@@ -4,6 +4,7 @@ package diff
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 )
 
@@ -176,4 +177,183 @@ func backtrack(trace [][]int, src, dst []string) []editOp {
 		ops[i], ops[j] = ops[j], ops[i]
 	}
 	return ops
+}
+
+// hunk represents a group of changes with surrounding context.
+type hunk struct {
+	srcStart, srcCount int
+	dstStart, dstCount int
+	ops                []editOp
+}
+
+// buildHunks groups edit ops into hunks with context lines.
+// Adjacent hunks within 2*contextLines of each other are merged.
+func buildHunks(ops []editOp, contextLines int) []hunk {
+	if len(ops) == 0 {
+		return nil
+	}
+
+	// Find change positions.
+	type changeRange struct{ start, end int }
+	var changes []changeRange
+	for i, op := range ops {
+		if op.kind != opEqual {
+			if len(changes) == 0 || i > changes[len(changes)-1].end {
+				changes = append(changes, changeRange{i, i + 1})
+			} else {
+				changes[len(changes)-1].end = i + 1
+			}
+		}
+	}
+
+	if len(changes) == 0 {
+		return nil
+	}
+
+	// Merge adjacent changes that are within 2*contextLines of each other.
+	merged := []changeRange{changes[0]}
+	for _, c := range changes[1:] {
+		prev := &merged[len(merged)-1]
+		gap := c.start - prev.end
+		if gap <= 2*contextLines {
+			prev.end = c.end
+		} else {
+			merged = append(merged, c)
+		}
+	}
+
+	// Track src/dst line positions through ops.
+	srcPos := make([]int, len(ops))
+	dstPos := make([]int, len(ops))
+	si, di := 0, 0
+	for i, op := range ops {
+		srcPos[i] = si
+		dstPos[i] = di
+		switch op.kind {
+		case opEqual:
+			si++
+			di++
+		case opDelete:
+			si++
+		case opInsert:
+			di++
+		}
+	}
+
+	// Build hunks with context.
+	var hunks []hunk
+
+	for _, cr := range merged {
+		start := cr.start - contextLines
+		if start < 0 {
+			start = 0
+		}
+		end := cr.end + contextLines
+		if end > len(ops) {
+			end = len(ops)
+		}
+
+		h := hunk{
+			srcStart: srcPos[start] + 1, // 1-indexed
+			dstStart: dstPos[start] + 1,
+			ops:      ops[start:end],
+		}
+
+		// Count src and dst lines in this hunk.
+		for _, op := range h.ops {
+			switch op.kind {
+			case opEqual:
+				h.srcCount++
+				h.dstCount++
+			case opDelete:
+				h.srcCount++
+			case opInsert:
+				h.dstCount++
+			}
+		}
+
+		hunks = append(hunks, h)
+	}
+
+	return hunks
+}
+
+// formatUnified formats hunks as a unified diff string.
+func formatUnified(hunks []hunk, srcName, dstName string) string {
+	if len(hunks) == 0 {
+		return ""
+	}
+
+	var buf strings.Builder
+	if srcName == "" {
+		srcName = "a"
+	}
+	if dstName == "" {
+		dstName = "b"
+	}
+	fmt.Fprintf(&buf, "--- %s\n", srcName)
+	fmt.Fprintf(&buf, "+++ %s\n", dstName)
+
+	for _, h := range hunks {
+		fmt.Fprintf(&buf, "@@ -%d,%d +%d,%d @@\n",
+			h.srcStart, h.srcCount, h.dstStart, h.dstCount)
+		for _, op := range h.ops {
+			switch op.kind {
+			case opEqual:
+				fmt.Fprintf(&buf, " %s\n", op.text)
+			case opDelete:
+				fmt.Fprintf(&buf, "-%s\n", op.text)
+			case opInsert:
+				fmt.Fprintf(&buf, "+%s\n", op.text)
+			}
+		}
+	}
+
+	return buf.String()
+}
+
+// Unified returns a unified diff string between a and b.
+// Returns "" if a and b are identical or either is binary.
+func Unified(a, b []byte, opts Options) string {
+	if isBinary(a) || isBinary(b) {
+		return ""
+	}
+	srcLines := splitLines(a)
+	dstLines := splitLines(b)
+	ops := myers(srcLines, dstLines)
+
+	allEqual := true
+	for _, op := range ops {
+		if op.kind != opEqual {
+			allEqual = false
+			break
+		}
+	}
+	if allEqual {
+		return ""
+	}
+
+	hunks := buildHunks(ops, opts.ContextLines)
+	return formatUnified(hunks, opts.SrcName, opts.DstName)
+}
+
+// Stat returns insertion/deletion counts between a and b.
+func Stat(a, b []byte) DiffStat {
+	if isBinary(a) || isBinary(b) {
+		return DiffStat{Binary: true}
+	}
+	srcLines := splitLines(a)
+	dstLines := splitLines(b)
+	ops := myers(srcLines, dstLines)
+
+	var stat DiffStat
+	for _, op := range ops {
+		switch op.kind {
+		case opInsert:
+			stat.Insertions++
+		case opDelete:
+			stat.Deletions++
+		}
+	}
+	return stat
 }

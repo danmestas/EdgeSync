@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -138,5 +139,142 @@ func TestMyersMixed(t *testing.T) {
 		if result[i] != dst[i] {
 			t.Fatalf("line %d: got %q, want %q", i, result[i], dst[i])
 		}
+	}
+}
+
+func TestUnifiedIdentical(t *testing.T) {
+	a := []byte("hello\nworld\n")
+	got := Unified(a, a, Options{ContextLines: 3})
+	if got != "" {
+		t.Fatalf("identical inputs should return empty string, got:\n%s", got)
+	}
+}
+
+func TestUnifiedSimpleChange(t *testing.T) {
+	a := []byte("line1\nline2\nline3\n")
+	b := []byte("line1\nchanged\nline3\n")
+	got := Unified(a, b, Options{
+		ContextLines: 3,
+		SrcName:      "a/file.txt",
+		DstName:      "b/file.txt",
+	})
+	if got == "" {
+		t.Fatal("expected non-empty diff")
+	}
+	if !strings.Contains(got, "--- a/file.txt") {
+		t.Fatalf("missing src header in:\n%s", got)
+	}
+	if !strings.Contains(got, "+++ b/file.txt") {
+		t.Fatalf("missing dst header in:\n%s", got)
+	}
+	if !strings.Contains(got, "-line2") {
+		t.Fatalf("missing deletion in:\n%s", got)
+	}
+	if !strings.Contains(got, "+changed") {
+		t.Fatalf("missing insertion in:\n%s", got)
+	}
+	if !strings.Contains(got, " line1") {
+		t.Fatalf("missing context in:\n%s", got)
+	}
+	if !strings.Contains(got, "@@") {
+		t.Fatalf("missing hunk header in:\n%s", got)
+	}
+}
+
+func TestUnifiedInsertOnly(t *testing.T) {
+	a := []byte("a\nc\n")
+	b := []byte("a\nb\nc\n")
+	got := Unified(a, b, Options{ContextLines: 3})
+	if !strings.Contains(got, "+b") {
+		t.Fatalf("expected +b in:\n%s", got)
+	}
+}
+
+func TestUnifiedDeleteOnly(t *testing.T) {
+	a := []byte("a\nb\nc\n")
+	b := []byte("a\nc\n")
+	got := Unified(a, b, Options{ContextLines: 3})
+	if !strings.Contains(got, "-b") {
+		t.Fatalf("expected -b in:\n%s", got)
+	}
+}
+
+func TestUnifiedZeroContext(t *testing.T) {
+	a := []byte("a\nb\nc\nd\ne\n")
+	b := []byte("a\nB\nc\nd\nE\n")
+	got := Unified(a, b, Options{ContextLines: 0})
+	// Two changes separated by 2 unchanged lines -- with 0 context, must be 2 hunks.
+	hunkCount := strings.Count(got, "@@ -")
+	if !strings.HasPrefix(got, "---") {
+		t.Fatalf("expected diff header, got:\n%s", got)
+	}
+	if hunkCount != 2 {
+		t.Fatalf("expected 2 hunks with 0 context, got %d:\n%s", hunkCount, got)
+	}
+	// No context lines should appear (lines starting with a space).
+	for _, line := range strings.Split(got, "\n") {
+		if len(line) > 0 && line[0] == ' ' {
+			t.Fatalf("zero-context diff should not have context lines, found %q in:\n%s", line, got)
+		}
+	}
+}
+
+func TestUnifiedBinary(t *testing.T) {
+	a := []byte("hello\x00world")
+	b := []byte("different")
+	got := Unified(a, b, Options{})
+	if got != "" {
+		t.Fatalf("binary input should return empty string, got:\n%s", got)
+	}
+}
+
+func TestUnifiedBothEmpty(t *testing.T) {
+	got := Unified(nil, nil, Options{})
+	if got != "" {
+		t.Fatalf("both nil should return empty, got: %q", got)
+	}
+}
+
+func TestUnifiedOneEmpty(t *testing.T) {
+	a := []byte("hello\n")
+	got := Unified(nil, a, Options{SrcName: "old", DstName: "new"})
+	if !strings.Contains(got, "+hello") {
+		t.Fatalf("expected insertion in:\n%s", got)
+	}
+
+	got2 := Unified(a, nil, Options{SrcName: "old", DstName: "new"})
+	if !strings.Contains(got2, "-hello") {
+		t.Fatalf("expected deletion in:\n%s", got2)
+	}
+}
+
+func TestStatSimple(t *testing.T) {
+	a := []byte("a\nb\nc\n")
+	b := []byte("a\nB\nc\nd\n")
+	stat := Stat(a, b)
+	// b changed -> 1 deletion + 1 insertion, d added -> 1 insertion
+	if stat.Insertions < 1 {
+		t.Fatalf("Insertions = %d, want >= 1", stat.Insertions)
+	}
+	if stat.Deletions < 1 {
+		t.Fatalf("Deletions = %d, want >= 1", stat.Deletions)
+	}
+	if stat.Binary {
+		t.Fatal("should not be binary")
+	}
+}
+
+func TestStatBinary(t *testing.T) {
+	stat := Stat([]byte("a\x00b"), []byte("c"))
+	if !stat.Binary {
+		t.Fatal("should detect binary")
+	}
+}
+
+func TestStatIdentical(t *testing.T) {
+	a := []byte("same\n")
+	stat := Stat(a, a)
+	if stat.Insertions != 0 || stat.Deletions != 0 {
+		t.Fatalf("identical: got %+v", stat)
 	}
 }
