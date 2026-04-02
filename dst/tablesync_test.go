@@ -1443,3 +1443,69 @@ func TestTableSync_IntegerPK_Convergence(t *testing.T) {
 		}
 	}
 }
+
+// TestTableSync_Deletion_CompositePK: delete one row from a composite PK table,
+// verify only that row becomes a tombstone while the other row remains live.
+func TestTableSync_Deletion_CompositePK(t *testing.T) {
+	sim, masterRepo, _ := newTableSyncSim(t, 55, 2, false)
+	def := repo.TableDef{
+		Columns: []repo.ColumnDef{
+			{Name: "org", Type: "text", PK: true},
+			{Name: "user_id", Type: "text", PK: true},
+			{Name: "role", Type: "text"},
+		},
+		Conflict: "mtime-wins",
+	}
+	registerTableAll(t, sim, masterRepo, "members", def, 1000)
+
+	// Seed two rows with same first PK component but different second.
+	upsertRow(t, masterRepo, "members", map[string]any{
+		"org": "acme", "user_id": "alice", "role": "admin",
+	}, 1000)
+	upsertRow(t, masterRepo, "members", map[string]any{
+		"org": "acme", "user_id": "bob", "role": "member",
+	}, 1000)
+
+	// Sync to distribute.
+	if err := sim.Run(50); err != nil {
+		t.Fatalf("Run (seed): %v", err)
+	}
+
+	// Delete only alice, not bob.
+	pkColDefs := []repo.ColumnDef{
+		{Name: "org", Type: "text", PK: true},
+		{Name: "user_id", Type: "text", PK: true},
+	}
+	aliceHash := repo.PKHash(pkColDefs, map[string]any{"org": "acme", "user_id": "alice"})
+	if _, err := repo.DeleteXRowByPKHash(masterRepo.DB(), "members", def, aliceHash, 2000); err != nil {
+		t.Fatalf("DeleteXRowByPKHash alice: %v", err)
+	}
+
+	// Sync deletion.
+	if err := sim.Run(50); err != nil {
+		t.Fatalf("Run (delete): %v", err)
+	}
+
+	// All peers: alice=tombstone, bob=live.
+	bobHash := repo.PKHash(pkColDefs, map[string]any{"org": "acme", "user_id": "bob"})
+	for _, leafID := range sim.LeafIDs() {
+		db := sim.Leaf(leafID).Repo().DB()
+		aliceRow, _, _ := repo.LookupXRow(db, "members", def, aliceHash)
+		if aliceRow == nil || !repo.IsTombstone(def, aliceRow) {
+			t.Errorf("%s: alice should be tombstone", leafID)
+		}
+		bobRow, _, _ := repo.LookupXRow(db, "members", def, bobHash)
+		if bobRow == nil || repo.IsTombstone(def, bobRow) {
+			t.Errorf("%s: bob should be live", leafID)
+		}
+	}
+	// Master too.
+	aliceRow, _, _ := repo.LookupXRow(masterRepo.DB(), "members", def, aliceHash)
+	if aliceRow == nil || !repo.IsTombstone(def, aliceRow) {
+		t.Error("master: alice should be tombstone")
+	}
+	bobRow, _, _ := repo.LookupXRow(masterRepo.DB(), "members", def, bobHash)
+	if bobRow == nil || repo.IsTombstone(def, bobRow) {
+		t.Error("master: bob should be live")
+	}
+}

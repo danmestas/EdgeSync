@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/dmestas/edgesync/go-libfossil/auth"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/xfer"
 )
@@ -171,5 +172,115 @@ func TestHandleXIGotEmitsXDeleteForTombstone(t *testing.T) {
 		if xr.Table == "kv" && xr.PKHash == pkHash {
 			t.Fatalf("unexpected xrow card for tombstoned row %q", pkHash)
 		}
+	}
+}
+
+func TestHandleXDelete_SelfWriteOwnershipCheck(t *testing.T) {
+	serverRepo := setupSyncTestRepo(t)
+	pc := testProjectCode(t, serverRepo.DB())
+
+	// Create users alice (owner) and bob (non-owner) with push+pull caps.
+	if err := auth.CreateUser(serverRepo.DB(), pc, "alice", "alicesecret", "oi"); err != nil {
+		t.Fatalf("CreateUser alice: %v", err)
+	}
+	if err := auth.CreateUser(serverRepo.DB(), pc, "bob", "bobsecret", "oi"); err != nil {
+		t.Fatalf("CreateUser bob: %v", err)
+	}
+
+	def := repo.TableDef{
+		Columns:  []repo.ColumnDef{{Name: "peer_id", Type: "text", PK: true}, {Name: "status", Type: "text"}},
+		Conflict: "self-write",
+	}
+	repo.EnsureSyncSchema(serverRepo.DB())
+	repo.RegisterSyncedTable(serverRepo.DB(), "peers", def, 1000)
+
+	// Insert row owned by "alice".
+	repo.UpsertXRow(serverRepo.DB(), "peers", map[string]any{
+		"peer_id": "alice", "status": "online", "_owner": "alice",
+	}, 1000)
+
+	pkColDefs := []repo.ColumnDef{{Name: "peer_id", Type: "text", PK: true}}
+	pkHash := repo.PKHash(pkColDefs, map[string]any{"peer_id": "alice"})
+
+	// "bob" tries to delete alice's row — should be rejected.
+	aliceLoginCard := buildTestLoginCard("alice", "alicesecret", pc, []byte("dummy"))
+	_ = aliceLoginCard // ensure we build both
+	bobLoginCard := buildTestLoginCard("bob", "bobsecret", pc, []byte("dummy"))
+
+	msg := &xfer.Message{
+		Cards: []xfer.Card{
+			bobLoginCard,
+			&xfer.PushCard{ServerCode: "sc", ProjectCode: "pc"},
+			&xfer.PullCard{ServerCode: "sc", ProjectCode: "pc"},
+			&xfer.XDeleteCard{
+				Table:  "peers",
+				PKHash: pkHash,
+				MTime:  2000,
+				PKData: []byte(`{"peer_id":"alice"}`),
+			},
+		},
+	}
+
+	_, err := HandleSync(context.Background(), serverRepo, msg)
+	if err != nil {
+		t.Fatalf("HandleSync: %v", err)
+	}
+
+	// Row should still be alive — deletion rejected.
+	row, mtime, _ := repo.LookupXRow(serverRepo.DB(), "peers", def, pkHash)
+	if row == nil {
+		t.Fatal("row should still exist")
+	}
+	if repo.IsTombstone(def, row) {
+		t.Error("row should NOT be tombstone — bob is not the owner")
+	}
+	if mtime != 1000 {
+		t.Errorf("mtime should be unchanged: got %d, want 1000", mtime)
+	}
+}
+
+func TestHandleXDelete_PKDataHashMismatch(t *testing.T) {
+	serverRepo := setupSyncTestRepo(t)
+	def := repo.TableDef{
+		Columns:  []repo.ColumnDef{{Name: "id", Type: "text", PK: true}, {Name: "data", Type: "text"}},
+		Conflict: "mtime-wins",
+	}
+	repo.EnsureSyncSchema(serverRepo.DB())
+	repo.RegisterSyncedTable(serverRepo.DB(), "test_tbl", def, 1000)
+
+	// Send xdelete with PKHash for "k1" but PKData for "INJECTED".
+	pkColDefs := []repo.ColumnDef{{Name: "id", Type: "text", PK: true}}
+	realHash := repo.PKHash(pkColDefs, map[string]any{"id": "k1"})
+
+	msg := &xfer.Message{
+		Cards: []xfer.Card{
+			&xfer.PushCard{ServerCode: "sc", ProjectCode: "pc"},
+			&xfer.PullCard{ServerCode: "sc", ProjectCode: "pc"},
+			&xfer.XDeleteCard{
+				Table:  "test_tbl",
+				PKHash: realHash,
+				MTime:  2000,
+				PKData: []byte(`{"id":"INJECTED"}`), // Mismatched!
+			},
+		},
+	}
+
+	// applyXDeleteLocally returns an error on hash mismatch — HandleSync propagates it.
+	_, err := HandleSync(context.Background(), serverRepo, msg)
+	if err == nil {
+		t.Fatal("expected error for PKData hash mismatch, got nil")
+	}
+
+	// Should NOT have inserted a tombstone for "INJECTED".
+	injectedHash := repo.PKHash(pkColDefs, map[string]any{"id": "INJECTED"})
+	row, _, _ := repo.LookupXRow(serverRepo.DB(), "test_tbl", def, injectedHash)
+	if row != nil {
+		t.Error("should NOT have inserted tombstone for mismatched PKData")
+	}
+
+	// Should NOT have inserted a tombstone for "k1" either.
+	row2, _, _ := repo.LookupXRow(serverRepo.DB(), "test_tbl", def, realHash)
+	if row2 != nil {
+		t.Error("should NOT have inserted any tombstone for mismatched PKData")
 	}
 }

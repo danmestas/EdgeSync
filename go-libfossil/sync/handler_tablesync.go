@@ -464,6 +464,18 @@ func (h *handler) handleXDelete(c *xfer.XDeleteCard) error {
 		return nil
 	}
 
+	// Conflict resolution: check ownership for self-write/owner-write tables.
+	if st.Def.Conflict == "self-write" || st.Def.Conflict == "owner-write" {
+		localOwner, err := repo.LookupXRowOwner(h.repo.DB(), c.Table, st.Def, c.PKHash)
+		if err != nil {
+			return fmt.Errorf("handler.handleXDelete: lookup owner %s/%s: %w", c.Table, c.PKHash, err)
+		}
+		if localOwner != "" && localOwner != h.user {
+			// Not the owner — reject deletion silently.
+			return nil
+		}
+	}
+
 	return applyXDeleteLocally(h.repo.DB(), c.Table, st.Def, c.PKHash, c.MTime, c.PKData)
 }
 

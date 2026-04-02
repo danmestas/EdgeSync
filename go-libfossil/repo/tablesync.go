@@ -459,6 +459,78 @@ func LookupXRow(d *db.DB, tableName string, def TableDef, pkHash string) (map[st
 	return nil, 0, nil
 }
 
+// LookupXRowOwner returns the _owner field for the row identified by pkHash,
+// or "" if the row doesn't exist or the table has no owner column.
+func LookupXRowOwner(d *db.DB, tableName string, def TableDef, pkHash string) (string, error) {
+	if d == nil {
+		panic("repo.LookupXRowOwner: d must not be nil")
+	}
+	if tableName == "" {
+		panic("repo.LookupXRowOwner: tableName must not be empty")
+	}
+	if pkHash == "" {
+		panic("repo.LookupXRowOwner: pkHash must not be empty")
+	}
+
+	// Only tables with self-write/owner-write conflict have an _owner column.
+	hasOwner := def.Conflict == "self-write" || def.Conflict == "owner-write"
+	if !hasOwner {
+		return "", nil
+	}
+
+	// Scan all rows to find the one matching pkHash (same strategy as LookupXRow).
+	sql := fmt.Sprintf("SELECT * FROM x_%s", tableName)
+	rows, err := d.Query(sql)
+	if err != nil {
+		return "", fmt.Errorf("repo.LookupXRowOwner: %w", err)
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return "", fmt.Errorf("repo.LookupXRowOwner: columns: %w", err)
+	}
+
+	var pkColDefs []ColumnDef
+	for _, col := range def.Columns {
+		if col.PK {
+			pkColDefs = append(pkColDefs, col)
+		}
+	}
+
+	for rows.Next() {
+		values := make([]any, len(columns))
+		valuePtrs := make([]any, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return "", err
+		}
+
+		rowMap := make(map[string]any)
+		var owner string
+		for i, col := range columns {
+			if col == "_owner" {
+				if v, ok := values[i].(string); ok {
+					owner = v
+				}
+			} else if col != "mtime" {
+				rowMap[col] = values[i]
+			}
+		}
+
+		pkValues := make(map[string]any)
+		for _, col := range pkColDefs {
+			pkValues[col.Name] = rowMap[col.Name]
+		}
+		if PKHash(pkColDefs, pkValues) == pkHash {
+			return owner, nil
+		}
+	}
+	return "", rows.Err()
+}
+
 // IsTombstone returns true if all non-PK value columns in the row are nil.
 // A tombstone represents a deleted row (UV-style convention).
 // Returns false for tables with only PK columns (no value columns to NULL).

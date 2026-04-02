@@ -40,6 +40,19 @@ func applyXDeleteLocally(d *db.DB, table string, def repo.TableDef, pkHash strin
 		return fmt.Errorf("applyXDeleteLocally: decode PKData %s/%s: %w", table, pkHash, err)
 	}
 	coerceJSONNumbers(pkValues, def)
+
+	// Verify PKData matches declared PKHash.
+	var pkColDefs []repo.ColumnDef
+	for _, col := range def.Columns {
+		if col.PK {
+			pkColDefs = append(pkColDefs, col)
+		}
+	}
+	computedHash := repo.PKHash(pkColDefs, pkValues)
+	if computedHash != pkHash {
+		return fmt.Errorf("applyXDeleteLocally: PKData hash mismatch %s/%s: computed %s", table, pkHash, computedHash)
+	}
+
 	if err := repo.UpsertXRow(d, table, pkValues, mtime); err != nil {
 		return fmt.Errorf("applyXDeleteLocally: insert tombstone %s/%s: %w", table, pkHash, err)
 	}
