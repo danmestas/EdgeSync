@@ -81,6 +81,11 @@ type Config struct {
 	// Use for crosslinking received manifests or refreshing UI state.
 	PostSyncHook func(result *libsync.SyncResult)
 
+	// ContentCacheSize is the maximum bytes of expanded blob content to cache
+	// in memory (LRU). Eliminates redundant delta-chain walks during sync.
+	// 0 defaults to 32 MiB. Negative disables caching.
+	ContentCacheSize int64
+
 	// Autosync controls automatic sync around commit (default: AutosyncOff).
 	Autosync AutosyncMode
 
@@ -117,6 +122,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Clock == nil {
 		c.Clock = simio.RealClock{}
+	}
+	if c.ContentCacheSize == 0 {
+		c.ContentCacheSize = 32 << 20 // 32 MiB
 	}
 }
 
