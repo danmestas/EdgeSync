@@ -5,10 +5,12 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
+	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/db"
@@ -409,4 +411,284 @@ func TestInterop_PurgeThenSync_LeafClone(t *testing.T) {
 	}
 
 	verifyAllBlobs(t, cloneRepo.DB())
+}
+
+// TestInterop_FossilCreated_GoShunPurge creates a repo with the fossil CLI,
+// commits real files, then opens it with go-libfossil to shun and purge an
+// artifact. Validates with fossil rebuild afterward.
+// This tests the direction: fossil-created repo → go-libfossil shun+purge.
+func TestInterop_FossilCreated_GoShunPurge(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+	requireFossil(t)
+
+	dir := t.TempDir()
+
+	// 1. Create repo and commit files using the fossil CLI.
+	repoPath := fossilInit(t, dir, "fossil-origin.fossil")
+	workDir := fossilCommitFiles(t, repoPath, "", map[string]string{
+		"readme.txt":   "This is the readme for the project.",
+		"secret.txt":   "TOP SECRET: this artifact will be shunned.",
+		"keepme.txt":   "This file should survive the purge.",
+	}, "initial commit with 3 files")
+
+	// Make a second commit so we have multiple checkins.
+	fossilCommitFiles(t, repoPath, workDir, map[string]string{
+		"extra.txt": "Another file in a second commit.",
+	}, "second commit")
+
+	// Close the fossil checkout.
+	closeCmd := exec.Command("fossil", "close", "--force")
+	closeCmd.Dir = workDir
+	closeCmd.CombinedOutput()
+
+	// 2. Open with go-libfossil, find the "secret.txt" blob, shun it.
+	r, err := repo.Open(repoPath)
+	if err != nil {
+		t.Fatalf("repo.Open: %v", err)
+	}
+
+	// Find the uuid of the blob whose content is "TOP SECRET..."
+	var targetUUID string
+	var targetRID int64
+	rows, err := r.DB().Query("SELECT rid, uuid FROM blob WHERE size >= 0")
+	if err != nil {
+		t.Fatalf("query blobs: %v", err)
+	}
+	for rows.Next() {
+		var rid int64
+		var uuid string
+		rows.Scan(&rid, &uuid)
+		expanded, err := content.Expand(r.DB(), libfossil.FslID(rid))
+		if err != nil {
+			continue
+		}
+		if bytes.Contains(expanded, []byte("TOP SECRET")) {
+			targetUUID = uuid
+			targetRID = rid
+			break
+		}
+	}
+	rows.Close()
+
+	if targetUUID == "" {
+		t.Fatal("could not find secret.txt blob in fossil-created repo")
+	}
+	t.Logf("found secret blob: rid=%d uuid=%s", targetRID, targetUUID)
+
+	// Count blobs before purge.
+	var blobsBefore int
+	r.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&blobsBefore)
+	t.Logf("blobs before purge: %d", blobsBefore)
+
+	// 3. Shun and purge with go-libfossil.
+	if err := shun.Add(r.DB(), targetUUID, "shunning secret from fossil repo"); err != nil {
+		t.Fatalf("shun.Add: %v", err)
+	}
+
+	result, err := shun.Purge(r.DB())
+	if err != nil {
+		t.Fatalf("shun.Purge: %v", err)
+	}
+	t.Logf("purge result: blobs_deleted=%d deltas_expanded=%d", result.BlobsDeleted, result.DeltasExpanded)
+
+	if result.BlobsDeleted < 1 {
+		t.Errorf("expected at least 1 blob deleted, got %d", result.BlobsDeleted)
+	}
+
+	// Verify secret blob is gone.
+	if _, ok := blob.Exists(r.DB(), targetUUID); ok {
+		t.Error("secret blob still exists after go-libfossil purge")
+	}
+
+	// Verify shun entry exists.
+	shunned, _ := shun.IsShunned(r.DB(), targetUUID)
+	if !shunned {
+		t.Error("shun entry missing after purge")
+	}
+
+	// Verify remaining blobs are intact.
+	verifyAllBlobs(t, r.DB())
+
+	var blobsAfter int
+	r.DB().QueryRow("SELECT count(*) FROM blob WHERE size >= 0").Scan(&blobsAfter)
+	t.Logf("blobs after purge: %d (deleted %d)", blobsAfter, blobsBefore-blobsAfter)
+
+	r.Close()
+
+	// 4. fossil rebuild must pass on the purged repo.
+	verifyWithFossilRebuild(t, repoPath)
+	t.Log("fossil rebuild passed on fossil-created repo after go-libfossil purge")
+}
+
+// TestInterop_GoShun_FossilHonors creates a go-libfossil repo, seeds blobs,
+// shuns one via go-libfossil (but does NOT purge), then runs fossil rebuild
+// which should honor the shun table and remove the blob itself.
+// This tests: does go-libfossil's shun table entry work correctly with fossil?
+func TestInterop_GoShun_FossilHonors(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+	requireFossil(t)
+
+	dir := t.TempDir()
+	repoPath := dir + "/go-shun-fossil-honors.fossil"
+	r, err := repo.Create(repoPath, "testuser", simio.CryptoRand{})
+	if err != nil {
+		t.Fatalf("repo.Create: %v", err)
+	}
+
+	// Seed blobs.
+	rng := rand.New(rand.NewSource(123))
+	uuids, err := SeedLeaf(r, rng, 5, 2048)
+	if err != nil {
+		t.Fatalf("SeedLeaf: %v", err)
+	}
+	t.Logf("seeded %d blobs", len(uuids))
+
+	// Shun one via go-libfossil but do NOT call Purge.
+	target := uuids[2]
+	t.Logf("shunning uuid %s (go-libfossil, no purge)", target)
+	if err := shun.Add(r.DB(), target, "go-libfossil shun for fossil"); err != nil {
+		t.Fatalf("shun.Add: %v", err)
+	}
+
+	// Verify blob is still in blob table (not yet purged).
+	if _, ok := blob.Exists(r.DB(), target); !ok {
+		t.Fatal("blob should still exist before fossil rebuild")
+	}
+
+	r.Close()
+
+	// fossil rebuild should honor the shun table and remove the shunned blob.
+	verifyWithFossilRebuild(t, repoPath)
+
+	// Reopen and verify fossil removed the shunned blob.
+	d, err := db.Open(repoPath)
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	defer d.Close()
+
+	if _, ok := blob.Exists(d, target); ok {
+		t.Error("fossil rebuild did NOT remove the go-libfossil-shunned blob")
+	} else {
+		t.Log("fossil rebuild correctly honored go-libfossil shun entry and removed the blob")
+	}
+
+	// Remaining blobs must be intact.
+	for i, uuid := range uuids {
+		if uuid == target {
+			continue
+		}
+		if _, ok := blob.Exists(d, uuid); !ok {
+			t.Errorf("non-shunned blob %d (%s) missing after fossil rebuild", i, uuid)
+		}
+	}
+
+	verifyAllBlobs(t, d)
+}
+
+// TestInterop_FossilShun_GoPurge creates a repo with fossil, adds a shun
+// entry via direct SQL (simulating fossil's web UI /shun), then uses
+// go-libfossil's Purge to remove the blob. Validates with fossil rebuild.
+// This tests the direction: fossil shuns → go-libfossil purges.
+func TestInterop_FossilShun_GoPurge(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+	requireFossil(t)
+
+	dir := t.TempDir()
+
+	// 1. Create repo with fossil, commit files.
+	repoPath := fossilInit(t, dir, "fossil-shun-go-purge.fossil")
+	workDir := fossilCommitFiles(t, repoPath, "", map[string]string{
+		"public.txt":  "This is public and should remain.",
+		"private.txt": "This will be shunned by fossil's shun table.",
+	}, "commit with public and private files")
+
+	closeCmd := exec.Command("fossil", "close", "--force")
+	closeCmd.Dir = workDir
+	closeCmd.CombinedOutput()
+
+	// 2. Open with go-libfossil to find the private.txt blob UUID.
+	r, err := repo.Open(repoPath)
+	if err != nil {
+		t.Fatalf("repo.Open: %v", err)
+	}
+
+	var targetUUID string
+	rows, err := r.DB().Query("SELECT rid, uuid FROM blob WHERE size >= 0")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	for rows.Next() {
+		var rid int64
+		var uuid string
+		rows.Scan(&rid, &uuid)
+		expanded, err := content.Expand(r.DB(), libfossil.FslID(rid))
+		if err != nil {
+			continue
+		}
+		if bytes.Contains(expanded, []byte("shunned by fossil")) {
+			targetUUID = uuid
+			break
+		}
+	}
+	rows.Close()
+
+	if targetUUID == "" {
+		t.Fatal("could not find private.txt blob")
+	}
+	t.Logf("target blob uuid: %s", targetUUID)
+	r.Close()
+
+	// 3. Simulate fossil's shun UI: insert into shun table via fossil SQL.
+	sqlStmt := fmt.Sprintf("INSERT INTO shun(uuid, mtime, scom) VALUES('%s', strftime('%%s','now'), 'shunned via fossil sql');", targetUUID)
+	cmd := exec.Command("fossil", "sql", "-R", repoPath)
+	cmd.Stdin = strings.NewReader(sqlStmt)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fossil sql: %v\n%s", err, out)
+	}
+
+	// 4. Open with go-libfossil and verify the shun entry fossil created.
+	r2, err := repo.Open(repoPath)
+	if err != nil {
+		t.Fatalf("repo.Open: %v", err)
+	}
+
+	shunned, err := shun.IsShunned(r2.DB(), targetUUID)
+	if err != nil {
+		t.Fatalf("IsShunned: %v", err)
+	}
+	if !shunned {
+		t.Fatal("go-libfossil cannot see fossil's shun entry")
+	}
+	t.Log("go-libfossil correctly reads fossil's shun table entry")
+
+	// 5. Purge with go-libfossil.
+	result, err := shun.Purge(r2.DB())
+	if err != nil {
+		t.Fatalf("shun.Purge: %v", err)
+	}
+	t.Logf("purge: blobs_deleted=%d deltas_expanded=%d", result.BlobsDeleted, result.DeltasExpanded)
+
+	if result.BlobsDeleted < 1 {
+		t.Errorf("expected at least 1 blob deleted, got %d", result.BlobsDeleted)
+	}
+
+	// Verify blob is gone.
+	if _, ok := blob.Exists(r2.DB(), targetUUID); ok {
+		t.Error("blob still exists after go-libfossil purge of fossil-shunned artifact")
+	}
+
+	verifyAllBlobs(t, r2.DB())
+	r2.Close()
+
+	// 6. fossil rebuild must accept the result.
+	verifyWithFossilRebuild(t, repoPath)
+	t.Log("fossil rebuild passed after go-libfossil purged a fossil-shunned artifact")
 }
