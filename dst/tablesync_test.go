@@ -1055,6 +1055,221 @@ func TestTS_MixedWorkload(t *testing.T) {
 	logRowCounts(t, sim, table, def)
 }
 
+// =============================================================================
+// Adversarial deletion tests (buggify=true) — seeds 307-309
+// =============================================================================
+
+// TestTS_Adversarial_DeletionConvergence: 5 rows seeded, 3 deleted on master,
+// must converge under BUGGIFY fault injection (10% drop rate).
+func TestTS_Adversarial_DeletionConvergence(t *testing.T) {
+	seed := seedFor(307)
+	sim, masterRepo, _ := newTableSyncSim(t, seed, 3, true)
+	sim.Network().SetDropRate(0.10)
+
+	def := deviceTableDef()
+	registerTableAll(t, sim, masterRepo, "devices", def, 1000)
+
+	// Seed 5 rows on master.
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("d%d", i)
+		upsertRow(t, masterRepo, "devices", map[string]any{
+			"device_id": id,
+			"hostname":  fmt.Sprintf("host-%d", i),
+			"status":    "online",
+		}, 1000)
+	}
+
+	// Sync to distribute rows (extra steps for buggify).
+	if err := sim.Run(stepsFor(300)); err != nil {
+		t.Fatalf("Run (distribute): %v", err)
+	}
+
+	// Delete 3 of the 5 rows on master.
+	pkColDefs := []repo.ColumnDef{{Name: "device_id", Type: "text", PK: true}}
+	for i := 0; i < 3; i++ {
+		id := fmt.Sprintf("d%d", i)
+		pkHash := repo.PKHash(pkColDefs, map[string]any{"device_id": id})
+		if _, err := repo.DeleteXRowByPKHash(masterRepo.DB(), "devices", def, pkHash, 2000); err != nil {
+			t.Fatalf("DeleteXRowByPKHash d%d: %v", i, err)
+		}
+	}
+
+	// Many rounds to converge under faults.
+	if err := sim.Run(stepsFor(500)); err != nil {
+		t.Fatalf("Run (converge): %v", err)
+	}
+
+	t.Logf("[adversarial-deletion] seed=%d steps=%d syncs=%d errors=%d",
+		seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+
+	if err := sim.CheckSafety(); err != nil {
+		t.Fatalf("Safety: %v", err)
+	}
+
+	// All leaves should have 3 tombstones and 2 live rows.
+	for _, leafID := range sim.LeafIDs() {
+		leafRepo := sim.Leaf(leafID).Repo()
+		rows, _, err := repo.ListXRows(leafRepo.DB(), "devices", def)
+		if err != nil {
+			t.Fatalf("ListXRows %s: %v", leafID, err)
+		}
+		tombstones := 0
+		live := 0
+		for _, row := range rows {
+			if repo.IsTombstone(def, row) {
+				tombstones++
+			} else {
+				live++
+			}
+		}
+		if tombstones != 3 {
+			t.Errorf("%s: tombstones=%d, want 3", leafID, tombstones)
+		}
+		if live != 2 {
+			t.Errorf("%s: live=%d, want 2", leafID, live)
+		}
+	}
+
+	// Catalog hashes should match (tombstones excluded from catalog).
+	masterHash, err := repo.CatalogHash(masterRepo.DB(), "devices", def)
+	if err != nil {
+		t.Fatalf("CatalogHash master: %v", err)
+	}
+	for _, leafID := range sim.LeafIDs() {
+		leafHash, err := repo.CatalogHash(sim.Leaf(leafID).Repo().DB(), "devices", def)
+		if err != nil {
+			t.Fatalf("CatalogHash %s: %v", leafID, err)
+		}
+		if leafHash != masterHash {
+			t.Errorf("%s: catalog hash %q != master %q", leafID, leafHash, masterHash)
+		}
+	}
+}
+
+// TestTS_Adversarial_DeleteUpdateRace: concurrent delete (mtime=2000) vs update
+// (mtime=3000) on the same PK under BUGGIFY. mtime=3000 update must win.
+func TestTS_Adversarial_DeleteUpdateRace(t *testing.T) {
+	seed := seedFor(308)
+	sim, masterRepo, _ := newTableSyncSim(t, seed, 2, true)
+	sim.Network().SetDropRate(0.10)
+
+	def := deviceTableDef()
+	registerTableAll(t, sim, masterRepo, "devices", def, 1000)
+
+	// Seed row and sync so both leaves have it.
+	upsertRow(t, masterRepo, "devices", map[string]any{
+		"device_id": "contested",
+		"hostname":  "original",
+		"status":    "online",
+	}, 1000)
+	if err := sim.Run(stepsFor(300)); err != nil {
+		t.Fatalf("Run (seed): %v", err)
+	}
+
+	// Concurrent: master deletes at mtime=2000, leaf-0 updates at mtime=3000.
+	pkColDefs := []repo.ColumnDef{{Name: "device_id", Type: "text", PK: true}}
+	pkHash := repo.PKHash(pkColDefs, map[string]any{"device_id": "contested"})
+	if _, err := repo.DeleteXRowByPKHash(masterRepo.DB(), "devices", def, pkHash, 2000); err != nil {
+		t.Fatalf("DeleteXRowByPKHash: %v", err)
+	}
+	leaf0 := sim.Leaf(sim.LeafIDs()[0]).Repo()
+	upsertRow(t, leaf0, "devices", map[string]any{
+		"device_id": "contested",
+		"hostname":  "updated",
+		"status":    "active",
+	}, 3000)
+
+	// Many rounds — mtime=3000 update should win (resurrection beats older delete).
+	if err := sim.Run(stepsFor(500)); err != nil {
+		t.Fatalf("Run (race): %v", err)
+	}
+
+	t.Logf("[adversarial-race] seed=%d steps=%d syncs=%d errors=%d",
+		seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+
+	if err := sim.CheckSafety(); err != nil {
+		t.Fatalf("Safety: %v", err)
+	}
+
+	// All leaves should have the live row at mtime=3000.
+	for _, leafID := range sim.LeafIDs() {
+		row, mtime, err := repo.LookupXRow(sim.Leaf(leafID).Repo().DB(), "devices", def, pkHash)
+		if err != nil {
+			t.Fatalf("LookupXRow %s: %v", leafID, err)
+		}
+		if row == nil {
+			t.Errorf("%s: row missing", leafID)
+			continue
+		}
+		if repo.IsTombstone(def, row) {
+			t.Errorf("%s: should be live (mtime=3000 wins over delete at mtime=2000)", leafID)
+		}
+		if mtime != 3000 {
+			t.Errorf("%s: mtime=%d, want 3000", leafID, mtime)
+		}
+	}
+	// Master too.
+	row, mtime, err := repo.LookupXRow(masterRepo.DB(), "devices", def, pkHash)
+	if err != nil {
+		t.Fatalf("LookupXRow master: %v", err)
+	}
+	if row == nil || repo.IsTombstone(def, row) || mtime != 3000 {
+		t.Errorf("master: row=%v tombstone=%v mtime=%d, want live row at mtime=3000",
+			row != nil, row != nil && repo.IsTombstone(def, row), mtime)
+	}
+}
+
+// TestTS_Adversarial_DeleteUnseenRow: row is inserted then immediately deleted on
+// master before any sync. Leaves never see the live row; they must receive the
+// tombstone via the PKData path and converge under BUGGIFY.
+func TestTS_Adversarial_DeleteUnseenRow(t *testing.T) {
+	seed := seedFor(309)
+	sim, masterRepo, _ := newTableSyncSim(t, seed, 2, true)
+	sim.Network().SetDropRate(0.10)
+
+	def := deviceTableDef()
+	registerTableAll(t, sim, masterRepo, "devices", def, 1000)
+
+	// Seed row and immediately delete on master — leaves never see the live row.
+	upsertRow(t, masterRepo, "devices", map[string]any{
+		"device_id": "ephemeral",
+		"hostname":  "ghost",
+		"status":    "gone",
+	}, 1000)
+	pkColDefs := []repo.ColumnDef{{Name: "device_id", Type: "text", PK: true}}
+	pkHash := repo.PKHash(pkColDefs, map[string]any{"device_id": "ephemeral"})
+	if _, err := repo.DeleteXRowByPKHash(masterRepo.DB(), "devices", def, pkHash, 2000); err != nil {
+		t.Fatalf("DeleteXRowByPKHash: %v", err)
+	}
+
+	// Sync — leaves should receive tombstone via PKData (never had the live row).
+	if err := sim.Run(stepsFor(400)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	t.Logf("[adversarial-unseen] seed=%d steps=%d syncs=%d errors=%d",
+		seed, sim.Steps, sim.TotalSyncs, sim.TotalErrors)
+
+	if err := sim.CheckSafety(); err != nil {
+		t.Fatalf("Safety: %v", err)
+	}
+
+	// All leaves should have a tombstone for "ephemeral".
+	for _, leafID := range sim.LeafIDs() {
+		row, _, err := repo.LookupXRow(sim.Leaf(leafID).Repo().DB(), "devices", def, pkHash)
+		if err != nil {
+			t.Fatalf("LookupXRow %s: %v", leafID, err)
+		}
+		if row == nil {
+			t.Errorf("%s: should have tombstone for unseen row", leafID)
+			continue
+		}
+		if !repo.IsTombstone(def, row) {
+			t.Errorf("%s: should be tombstone, got live row", leafID)
+		}
+	}
+}
+
 // TestTS_StressTest1000Rows: 1000 rows on master, 2 peers, verify no crash.
 // The goal is survival under load — not convergence.
 func TestTS_StressTest1000Rows(t *testing.T) {
