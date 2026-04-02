@@ -220,6 +220,87 @@ func TestCache_LRUOrder(t *testing.T) {
 	}
 }
 
+func TestCache_BlobLargerThanMax(t *testing.T) {
+	d := setupTestDB(t)
+
+	// 500-byte blob into a 100-byte cache — blob exceeds maxSize
+	big := bytes.Repeat([]byte("B"), 500)
+	rid, _, _ := blob.Store(d, big)
+
+	c := NewCache(100)
+
+	// The data should still be returned correctly even though it can't stay cached.
+	got, err := c.Expand(d, rid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, big) {
+		t.Fatal("data mismatch for oversized blob")
+	}
+
+	// The blob is inserted then immediately evicted (size 500 > max 100).
+	stats := c.Stats()
+	if stats.Entries != 0 {
+		t.Fatalf("expected 0 entries (oversized blob evicted), got %d", stats.Entries)
+	}
+}
+
+func TestCache_ExpandError(t *testing.T) {
+	d := setupTestDB(t)
+
+	c := NewCache(1 << 20)
+
+	// rid 99999 doesn't exist — Expand should fail
+	_, err := c.Expand(d, 99999)
+	if err == nil {
+		t.Fatal("expected error for nonexistent rid")
+	}
+
+	// Cache should remain empty — error results must not be cached
+	stats := c.Stats()
+	if stats.Entries != 0 {
+		t.Fatalf("expected 0 entries after failed expand, got %d", stats.Entries)
+	}
+}
+
+func TestCache_DeltaChainViaCacheHit(t *testing.T) {
+	d := setupTestDB(t)
+
+	// Build a 3-deep delta chain and verify cached expansion is correct
+	v1 := []byte("version one with enough padding to create proper deltas here!!")
+	v2 := []byte("version TWO with enough padding to create proper deltas here!!")
+	v3 := []byte("version THREE with enough padding to create proper deltas here!!")
+
+	rid1, _, _ := blob.Store(d, v1)
+	rid2, _, _ := blob.StoreDelta(d, v2, rid1)
+	rid3, _, _ := blob.StoreDelta(d, v3, rid2)
+
+	c := NewCache(1 << 20)
+
+	// Expand the leaf of the chain (miss)
+	got, err := c.Expand(d, rid3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, v3) {
+		t.Fatalf("got %q, want %q", got, v3)
+	}
+
+	// Second expand should hit cache and return identical data
+	got2, err := c.Expand(d, rid3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got2, v3) {
+		t.Fatalf("cached result differs: got %q, want %q", got2, v3)
+	}
+
+	stats := c.Stats()
+	if stats.Hits != 1 || stats.Misses != 1 {
+		t.Fatalf("expected 1 hit / 1 miss, got %d / %d", stats.Hits, stats.Misses)
+	}
+}
+
 func BenchmarkCache_Expand(b *testing.B) {
 	path := filepath.Join(b.TempDir(), "bench.fossil")
 	d, _ := db.Open(path)
