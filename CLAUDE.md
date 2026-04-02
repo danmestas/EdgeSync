@@ -32,12 +32,14 @@ go build -buildvcs=false ./cmd/edgesync/   # Dual VCS needs -buildvcs=false
 
 ## Go Modules (go.work)
 
-Five modules in a workspace:
+Four modules in a workspace:
 - `.` (root) — hosts `cmd/edgesync/`, `sim/`, soak runner
-- `go-libfossil/` — core library, all Fossil internals
 - `leaf/` — leaf agent module
 - `bridge/` — bridge module
 - `dst/` — deterministic simulation tests
+- External dependency: `github.com/danmestas/go-libfossil` v0.x (standalone repo)
+
+For local go-libfossil development, copy `go.work.example` to `go.work` and clone go-libfossil at `../go-libfossil`.
 
 ## Project Structure
 
@@ -47,7 +49,7 @@ Five modules in a workspace:
 - `bridge/cmd/bridge/` — Standalone bridge daemon
 - `sim/cmd/soak/` — Continuous soak test runner
 
-### Core Library: go-libfossil/
+### Core Library: go-libfossil (external: github.com/danmestas/go-libfossil)
 
 | Package | Purpose | Key Types |
 |---------|---------|-----------|
@@ -55,7 +57,7 @@ Five modules in a workspace:
 | `bisect/` | Binary search for regressions | `Session`, `Step()` |
 | `blob/` | Blob compression (4-byte BE size prefix + zlib) | `Compress()`, `Decompress()`, `Load()` |
 | `content/` | Artifact storage, delta chain expansion | `Store()`, `Expand()` |
-| `db/` | SQLite adapter (3 drivers via build tags) | `Open()`, `OpenWith()`, `DB` |
+| `db/` | SQLite adapter (2 drivers: modernc, ncruces) | `Open()`, `OpenWith()`, `DB` |
 | `deck/` | Manifest/control-artifact parsing | `Parse()`, `Deck` |
 | `delta/` | Fossil delta codec (port of delta.c) | `Create()`, `Apply()` |
 | `hash/` | SHA1/SHA3-256 content addressing | `SHA1()`, `SHA3()` |
@@ -143,14 +145,14 @@ cd ~/EdgeSync && git pull && cd deploy && sudo docker compose up -d --build
 | Tailscale HTTP | `http://100.78.32.45:9000` | Tailnet only |
 | Tailscale NATS | `nats://100.78.32.45:4222` | Tailnet only |
 
-- `deploy/Dockerfile` — multi-stage build, uses `GOWORK=off` (only copies go-libfossil/ + leaf/)
+- `deploy/Dockerfile` — multi-stage build, uses `GOWORK=off` (copies leaf/, depends on published go-libfossil)
 - `deploy/docker-compose.yml` — NATS on Tailscale IP, leaf on port 9000 (8080/8090 occupied by Coolify/Caddy)
 - Cloudflare Tunnel config: `~/.cloudflared/config.yml` on VPS, service `cloudflared-fossil`
 - Repo files: `deploy/data/*.fossil` (host volume mount)
 
 ## Key Conventions
 
-- **SQLite drivers**: `go build` (modernc), `-tags ncruces`, `-tags mattn`. Or `EDGESYNC_SQLITE_DRIVER` env var.
+- **SQLite drivers**: `go build` (modernc), `-tags ncruces`. Or `EDGESYNC_SQLITE_DRIVER` env var.
 - **Fossil blob format**: `[4-byte BE uncompressed size][zlib data]`. `Compress()` and `Decompress()` handle this.
 - **xfer wire format**: Raw zlib (no prefix). `xfer.Decode` auto-detects: raw zlib → prefix+zlib → uncompressed.
 - **SHA3 UUIDs**: 64-char = SHA3-256 (Fossil 2.0+), 40-char = SHA1 (legacy)
