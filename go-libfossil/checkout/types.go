@@ -152,7 +152,8 @@ type CommitOpts struct {
 	Branch   string    // empty → current branch
 	Tags     []string  // additional T-cards
 	Delta    bool
-	Time     time.Time // zero → env.Clock.Now()
+	Time           time.Time    // zero → env.Clock.Now()
+	PreCommitCheck func() error // nil = no check; non-nil error aborts commit
 }
 
 // RevertOpts configures reverting file changes.

@@ -237,6 +237,15 @@ func (h *handler) handleControlCard(card xfer.Card) {
 		if c.Name == "req-clusters" {
 			h.reqClusters = true
 		}
+		if c.Name == "ci-lock" && len(c.Values) >= 2 {
+			fail := processCkinLock(h.repo.DB(), c.Values[0], c.Values[1], h.user, DefaultCkinLockTimeout)
+			if fail != nil {
+				h.resp = append(h.resp, &xfer.PragmaCard{
+					Name:   "ci-lock-fail",
+					Values: []string{fail.HeldBy, fmt.Sprintf("%d", fail.Since.Unix())},
+				})
+			}
+		}
 		if c.Name == "send-private" {
 			if auth.CanSyncPrivate(h.caps) {
 				h.syncPrivate = true

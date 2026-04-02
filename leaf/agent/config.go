@@ -80,6 +80,15 @@ type Config struct {
 	// PostSyncHook is called after each successful sync with the result.
 	// Use for crosslinking received manifests or refreshing UI state.
 	PostSyncHook func(result *libsync.SyncResult)
+
+	// Autosync controls automatic sync around commit (default: AutosyncOff).
+	Autosync AutosyncMode
+
+	// AllowFork bypasses fork and lock checks during commit.
+	AllowFork bool
+
+	// OverrideLock ignores lock conflicts during commit (implies AllowFork).
+	OverrideLock bool
 }
 
 // applyDefaults fills in zero-valued fields with sensible defaults.
