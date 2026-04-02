@@ -330,13 +330,21 @@ func formatUnified(hunks []hunk, srcName, dstName string) string {
 }
 
 // Unified returns a unified diff string between a and b.
-// Returns "" if a and b are identical or either is binary.
+// Returns "" if a and b are identical. For binary inputs, returns
+// a message matching Fossil's behavior.
 func Unified(a, b []byte, opts Options) string {
 	if opts.ContextLines < 0 {
 		panic("diff.Unified: ContextLines must not be negative")
 	}
 	if isBinary(a) || isBinary(b) {
-		return ""
+		srcName, dstName := opts.SrcName, opts.DstName
+		if srcName == "" {
+			srcName = "a"
+		}
+		if dstName == "" {
+			dstName = "b"
+		}
+		return fmt.Sprintf("--- %s\n+++ %s\ncannot compute difference between binary files\n", srcName, dstName)
 	}
 	srcLines := splitLines(a)
 	dstLines := splitLines(b)

@@ -230,3 +230,30 @@ func TestDiffMatchesFossil_LargeFile(t *testing.T) {
 		t.Fatalf("deletion count: fossil=%d, go=%d", fossilMinus, goMinus)
 	}
 }
+
+func TestDiffMatchesFossil_Binary(t *testing.T) {
+	fossilPath := testutil.FossilBinary()
+	if fossilPath == "" {
+		t.Skip("fossil binary not found")
+	}
+
+	a := "hello\x00world"
+	b := "hello\x00changed"
+
+	dir := t.TempDir()
+	fileA := writeTempFile(t, dir, "a.bin", a)
+	fileB := writeTempFile(t, dir, "b.bin", b)
+
+	fossilOut := fossilDiff(t, fossilPath, fileA, fileB)
+	goOut := diff.Unified([]byte(a), []byte(b), diff.Options{SrcName: fileA, DstName: fileB})
+
+	fossilHasBinaryMsg := strings.Contains(fossilOut, "cannot compute difference between binary files")
+	goHasBinaryMsg := strings.Contains(goOut, "cannot compute difference between binary files")
+
+	if !fossilHasBinaryMsg {
+		t.Fatalf("fossil should detect binary:\n%s", fossilOut)
+	}
+	if !goHasBinaryMsg {
+		t.Fatalf("go should detect binary:\n%s", goOut)
+	}
+}

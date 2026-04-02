@@ -223,9 +223,12 @@ func TestUnifiedZeroContext(t *testing.T) {
 func TestUnifiedBinary(t *testing.T) {
 	a := []byte("hello\x00world")
 	b := []byte("different")
-	got := Unified(a, b, Options{})
-	if got != "" {
-		t.Fatalf("binary input should return empty string, got:\n%s", got)
+	got := Unified(a, b, Options{SrcName: "bin.dat", DstName: "bin.dat"})
+	if !strings.Contains(got, "cannot compute difference between binary files") {
+		t.Fatalf("binary input should report binary message, got:\n%s", got)
+	}
+	if !strings.Contains(got, "--- bin.dat") {
+		t.Fatalf("binary diff should include headers, got:\n%s", got)
 	}
 }
 
