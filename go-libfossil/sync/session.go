@@ -29,15 +29,17 @@ type BuggifyChecker interface {
 
 // SyncOpts configures a sync session.
 type SyncOpts struct {
-	Push, Pull              bool
-	ProjectCode, ServerCode string
-	User, Password          string
-	MaxSend                 int
-	UV                      bool              // enable unversioned file sync
-	Private                 bool              // enable private artifact sync
-	Env                     *simio.Env        // nil defaults to RealEnv
-	Buggify                 BuggifyChecker    // nil in production
-	Observer                Observer          // nil defaults to no-op
+	Push, Pull  bool   // enable push/pull directions (at least one must be true)
+	ProjectCode string // repo's project-code — sent to identify the repository
+	ServerCode  string // server-code from a previous session (cookie-like, speeds up sync)
+	User        string // login user — empty means unauthenticated "nobody" sync
+	Password    string // login password
+	MaxSend     int    // byte budget per round for file payloads (0 defaults to DefaultMaxSend)
+	UV          bool   // enable unversioned file sync (wiki, forum, attachments)
+	Private     bool   // enable private artifact sync
+	Env         *simio.Env     // nil defaults to RealEnv
+	Buggify     BuggifyChecker // nil in production — used by DST for fault injection
+	Observer    Observer       // nil defaults to no-op
 }
 
 // SyncResult reports what happened during a sync.
