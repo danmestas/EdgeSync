@@ -41,7 +41,7 @@ func splitLines(data []byte) []string {
 
 // isBinary returns true if data contains a null byte.
 func isBinary(data []byte) bool {
-	return bytes.ContainsRune(data, 0)
+	return bytes.IndexByte(data, 0) >= 0
 }
 
 type opKind int
@@ -176,6 +176,21 @@ func backtrack(trace [][]int, src, dst []string) []editOp {
 	for i, j := 0, len(ops)-1; i < j; i, j = i+1, j-1 {
 		ops[i], ops[j] = ops[j], ops[i]
 	}
+
+	// Postcondition: edit script applied to src must produce dst.
+	var ri int
+	for _, op := range ops {
+		if op.kind == opEqual || op.kind == opInsert {
+			if ri >= len(dst) || op.text != dst[ri] {
+				panic("diff.backtrack: postcondition violated: edit script does not reconstruct dst")
+			}
+			ri++
+		}
+	}
+	if ri != len(dst) {
+		panic("diff.backtrack: postcondition violated: edit script length mismatch")
+	}
+
 	return ops
 }
 
@@ -186,15 +201,10 @@ type hunk struct {
 	ops                []editOp
 }
 
-// buildHunks groups edit ops into hunks with context lines.
-// Adjacent hunks within 2*contextLines of each other are merged.
-func buildHunks(ops []editOp, contextLines int) []hunk {
-	if len(ops) == 0 {
-		return nil
-	}
+type changeRange struct{ start, end int }
 
-	// Find change positions.
-	type changeRange struct{ start, end int }
+// findChanges returns contiguous ranges of non-equal ops.
+func findChanges(ops []editOp) []changeRange {
 	var changes []changeRange
 	for i, op := range ops {
 		if op.kind != opEqual {
@@ -205,22 +215,35 @@ func buildHunks(ops []editOp, contextLines int) []hunk {
 			}
 		}
 	}
+	return changes
+}
 
+// mergeAdjacentChanges combines change ranges separated by fewer than
+// 2*contextLines equal ops into single ranges.
+func mergeAdjacentChanges(changes []changeRange, contextLines int) []changeRange {
 	if len(changes) == 0 {
 		return nil
 	}
-
-	// Merge adjacent changes that are within 2*contextLines of each other.
 	merged := []changeRange{changes[0]}
 	for _, c := range changes[1:] {
 		prev := &merged[len(merged)-1]
-		gap := c.start - prev.end
-		if gap <= 2*contextLines {
+		if c.start-prev.end <= 2*contextLines {
 			prev.end = c.end
 		} else {
 			merged = append(merged, c)
 		}
 	}
+	return merged
+}
+
+// buildHunks groups edit ops into hunks with context lines.
+// Adjacent hunks within 2*contextLines of each other are merged.
+func buildHunks(ops []editOp, contextLines int) []hunk {
+	changes := findChanges(ops)
+	if len(changes) == 0 {
+		return nil
+	}
+	merged := mergeAdjacentChanges(changes, contextLines)
 
 	// Track src/dst line positions through ops.
 	srcPos := make([]int, len(ops))
@@ -240,9 +263,7 @@ func buildHunks(ops []editOp, contextLines int) []hunk {
 		}
 	}
 
-	// Build hunks with context.
 	var hunks []hunk
-
 	for _, cr := range merged {
 		start := cr.start - contextLines
 		if start < 0 {
@@ -258,8 +279,6 @@ func buildHunks(ops []editOp, contextLines int) []hunk {
 			dstStart: dstPos[start] + 1,
 			ops:      ops[start:end],
 		}
-
-		// Count src and dst lines in this hunk.
 		for _, op := range h.ops {
 			switch op.kind {
 			case opEqual:
@@ -271,10 +290,8 @@ func buildHunks(ops []editOp, contextLines int) []hunk {
 				h.dstCount++
 			}
 		}
-
 		hunks = append(hunks, h)
 	}
-
 	return hunks
 }
 
@@ -315,6 +332,9 @@ func formatUnified(hunks []hunk, srcName, dstName string) string {
 // Unified returns a unified diff string between a and b.
 // Returns "" if a and b are identical or either is binary.
 func Unified(a, b []byte, opts Options) string {
+	if opts.ContextLines < 0 {
+		panic("diff.Unified: ContextLines must not be negative")
+	}
 	if isBinary(a) || isBinary(b) {
 		return ""
 	}
