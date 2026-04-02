@@ -34,17 +34,62 @@ func TestValidateTableName(t *testing.T) {
 }
 
 func TestPKHash(t *testing.T) {
-	h := PKHash(map[string]any{"peer_id": "leaf-01"})
+	pkCols := []ColumnDef{{Name: "peer_id", Type: "text", PK: true}}
+	h := PKHash(pkCols, map[string]any{"peer_id": "leaf-01"})
 	if h == "" {
 		t.Fatal("PKHash returned empty")
 	}
-	h2 := PKHash(map[string]any{"peer_id": "leaf-01"})
+	h2 := PKHash(pkCols, map[string]any{"peer_id": "leaf-01"})
 	if h != h2 {
 		t.Fatalf("PKHash not deterministic: %q vs %q", h, h2)
 	}
-	h3 := PKHash(map[string]any{"peer_id": "leaf-02"})
+	h3 := PKHash(pkCols, map[string]any{"peer_id": "leaf-02"})
 	if h == h3 {
 		t.Fatal("different inputs produced same hash")
+	}
+}
+
+func TestPKHashTypeAware(t *testing.T) {
+	pkCols := []ColumnDef{{Name: "id", Type: "integer", PK: true}}
+
+	// int64 and float64 of same value must produce identical hashes.
+	h1 := PKHash(pkCols, map[string]any{"id": int64(42)})
+	h2 := PKHash(pkCols, map[string]any{"id": float64(42)})
+	if h1 != h2 {
+		t.Fatalf("int64 vs float64: %q != %q", h1, h2)
+	}
+
+	// Large integer (>2^53): float64 loses precision before PKHash even sees it.
+	// float64(1<<53+1) == float64(1<<53) due to IEEE 754 rounding, so the
+	// hashes will differ — that is correct and expected. We verify that the
+	// int64 path at least produces a stable, non-empty hash.
+	big := int64(1<<53 + 1) // 9007199254740993
+	h3 := PKHash(pkCols, map[string]any{"id": big})
+	if h3 == "" {
+		t.Fatal("large int64 PK hash is empty")
+	}
+	// Verify the int64 hash is deterministic.
+	h3b := PKHash(pkCols, map[string]any{"id": big})
+	if h3 != h3b {
+		t.Fatalf("large int64 PK hash not deterministic: %q vs %q", h3, h3b)
+	}
+
+	// Composite PK with mixed types.
+	mixedCols := []ColumnDef{
+		{Name: "org", Type: "text", PK: true},
+		{Name: "seq", Type: "integer", PK: true},
+	}
+	h5 := PKHash(mixedCols, map[string]any{"org": "acme", "seq": int64(7)})
+	h6 := PKHash(mixedCols, map[string]any{"org": "acme", "seq": float64(7)})
+	if h5 != h6 {
+		t.Fatalf("composite mixed types: %q != %q", h5, h6)
+	}
+
+	// Text PK must still work.
+	textCols := []ColumnDef{{Name: "name", Type: "text", PK: true}}
+	h7 := PKHash(textCols, map[string]any{"name": "hello"})
+	if h7 == "" {
+		t.Fatal("text PK hash is empty")
 	}
 }
 
@@ -97,7 +142,8 @@ func TestUpsertAndLookupXRow(t *testing.T) {
 		t.Fatalf("UpsertXRow: %v", err)
 	}
 
-	pkHash := PKHash(map[string]any{"peer_id": "leaf-01"})
+	pkCols := []ColumnDef{{Name: "peer_id", Type: "text", PK: true}}
+	pkHash := PKHash(pkCols, map[string]any{"peer_id": "leaf-01"})
 	got, mtime, err := LookupXRow(r.DB(), "peer_registry", def, pkHash)
 	if err != nil {
 		t.Fatalf("LookupXRow: %v", err)

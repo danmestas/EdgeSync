@@ -2,10 +2,12 @@ package repo
 
 import (
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/dmestas/edgesync/go-libfossil/db"
@@ -225,18 +227,68 @@ func ListSyncedTables(d *db.DB) ([]TableInfo, error) {
 	return tables, rows.Err()
 }
 
+// normalizeValue converts a value to its canonical string representation
+// based on the declared column type. This ensures PK hashes are identical
+// regardless of how the value arrived (JSON unmarshal, SQLite scan, etc.).
+func normalizeValue(colType string, v any) string {
+	switch colType {
+	case "integer":
+		switch n := v.(type) {
+		case int64:
+			return strconv.FormatInt(n, 10)
+		case float64:
+			return strconv.FormatInt(int64(n), 10)
+		case int:
+			return strconv.FormatInt(int64(n), 10)
+		default:
+			return fmt.Sprintf("%v", v)
+		}
+	case "real":
+		switch n := v.(type) {
+		case float64:
+			return strconv.FormatFloat(n, 'f', -1, 64)
+		case int64:
+			return strconv.FormatFloat(float64(n), 'f', -1, 64)
+		default:
+			return fmt.Sprintf("%v", v)
+		}
+	case "text":
+		s, _ := v.(string)
+		return s
+	case "blob":
+		b, _ := v.([]byte)
+		return hex.EncodeToString(b)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
 // PKHash computes a deterministic SHA1 hash of the primary key values.
-// The map keys are sorted to ensure determinism.
-func PKHash(pkValues map[string]any) string {
+// Values are normalized to canonical strings based on declared column types
+// to avoid JSON round-trip coercion issues (e.g., int64 → float64).
+func PKHash(pkCols []ColumnDef, pkValues map[string]any) string {
+	if pkCols == nil {
+		panic("repo.PKHash: pkCols must not be nil")
+	}
 	if pkValues == nil {
 		panic("repo.PKHash: pkValues must not be nil")
 	}
-	// json.Marshal sorts keys, ensuring determinism.
-	data, err := json.Marshal(pkValues)
-	if err != nil {
-		panic(fmt.Sprintf("repo.PKHash: json.Marshal: %v", err))
+
+	// Sort PK columns lexicographically for determinism.
+	sorted := make([]ColumnDef, len(pkCols))
+	copy(sorted, pkCols)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Name < sorted[j].Name
+	})
+
+	// Build canonical representation: name=normalizedValue joined by \x00.
+	var parts []string
+	for _, col := range sorted {
+		v := pkValues[col.Name]
+		parts = append(parts, col.Name+"="+normalizeValue(col.Type, v))
 	}
-	return hash.SHA1(data)
+	canonical := strings.Join(parts, "\x00")
+	return hash.SHA1([]byte(canonical))
 }
 
 // UpsertXRow inserts or replaces a row in the extension table.
@@ -350,30 +402,30 @@ func LookupXRow(d *db.DB, tableName string, def TableDef, pkHash string) (map[st
 		return nil, 0, err
 	}
 
-	// Extract PK columns.
-	var pkCols []string
+	// Extract PK columns (with type info for normalizeValue).
+	var pkColDefs []ColumnDef
 	for _, col := range def.Columns {
 		if col.PK {
-			pkCols = append(pkCols, col.Name)
+			pkColDefs = append(pkColDefs, col)
 		}
 	}
 
 	// Find matching row.
 	for i, row := range rows {
 		pkValues := make(map[string]any)
-		for _, pk := range pkCols {
-			pkValues[pk] = row[pk]
+		for _, col := range pkColDefs {
+			pkValues[col.Name] = row[col.Name]
 		}
-		computed := PKHash(pkValues)
+		computed := PKHash(pkColDefs, pkValues)
 		if computed == pkHash {
 			// Postcondition: re-derive PK hash from the row we're about to
 			// return and verify it matches the requested hash. Guards against
 			// PK column extraction bugs.
 			verifyPK := make(map[string]any)
-			for _, pk := range pkCols {
-				verifyPK[pk] = row[pk]
+			for _, col := range pkColDefs {
+				verifyPK[col.Name] = row[col.Name]
 			}
-			if PKHash(verifyPK) != pkHash {
+			if PKHash(pkColDefs, verifyPK) != pkHash {
 				panic(fmt.Sprintf("repo.LookupXRow: postcondition violated: re-derived PK hash != %q", pkHash))
 			}
 			return row, mtimes[i], nil
@@ -397,11 +449,11 @@ func CatalogHash(d *db.DB, tableName string, def TableDef) (string, error) {
 		return "", err
 	}
 
-	// Extract PK columns.
-	var pkCols []string
+	// Extract PK columns (with type info for normalizeValue).
+	var pkColDefs []ColumnDef
 	for _, col := range def.Columns {
 		if col.PK {
-			pkCols = append(pkCols, col.Name)
+			pkColDefs = append(pkColDefs, col)
 		}
 	}
 
@@ -413,11 +465,11 @@ func CatalogHash(d *db.DB, tableName string, def TableDef) (string, error) {
 	var entries []entry
 	for i, row := range rows {
 		pkValues := make(map[string]any)
-		for _, pk := range pkCols {
-			pkValues[pk] = row[pk]
+		for _, col := range pkColDefs {
+			pkValues[col.Name] = row[col.Name]
 		}
 		entries = append(entries, entry{
-			pkHash: PKHash(pkValues),
+			pkHash: PKHash(pkColDefs, pkValues),
 			mtime:  mtimes[i],
 		})
 	}
