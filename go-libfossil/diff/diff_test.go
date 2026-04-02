@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -276,5 +277,48 @@ func TestStatIdentical(t *testing.T) {
 	stat := Stat(a, a)
 	if stat.Insertions != 0 || stat.Deletions != 0 {
 		t.Fatalf("identical: got %+v", stat)
+	}
+}
+
+func TestUnifiedLargeFile(t *testing.T) {
+	// 10K lines, change every 100th line.
+	var a, b strings.Builder
+	for i := 0; i < 10000; i++ {
+		fmt.Fprintf(&a, "line %d original\n", i)
+		if i%100 == 50 {
+			fmt.Fprintf(&b, "line %d CHANGED\n", i)
+		} else {
+			fmt.Fprintf(&b, "line %d original\n", i)
+		}
+	}
+
+	got := Unified([]byte(a.String()), []byte(b.String()), Options{ContextLines: 3})
+	if got == "" {
+		t.Fatal("expected non-empty diff for large file")
+	}
+
+	stat := Stat([]byte(a.String()), []byte(b.String()))
+	// 100 lines changed = 100 deletions + 100 insertions
+	if stat.Insertions != 100 {
+		t.Fatalf("Insertions = %d, want 100", stat.Insertions)
+	}
+	if stat.Deletions != 100 {
+		t.Fatalf("Deletions = %d, want 100", stat.Deletions)
+	}
+}
+
+func BenchmarkMyers(b *testing.B) {
+	var src, dst []string
+	for i := 0; i < 1000; i++ {
+		src = append(src, fmt.Sprintf("line %d", i))
+		if i%10 == 5 {
+			dst = append(dst, fmt.Sprintf("line %d changed", i))
+		} else {
+			dst = append(dst, fmt.Sprintf("line %d", i))
+		}
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		myers(src, dst)
 	}
 }
