@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"github.com/dmestas/edgesync/go-libfossil/content"
@@ -152,12 +153,31 @@ func (c *Checkout) Extract(rid libfossil.FslID, opts ExtractOpts) error {
 		}
 	}
 
+	// Look up checkin timestamp for SetMTime.
+	var checkinTime time.Time
+	if opts.SetMTime && !opts.DryRun {
+		var mtimeJulian float64
+		if err := c.repo.DB().QueryRow(
+			"SELECT mtime FROM event WHERE objid = ? AND type = 'ci'",
+			int64(rid),
+		).Scan(&mtimeJulian); err == nil {
+			checkinTime = libfossil.JulianToTime(mtimeJulian)
+		}
+	}
+
 	for _, row := range vfRows {
 		if err := c.extractSingleFile(
 			row.pathname, row.blobRid, row.isexe, opts.DryRun,
 		); err != nil {
 			extractErr = err
 			return extractErr
+		}
+
+		if opts.SetMTime && !opts.DryRun && !checkinTime.IsZero() {
+			fullPath, _ := c.safePath(row.pathname)
+			if fullPath != "" {
+				_ = c.env.Storage.Chtimes(fullPath, checkinTime, checkinTime)
+			}
 		}
 
 		c.obs.ExtractFileCompleted(ctx, row.pathname, UpdateAdded)

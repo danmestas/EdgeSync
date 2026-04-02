@@ -145,6 +145,79 @@ func TestExtractForceProtection(t *testing.T) {
 	}
 }
 
+func TestExtractSetMTime(t *testing.T) {
+	r, cleanup := newTestRepoWithCheckin(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	co, err := Create(r, dir, CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer co.Close()
+
+	rid, _, _ := co.Version()
+	mem := simio.NewMemStorage()
+	co.env = &simio.Env{Storage: mem, Clock: simio.RealClock{}, Rand: simio.CryptoRand{}}
+	co.dir = "/checkout"
+
+	if err := co.Extract(rid, ExtractOpts{SetMTime: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify mtime was set on extracted files.
+	info, err := mem.Stat("/checkout/hello.txt")
+	if err != nil {
+		t.Fatal("stat hello.txt:", err)
+	}
+	mtime := info.ModTime()
+	if mtime.IsZero() {
+		t.Fatal("mtime should not be zero when SetMTime is true")
+	}
+	// The checkin timestamp should match what's in the event table.
+	// Just verify it's a valid time (not zero) — the exact value depends
+	// on the test repo's fixed timestamp.
+	if mtime.Year() < 2020 {
+		t.Fatalf("mtime %v looks invalid", mtime)
+	}
+
+	// Verify all extracted files got the same mtime.
+	info2, _ := mem.Stat("/checkout/src/main.go")
+	if !info2.ModTime().Equal(mtime) {
+		t.Fatalf("src/main.go mtime %v != hello.txt mtime %v", info2.ModTime(), mtime)
+	}
+}
+
+func TestExtractSetMTimeFalse(t *testing.T) {
+	r, cleanup := newTestRepoWithCheckin(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	co, err := Create(r, dir, CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer co.Close()
+
+	rid, _, _ := co.Version()
+	mem := simio.NewMemStorage()
+	co.env = &simio.Env{Storage: mem, Clock: simio.RealClock{}, Rand: simio.CryptoRand{}}
+	co.dir = "/checkout"
+
+	if err := co.Extract(rid, ExtractOpts{SetMTime: false}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify mtime was NOT set (should be zero in MemStorage).
+	info, err := mem.Stat("/checkout/hello.txt")
+	if err != nil {
+		t.Fatal("stat hello.txt:", err)
+	}
+	if !info.ModTime().IsZero() {
+		t.Fatalf("mtime should be zero when SetMTime is false, got %v", info.ModTime())
+	}
+}
+
 func TestExtractObserver(t *testing.T) {
 	// Use a recording observer to verify hooks fire
 	r, cleanup := newTestRepoWithCheckin(t)

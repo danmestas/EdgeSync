@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"time"
+
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/content"
@@ -88,6 +90,7 @@ func (c *Checkout) processFileUpdates(
 	maps updateFileMaps,
 	strategy merge.Strategy,
 	opts UpdateOpts,
+	checkinTime time.Time,
 ) (filesWritten, filesRemoved, conflicts int, err error) {
 	for name := range maps.allNames {
 		curUUID, inCurrent := maps.current[name]
@@ -104,6 +107,14 @@ func (c *Checkout) processFileUpdates(
 
 		if change == UpdateNone {
 			continue
+		}
+
+		// Apply checkin mtime to written files.
+		if opts.SetMTime && !opts.DryRun && !checkinTime.IsZero() && change != UpdateRemoved {
+			fullPath, _ := c.safePath(name)
+			if fullPath != "" {
+				_ = c.env.Storage.Chtimes(fullPath, checkinTime, checkinTime)
+			}
 		}
 
 		switch change {
@@ -229,8 +240,20 @@ func (c *Checkout) Update(opts UpdateOpts) error {
 		return updateErr
 	}
 
+	// Look up checkin timestamp for SetMTime.
+	var checkinTime time.Time
+	if opts.SetMTime && !opts.DryRun {
+		var mtimeJulian float64
+		if err := c.repo.DB().QueryRow(
+			"SELECT mtime FROM event WHERE objid = ? AND type = 'ci'",
+			int64(target),
+		).Scan(&mtimeJulian); err == nil {
+			checkinTime = libfossil.JulianToTime(mtimeJulian)
+		}
+	}
+
 	// Process each file
-	filesWritten, filesRemoved, conflicts, updateErr = c.processFileUpdates(ctx, maps, strategy, opts)
+	filesWritten, filesRemoved, conflicts, updateErr = c.processFileUpdates(ctx, maps, strategy, opts, checkinTime)
 	if updateErr != nil {
 		return updateErr
 	}
