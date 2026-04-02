@@ -48,6 +48,16 @@ func Store(q db.Querier, content []byte) (rid libfossil.FslID, uuid string, err 
 
 	rid = libfossil.FslID(ridInt)
 
+	// Verify round-trip: re-read, decompress, re-hash.
+	// Matches Fossil's content_put_pk() post-write verification.
+	readBack, err := Load(q, rid)
+	if err != nil {
+		return 0, "", fmt.Errorf("blob.Store verify read-back: %w", err)
+	}
+	if got := hash.SHA1(readBack); got != uuid {
+		return 0, "", fmt.Errorf("blob.Store verify: hash mismatch after round-trip: stored %s, got %s", uuid, got)
+	}
+
 	// Mark as unclustered — matches Fossil's content_put_ex (content.c:633).
 	// Only new blobs reach here; Exists early-return skips this.
 	if _, err := q.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid); err != nil {
@@ -107,6 +117,20 @@ func StoreDelta(q db.Querier, content []byte, srcRid libfossil.FslID) (rid libfo
 	_, err = q.Exec("INSERT INTO delta(rid, srcid) VALUES(?, ?)", rid, srcRid)
 	if err != nil {
 		return 0, "", fmt.Errorf("blob.StoreDelta insert delta: %w", err)
+	}
+
+	// Verify round-trip: re-read delta, apply to source, re-hash.
+	// Matches Fossil's content_put_pk() post-write verification.
+	storedDelta, err := Load(q, rid)
+	if err != nil {
+		return 0, "", fmt.Errorf("blob.StoreDelta verify read-back: %w", err)
+	}
+	rebuilt, err := delta.Apply(srcContent, storedDelta)
+	if err != nil {
+		return 0, "", fmt.Errorf("blob.StoreDelta verify apply: %w", err)
+	}
+	if got := hash.SHA1(rebuilt); got != uuid {
+		return 0, "", fmt.Errorf("blob.StoreDelta verify: hash mismatch after round-trip: stored %s, got %s", uuid, got)
 	}
 
 	// Mark as unclustered — matches Fossil's content_put_ex (content.c:633).
