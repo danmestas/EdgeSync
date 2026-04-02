@@ -142,6 +142,8 @@ func parseLine(r *bufio.Reader, line string) (Card, error) {
 		return parseXGimme(args)
 	case "xrow":
 		return parseXRow(r, args)
+	case "xdelete":
+		return parseXDelete(r, args)
 	default:
 		return &UnknownCard{Command: cmd, Args: args}, nil
 	}
@@ -499,6 +501,29 @@ func parseXGimme(args []string) (Card, error) {
 		return nil, fmt.Errorf("xfer: xgimme requires 2 args, got %d", len(args))
 	}
 	return &XGimmeCard{Table: args[0], PKHash: args[1]}, nil
+}
+
+func parseXDelete(r *bufio.Reader, args []string) (Card, error) {
+	if len(args) != 4 {
+		return nil, fmt.Errorf("xfer: xdelete requires 4 args, got %d", len(args))
+	}
+	mtime, err := strconv.ParseInt(args[2], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("xfer: xdelete mtime: %w", err)
+	}
+	size, err := strconv.Atoi(args[3])
+	if err != nil {
+		return nil, fmt.Errorf("xfer: xdelete size: %w", err)
+	}
+	const maxXDeleteSize = 64 << 20 // 64 MiB — PK data should be tiny JSON
+	if size < 0 || size > maxXDeleteSize {
+		return nil, fmt.Errorf("xfer: xdelete size out of range: %d", size)
+	}
+	pkData, err := readPayloadWithTrailingNewline(r, size)
+	if err != nil {
+		return nil, fmt.Errorf("xfer: xdelete payload: %w", err)
+	}
+	return &XDeleteCard{Table: args[0], PKHash: args[1], MTime: mtime, PKData: pkData}, nil
 }
 
 func parseXRow(r *bufio.Reader, args []string) (Card, error) {

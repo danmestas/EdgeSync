@@ -63,6 +63,8 @@ func EncodeCard(w *bytes.Buffer, c Card) error {
 		return encodeXGimme(w, v)
 	case *XRowCard:
 		return encodeXRow(w, v)
+	case *XDeleteCard:
+		return encodeXDelete(w, v)
 	case *UnknownCard:
 		return encodeUnknown(w, v)
 	default:
@@ -277,6 +279,13 @@ func encodeXGimme(w *bytes.Buffer, c *XGimmeCard) error {
 func encodeXRow(w *bytes.Buffer, c *XRowCard) error {
 	fmt.Fprintf(w, "xrow %s %s %d %d\n", c.Table, c.PKHash, c.MTime, len(c.Content))
 	w.Write(c.Content)
+	w.WriteByte('\n')
+	return nil
+}
+
+func encodeXDelete(w *bytes.Buffer, c *XDeleteCard) error {
+	fmt.Fprintf(w, "xdelete %s %s %d %d\n", c.Table, c.PKHash, c.MTime, len(c.PKData))
+	w.Write(c.PKData)
 	w.WriteByte('\n')
 	return nil
 }
