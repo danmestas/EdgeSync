@@ -4,15 +4,22 @@ package telemetry
 
 import (
 	"context"
+	"time"
 
 	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
 )
 
 // TelemetryConfig is a stub for WASM builds.
 type TelemetryConfig struct {
-	ServiceName string
-	Endpoint    string
-	Headers     map[string]string
+	ServiceName    string
+	Endpoint       string
+	Insecure       bool
+	Environment    string
+	Version        string
+	InstanceID     string
+	RepoPath       string
+	SampleRatio    float64
+	MetricInterval time.Duration
 }
 
 // Setup is a no-op on WASM — returns a no-op shutdown function.

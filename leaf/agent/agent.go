@@ -206,6 +206,11 @@ func (a *Agent) Repo() *repo.Repo {
 	return a.repo
 }
 
+// ContentCache returns the agent's content cache (nil if caching is disabled).
+func (a *Agent) ContentCache() *content.Cache {
+	return a.contentCache
+}
+
 // Start launches the background poll loop and any configured server
 // listeners. Call Stop to shut everything down.
 func (a *Agent) Start() error {
@@ -283,15 +288,22 @@ func (a *Agent) pollLoop(ctx context.Context) {
 		act := a.Tick(ctx, ev)
 		if act.Err != nil {
 			a.logf("sync error: %v", act.Err)
-			slog.ErrorContext(ctx, "sync error", "error", act.Err)
 			continue
 		}
 		if act.Result != nil {
 			a.logf("sync done: ↑%d ↓%d rounds=%d", act.Result.FilesSent, act.Result.FilesRecvd, act.Result.Rounds)
-			slog.InfoContext(ctx, "sync done", "rounds", act.Result.Rounds, "sent", act.Result.FilesSent, "recv", act.Result.FilesRecvd, "errors", len(act.Result.Errors))
+			slog.DebugContext(ctx, "sync details",
+				"rounds", act.Result.Rounds,
+				"files_sent", act.Result.FilesSent,
+				"files_recv", act.Result.FilesRecvd,
+				"bytes_sent", act.Result.BytesSent,
+				"bytes_recv", act.Result.BytesRecvd,
+				"uv_sent", act.Result.UVFilesSent,
+				"uv_recv", act.Result.UVFilesRecvd,
+				"errors", len(act.Result.Errors),
+			)
 			for _, e := range act.Result.Errors {
 				a.logf("sync warning: %s", e)
-				slog.WarnContext(ctx, "sync protocol error", "detail", e)
 			}
 			if a.config.PostSyncHook != nil {
 				a.config.PostSyncHook(act.Result)
@@ -313,6 +325,7 @@ func (a *Agent) runSync(ctx context.Context) (*sync.SyncResult, error) {
 		ServerCode:   a.serverCode,
 		User:         a.config.User,
 		Password:     a.config.Password,
+		PeerID:       a.config.PeerID,
 		Buggify:      a.config.Buggify,
 		UV:           a.config.UV,
 		Private:      a.config.Private,

@@ -4,11 +4,13 @@
 
 build: edgesync leaf bridge
 
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
 edgesync:
 	go build -buildvcs=false -o bin/edgesync ./cmd/edgesync
 
 leaf:
-	cd leaf && go build -buildvcs=false -o ../bin/leaf ./cmd/leaf
+	cd leaf && go build -buildvcs=false -ldflags "-X main.version=$(VERSION)" -o ../bin/leaf ./cmd/leaf
 
 bridge:
 	cd bridge && go build -buildvcs=false -o ../bin/bridge ./cmd/bridge

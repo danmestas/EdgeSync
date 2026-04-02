@@ -35,6 +35,7 @@ type SyncOpts struct {
 	ServerCode  string // server-code from a previous session (cookie-like, speeds up sync)
 	User        string // login user — empty means unauthenticated "nobody" sync
 	Password    string // login password
+	PeerID      string // identifies this leaf agent instance (for observability)
 	MaxSend     int    // byte budget per round for file payloads (0 defaults to DefaultMaxSend)
 	UV          bool   // enable unversioned file sync (wiki, forum, attachments)
 	Private     bool   // enable private artifact sync
@@ -56,6 +57,7 @@ type SyncResult struct {
 	Rounds, FilesSent, FilesRecvd int
 	UVFilesSent, UVFilesRecvd     int
 	UVGimmesSent                  int
+	BytesSent, BytesRecvd         int64
 	ArtifactsLinked               int
 	Errors                        []string
 	CkinLockFail *CkinLockFail // nil = no conflict
@@ -187,6 +189,7 @@ func Sync(ctx context.Context, r *repo.Repo, t Transport, opts SyncOpts) (result
 		Pull:        opts.Pull,
 		UV:          opts.UV,
 		ProjectCode: opts.ProjectCode,
+		PeerID:      opts.PeerID,
 	})
 
 	for cycle := 0; ; cycle++ {
@@ -227,6 +230,8 @@ func Sync(ctx context.Context, r *repo.Repo, t Transport, opts SyncOpts) (result
 
 		s.roundStats.FilesSent = s.result.FilesSent - sentBefore
 		s.roundStats.FilesReceived = s.result.FilesRecvd - recvdBefore
+		s.result.BytesSent += s.roundStats.BytesSent
+		s.result.BytesRecvd += s.roundStats.BytesReceived
 
 		if err != nil {
 			obs.Error(roundCtx, err)
@@ -265,6 +270,8 @@ func sessionEndFromSync(r *SyncResult, projectCode string) SessionEnd {
 		UVFilesSent:  r.UVFilesSent,
 		UVFilesRecvd: r.UVFilesRecvd,
 		UVGimmesSent: r.UVGimmesSent,
+		BytesSent:    r.BytesSent,
+		BytesRecvd:   r.BytesRecvd,
 		ProjectCode:  projectCode,
 		Errors:       r.Errors,
 	}

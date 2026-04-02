@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -40,12 +40,12 @@ func (c *SyncStartCmd) Run(g *Globals) error {
 		return fmt.Errorf("start: %w", err)
 	}
 
-	log.Printf("edgesync sync agent running (repo=%s nats=%s poll=%s)", g.Repo, c.NATSUrl, c.PollInterval)
+	slog.Info("edgesync sync agent running", "repo", g.Repo, "nats", c.NATSUrl, "poll", c.PollInterval)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 
-	log.Printf("shutting down...")
+	slog.Info("shutting down")
 	return a.Stop()
 }

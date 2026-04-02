@@ -20,6 +20,11 @@ services:
       - --serve-nats
       - --uv
       - --poll=5s
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: "100.105.156.92:4317"
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_SERVICE_NAME: "edgesync-leaf"
+      EDGESYNC_ENVIRONMENT: "production"
     ports:
       - "0.0.0.0:9000:8080"
     volumes:
