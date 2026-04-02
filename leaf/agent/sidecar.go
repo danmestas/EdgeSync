@@ -20,6 +20,8 @@ type sidecar struct {
 	callbackURL string
 	alpn        string
 	cmd         *exec.Cmd
+	exited      chan struct{} // closed when the process exits
+	exitErr     error        // set before exited is closed
 }
 
 // sidecarStatus is the JSON response from GET /status.
@@ -46,6 +48,12 @@ func (s *sidecar) spawn() error {
 	if err := s.cmd.Start(); err != nil {
 		return fmt.Errorf("iroh sidecar start: %w", err)
 	}
+
+	s.exited = make(chan struct{})
+	go func() {
+		s.exitErr = s.cmd.Wait()
+		close(s.exited)
+	}()
 	return nil
 }
 
@@ -67,15 +75,17 @@ func (s *sidecar) waitReady(timeout time.Duration) (*sidecarStatus, error) {
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
 
 		var status sidecarStatus
-		if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		err = json.NewDecoder(resp.Body).Decode(&status)
+		resp.Body.Close()
+		if err != nil {
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
@@ -102,10 +112,8 @@ func (s *sidecar) shutdown() {
 	}
 	client.Post("http://iroh-sidecar/shutdown", "", nil) //nolint:errcheck
 
-	done := make(chan error, 1)
-	go func() { done <- s.cmd.Wait() }()
 	select {
-	case <-done:
+	case <-s.exited:
 		s.cleanup()
 		return
 	case <-time.After(5 * time.Second):
@@ -113,14 +121,14 @@ func (s *sidecar) shutdown() {
 
 	s.cmd.Process.Signal(syscall.SIGTERM) //nolint:errcheck
 	select {
-	case <-done:
+	case <-s.exited:
 		s.cleanup()
 		return
 	case <-time.After(2 * time.Second):
 	}
 
 	s.cmd.Process.Kill() //nolint:errcheck
-	<-done
+	<-s.exited
 	s.cleanup()
 }
 
@@ -128,7 +136,7 @@ func (s *sidecar) shutdown() {
 func (s *sidecar) kill() {
 	if s.cmd != nil && s.cmd.Process != nil {
 		s.cmd.Process.Kill() //nolint:errcheck
-		s.cmd.Wait()         //nolint:errcheck
+		<-s.exited
 	}
 	s.cleanup()
 }

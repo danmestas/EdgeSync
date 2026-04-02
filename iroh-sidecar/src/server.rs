@@ -117,6 +117,9 @@ async fn handle_shutdown(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// Retrieve a live connection from the cache, or open a new one.
+///
+/// Holds the lock across the connect call to prevent duplicate connections
+/// for the same peer from concurrent requests.
 async fn get_or_connect(
     state: &AppState,
     remote_id_str: &str,
@@ -133,8 +136,6 @@ async fn get_or_connect(
         cache.remove(remote_id_str);
     }
 
-    drop(cache); // release lock while connecting (can take time)
-
     tracing::info!(remote = %remote_id_str, "connecting to remote peer");
     let addr: EndpointAddr = remote_id.into();
     let conn: Connection = state
@@ -143,7 +144,6 @@ async fn get_or_connect(
         .await
         .map_err(|e| AppError::internal(e))?;
 
-    let mut cache = state.conn_cache.lock().await;
     cache.insert(remote_id_str.to_string(), conn.clone());
 
     Ok(conn)

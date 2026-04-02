@@ -1,8 +1,8 @@
-.PHONY: build test clean leaf bridge edgesync iroh-sidecar wasm-wasi wasm-browser wasm dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks drivers test-interop
+.PHONY: build test clean leaf bridge edgesync iroh-sidecar wasm-wasi wasm-browser wasm dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks drivers test-interop test-iroh
 
 # --- Build ---
 
-build: edgesync leaf bridge
+build: edgesync leaf bridge iroh-sidecar
 
 edgesync:
 	go build -buildvcs=false -o bin/edgesync ./cmd/edgesync
@@ -14,7 +14,7 @@ bridge:
 	cd bridge && go build -buildvcs=false -o ../bin/bridge ./cmd/bridge
 
 iroh-sidecar:
-	cd iroh-sidecar && PATH="$(HOME)/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$(PATH)" cargo build --release
+	cd iroh-sidecar && cargo build --release
 	cp iroh-sidecar/target/release/iroh-sidecar bin/
 
 wasm-wasi:
@@ -117,6 +117,11 @@ sim-full:
 # Fossil interop: Tier 1 + Tier 2 (requires fossil binary, Tier 2 samples 5K+2K blobs)
 test-interop:
 	go test -buildvcs=false ./sim/ -run TestInterop -timeout=10m -v
+
+# Iroh P2P: build sidecar then run iroh unit + integration tests
+test-iroh: iroh-sidecar
+	go test ./leaf/agent/ -run TestIroh -count=1 -v
+	go test ./sim/ -run TestIroh -count=1 -timeout=120s -v
 
 # --- Driver matrix — run locally ---
 

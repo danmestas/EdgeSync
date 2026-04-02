@@ -28,10 +28,17 @@ func main() {
 	serveHTTP := flag.String("serve-http", envOrDefault("LEAF_SERVE_HTTP", ""), "HTTP listen address (e.g. :8080) to serve fossil clone/sync")
 	serveNATS := flag.Bool("serve-nats", false, "enable NATS request/reply listener for leaf-to-leaf sync")
 	uv := flag.Bool("uv", false, "enable unversioned file sync (wiki, forum, attachments)")
-	iroh := flag.Bool("iroh", false, "enable iroh sidecar for peer-to-peer sync")
-	irohKeyPath := flag.String("iroh-key", "", "path to iroh Ed25519 keypair (default: <repo>.iroh-key)")
+	iroh := flag.Bool("iroh", envBool("LEAF_IROH"), "enable iroh sidecar for peer-to-peer sync")
+	irohKeyPath := flag.String("iroh-key", envOrDefault("LEAF_IROH_KEY", ""), "path to iroh Ed25519 keypair (default: <repo>.iroh-key)")
 
 	var irohPeers stringSlice
+	if v := os.Getenv("LEAF_IROH_PEERS"); v != "" {
+		for _, p := range strings.Split(v, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				irohPeers = append(irohPeers, p)
+			}
+		}
+	}
 	flag.Var(&irohPeers, "iroh-peer", "remote iroh EndpointId to sync with (repeatable)")
 
 	// OTel flags (fall back to standard OTEL_* env vars)
@@ -91,7 +98,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	slog.Info("leaf-agent started", "repo", *repoPath, "nats", *natsURL, "poll", *poll)
+	logAttrs := []any{"repo", *repoPath, "nats", *natsURL, "poll", *poll}
+	if *iroh {
+		logAttrs = append(logAttrs, "iroh", true, "iroh_peers", len(irohPeers))
+	}
+	slog.Info("leaf-agent started", logAttrs...)
 	awaitSignals(a, shutdown)
 }
 
@@ -142,6 +153,15 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envBool returns true if the named env var is set to "1", "true", or "yes".
+func envBool(key string) bool {
+	switch strings.ToLower(os.Getenv(key)) {
+	case "1", "true", "yes":
+		return true
+	}
+	return false
 }
 
 // stringSlice implements flag.Value for repeatable string flags.

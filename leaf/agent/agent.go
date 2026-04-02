@@ -45,18 +45,19 @@ type Action struct {
 // Agent manages the lifecycle of a leaf sync daemon: it opens a Fossil repo,
 // connects to NATS, and periodically syncs via the xfer protocol.
 type Agent struct {
-	config      Config
-	clock       simio.Clock
-	repo        *repo.Repo
-	conn        *nats.Conn // nil when created via NewFromParts
-	transport   sync.Transport
-	projectCode string
-	serverCode  string
-	cancel      context.CancelFunc
-	done        chan struct{}
-	syncNow     chan struct{} // buffer 1
-	irohSidecar *sidecar     // nil when iroh is disabled
-	irohSock    string       // Unix socket path for iroh sidecar
+	config         Config
+	clock          simio.Clock
+	repo           *repo.Repo
+	conn           *nats.Conn // nil when created via NewFromParts
+	transport      sync.Transport
+	projectCode    string
+	serverCode     string
+	cancel         context.CancelFunc
+	done           chan struct{}
+	syncNow        chan struct{} // buffer 1
+	irohSidecar    *sidecar     // nil when iroh is disabled
+	irohSock       string       // Unix socket path for iroh sidecar
+	irohEndpointID string       // local iroh endpoint ID (set after sidecar ready)
 }
 
 // New creates a new Agent from the given configuration.
@@ -218,6 +219,7 @@ func (a *Agent) Start() error {
 
 		a.irohSock = fmt.Sprintf("/tmp/iroh-%d.sock", os.Getpid())
 		callbackURL := "http://127.0.0.1" + a.config.ServeHTTPAddr
+		var irohCallbackSrv *http.Server
 		if a.config.ServeHTTPAddr == "" {
 			// Need an HTTP listener for iroh callbacks.
 			ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -226,13 +228,18 @@ func (a *Agent) Start() error {
 			}
 			callbackURL = "http://" + ln.Addr().String()
 			mux := http.NewServeMux()
+			mux.HandleFunc("/healthz", healthzHandler)
 			mux.Handle("/", sync.XferHandler(a.repo, sync.HandleSync))
-			srv := &http.Server{Handler: mux}
+			irohCallbackSrv = &http.Server{Handler: mux}
 			go func() {
 				<-ctx.Done()
-				srv.Close()
+				irohCallbackSrv.Close()
 			}()
-			go srv.Serve(ln)
+			go func() {
+				if err := irohCallbackSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
+					slog.Error("iroh callback server stopped", "error", err)
+				}
+			}()
 		}
 
 		a.irohSidecar = &sidecar{
@@ -244,15 +251,25 @@ func (a *Agent) Start() error {
 		}
 
 		if err := a.irohSidecar.spawn(); err != nil {
+			if irohCallbackSrv != nil {
+				irohCallbackSrv.Close()
+			}
 			return fmt.Errorf("agent: iroh sidecar: %w", err)
 		}
 
 		status, err := a.irohSidecar.waitReady(10 * time.Second)
 		if err != nil {
 			a.irohSidecar.kill()
+			if irohCallbackSrv != nil {
+				irohCallbackSrv.Close()
+			}
 			return fmt.Errorf("agent: iroh sidecar: %w", err)
 		}
+		a.irohEndpointID = status.EndpointID
 		a.logf("iroh sidecar ready, endpoint_id=%s", status.EndpointID)
+
+		// Monitor sidecar process liveness.
+		go a.monitorSidecar(ctx)
 	}
 
 	return nil
@@ -344,6 +361,26 @@ func (a *Agent) pollLoop(ctx context.Context) {
 				}
 			}
 		}
+	}
+}
+
+// monitorSidecar watches the sidecar process and logs if it exits unexpectedly.
+func (a *Agent) monitorSidecar(ctx context.Context) {
+	if a.irohSidecar == nil {
+		return
+	}
+	select {
+	case <-a.irohSidecar.exited:
+		// Check if this was an expected shutdown.
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		slog.Error("iroh sidecar exited unexpectedly", "error", a.irohSidecar.exitErr)
+		a.logf("iroh sidecar died: %v — iroh sync will fail until restart", a.irohSidecar.exitErr)
+	case <-ctx.Done():
+		return
 	}
 }
 

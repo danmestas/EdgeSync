@@ -7,33 +7,50 @@
 //!   4. Write the Go response bytes back on the QUIC stream.
 
 use iroh::Endpoint;
+use tokio::task::JoinSet;
 
 /// Run the accept loop until the endpoint is closed.
 ///
-/// Each incoming connection is handled in a newly-spawned task so we can serve
-/// multiple peers concurrently.
+/// Each incoming connection is handled in a tracked task so we can await
+/// all in-flight work on shutdown rather than killing tasks mid-request.
 pub async fn run_accept_loop(endpoint: Endpoint, callback_url: String) {
     let client = reqwest::Client::new();
+    let mut tasks = JoinSet::new();
 
     loop {
         // `endpoint.accept()` returns None when the endpoint is closed.
         let incoming = match endpoint.accept().await {
             Some(i) => i,
             None => {
-                tracing::info!("accept loop: endpoint closed, exiting");
-                return;
+                tracing::info!("accept loop: endpoint closed, waiting for in-flight tasks");
+                break;
             }
         };
 
         let client = client.clone();
         let callback_url = callback_url.clone();
 
-        tokio::spawn(async move {
+        tasks.spawn(async move {
             if let Err(e) = handle_incoming(incoming, client, callback_url).await {
                 tracing::warn!("accept loop: error handling incoming connection: {e:#}");
             }
         });
+
+        // Reap completed tasks to avoid unbounded growth.
+        while let Some(result) = tasks.try_join_next() {
+            if let Err(e) = result {
+                tracing::warn!("accept loop: task panicked: {e:#}");
+            }
+        }
     }
+
+    // Await all remaining in-flight tasks before returning.
+    while let Some(result) = tasks.join_next().await {
+        if let Err(e) = result {
+            tracing::warn!("accept loop: task panicked during shutdown: {e:#}");
+        }
+    }
+    tracing::info!("accept loop: all tasks completed");
 }
 
 async fn handle_incoming(
@@ -44,6 +61,8 @@ async fn handle_incoming(
     let connection = incoming.accept()?.await?;
     let remote_id = connection.remote_id();
     tracing::info!(%remote_id, "accepted incoming connection");
+
+    let mut stream_tasks = JoinSet::new();
 
     // Each new stream on this connection is a separate request.
     loop {
@@ -58,13 +77,20 @@ async fn handle_incoming(
         let client = client.clone();
         let callback_url = callback_url.clone();
 
-        tokio::spawn(async move {
+        stream_tasks.spawn(async move {
             if let Err(e) =
                 handle_stream(&mut send, &mut recv, &client, &callback_url, remote_id).await
             {
                 tracing::warn!(%remote_id, "stream handler error: {e:#}");
             }
         });
+    }
+
+    // Await all in-flight stream handlers before closing the connection.
+    while let Some(result) = stream_tasks.join_next().await {
+        if let Err(e) = result {
+            tracing::warn!(%remote_id, "stream task panicked: {e:#}");
+        }
     }
 
     Ok(())
