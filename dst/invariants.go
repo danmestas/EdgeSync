@@ -3,6 +3,7 @@ package dst
 import (
 	"fmt"
 	"sort"
+	"testing"
 
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"github.com/dmestas/edgesync/go-libfossil/blob"
@@ -457,6 +458,68 @@ func CheckTableSyncConvergence(repos map[string]*repo.Repo) error {
 		}
 	}
 	return nil
+}
+
+// --- Tombstone convergence invariant ---
+
+// CheckTombstoneConvergence verifies that all nodes agree on which rows are
+// tombstones for each synced table. Two nodes may have different catalog hashes
+// during convergence, but once converged, their tombstone sets must match.
+func (s *Simulator) CheckTombstoneConvergence(t *testing.T, masterRepo *repo.Repo, tableName string, def repo.TableDef) {
+	t.Helper()
+
+	// Collect tombstone pk_hashes from master.
+	masterTombstones := collectTombstones(t, masterRepo, tableName, def)
+
+	// Compare each leaf's tombstones to master.
+	for _, leafID := range s.LeafIDs() {
+		leafRepo := s.Leaf(leafID).Repo()
+		leafTombstones := collectTombstones(t, leafRepo, tableName, def)
+
+		// Every tombstone on master should exist on leaf.
+		for pkHash := range masterTombstones {
+			if !leafTombstones[pkHash] {
+				t.Errorf("tombstone convergence: %s missing tombstone pk=%s (master has it)", leafID, pkHash)
+			}
+		}
+		// Every tombstone on leaf should exist on master.
+		for pkHash := range leafTombstones {
+			if !masterTombstones[pkHash] {
+				t.Errorf("tombstone convergence: %s has extra tombstone pk=%s (master doesn't)", leafID, pkHash)
+			}
+		}
+	}
+}
+
+// collectTombstones returns the set of PK hashes for all tombstone rows in a table.
+func collectTombstones(t *testing.T, r *repo.Repo, tableName string, def repo.TableDef) map[string]bool {
+	t.Helper()
+	rows, _, err := repo.ListXRows(r.DB(), tableName, def)
+	if err != nil {
+		t.Fatalf("collectTombstones %s: %v", tableName, err)
+	}
+
+	var pkColDefs []repo.ColumnDef
+	var pkNames []string
+	for _, col := range def.Columns {
+		if col.PK {
+			pkColDefs = append(pkColDefs, col)
+			pkNames = append(pkNames, col.Name)
+		}
+	}
+
+	tombstones := make(map[string]bool)
+	for _, row := range rows {
+		if repo.IsTombstone(def, row) {
+			pkValues := make(map[string]any)
+			for _, name := range pkNames {
+				pkValues[name] = row[name]
+			}
+			pkHash := repo.PKHash(pkColDefs, pkValues)
+			tombstones[pkHash] = true
+		}
+	}
+	return tombstones
 }
 
 // --- Helpers ---

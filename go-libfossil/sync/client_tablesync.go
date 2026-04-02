@@ -131,6 +131,11 @@ func (s *session) buildTableSendCards(info repo.TableInfo) ([]xfer.Card, error) 
 				continue
 			}
 			if repo.IsTombstone(info.Def, row) {
+				// BUGGIFY: 3% chance skip sending xdelete to test re-queue next round.
+				if s.opts.Buggify != nil && s.opts.Buggify.Check("client.buildTableSendCards.skipXDelete", 0.03) {
+					delete(sends, pkHash)
+					continue
+				}
 				// Send xdelete with PK data.
 				pkCols := extractPKColumns(info.Def)
 				pkValues := make(map[string]any)
@@ -310,6 +315,11 @@ func (s *session) handleXRowResponse(c *xfer.XRowCard) error {
 func (s *session) handleXDeleteResponse(c *xfer.XDeleteCard) error {
 	if c == nil {
 		panic("session.handleXDeleteResponse: c must not be nil")
+	}
+
+	// BUGGIFY: 5% chance drop received xdelete to test re-send next round.
+	if s.opts.Buggify != nil && s.opts.Buggify.Check("client.handleXDeleteResponse.drop", 0.05) {
+		return nil
 	}
 
 	if err := repo.EnsureSyncSchema(s.repo.DB()); err != nil {

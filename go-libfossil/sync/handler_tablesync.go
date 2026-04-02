@@ -150,6 +150,10 @@ func (h *handler) handleXIGot(c *xfer.XIGotCard) error {
 	// Compare mtimes: if local is newer, push it (or send xdelete if tombstone).
 	if localMtime > c.MTime {
 		if repo.IsTombstone(st.Def, localRow) {
+			// BUGGIFY: 5% chance skip xdelete to test multi-round convergence.
+			if h.buggify != nil && h.buggify.Check("handler.handleXIGot.skipXDelete", 0.05) {
+				return nil
+			}
 			h.sendXDelete(c.Table, st, c.PKHash, localMtime, localRow)
 			return nil
 		}
@@ -452,6 +456,14 @@ func (h *handler) handleXDelete(c *xfer.XDeleteCard) error {
 		return nil
 	}
 
+	// BUGGIFY: 3% chance reject a valid xdelete to test client re-push.
+	if h.buggify != nil && h.buggify.Check("handler.handleXDelete.reject", 0.03) {
+		h.resp = append(h.resp, &xfer.ErrorCard{
+			Message: fmt.Sprintf("buggify: rejected xdelete %s/%s", c.Table, c.PKHash),
+		})
+		return nil
+	}
+
 	return applyXDeleteLocally(h.repo.DB(), c.Table, st.Def, c.PKHash, c.MTime, c.PKData)
 }
 
@@ -477,6 +489,14 @@ func (h *handler) sendXDelete(table string, st *SyncedTable, pkHash string, mtim
 			Message: fmt.Sprintf("xdelete %s/%s: marshal PKData: %v", table, pkHash, err),
 		})
 		return
+	}
+
+	// BUGGIFY: 2% chance corrupt PKData to test receiver error handling.
+	if h.buggify != nil && h.buggify.Check("handler.sendXDelete.corruptPKData", 0.02) && len(pkData) > 0 {
+		corrupted := make([]byte, len(pkData))
+		copy(corrupted, pkData)
+		corrupted[0] = '!'
+		pkData = corrupted
 	}
 
 	h.resp = append(h.resp, &xfer.XDeleteCard{
