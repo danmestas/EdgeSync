@@ -132,6 +132,19 @@ func StoreDelta(q db.Querier, content []byte, srcRid libfossil.FslID) (rid libfo
 		return 0, "", fmt.Errorf("blob.StoreDelta insert delta: %w", err)
 	}
 
+	// Verify round-trip: decompress delta, apply to source, re-hash.
+	decompressedDelta, err := Decompress(compressed)
+	if err != nil {
+		return 0, "", fmt.Errorf("blob.StoreDelta verify decompress: %w", err)
+	}
+	expanded, err := delta.Apply(srcContent, decompressedDelta)
+	if err != nil {
+		return 0, "", fmt.Errorf("blob.StoreDelta verify apply: %w", err)
+	}
+	if err := verifyHash(uuid, expanded); err != nil {
+		return 0, "", fmt.Errorf("blob.StoreDelta: %w", err)
+	}
+
 	// Mark as unclustered — matches Fossil's content_put_ex (content.c:633).
 	if _, err := q.Exec("INSERT OR IGNORE INTO unclustered(rid) VALUES(?)", rid); err != nil {
 		return 0, "", fmt.Errorf("blob.StoreDelta unclustered: %w", err)
