@@ -218,6 +218,31 @@ func TestExtractSetMTimeFalse(t *testing.T) {
 	}
 }
 
+func TestExtractSetMTimeDryRun(t *testing.T) {
+	r, cleanup := newTestRepoWithCheckin(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	co, err := Create(r, dir, CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer co.Close()
+
+	rid, _, _ := co.Version()
+	mem := simio.NewMemStorage()
+	co.env = &simio.Env{Storage: mem, Clock: simio.RealClock{}, Rand: simio.CryptoRand{}}
+	co.dir = "/checkout"
+
+	// DryRun + SetMTime should not write files or set mtimes.
+	if err := co.Extract(rid, ExtractOpts{SetMTime: true, DryRun: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mem.ReadFile("/checkout/hello.txt"); err == nil {
+		t.Fatal("DryRun should not write files even with SetMTime")
+	}
+}
+
 func TestExtractObserver(t *testing.T) {
 	// Use a recording observer to verify hooks fire
 	r, cleanup := newTestRepoWithCheckin(t)
