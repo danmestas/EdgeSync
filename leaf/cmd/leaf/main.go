@@ -28,6 +28,9 @@ func main() {
 	serveHTTP := flag.String("serve-http", envOrDefault("LEAF_SERVE_HTTP", ""), "HTTP listen address (e.g. :8080) to serve fossil clone/sync")
 	serveNATS := flag.Bool("serve-nats", false, "enable NATS request/reply listener for leaf-to-leaf sync")
 	uv := flag.Bool("uv", false, "enable unversioned file sync (wiki, forum, attachments)")
+	autosyncFlag := flag.String("autosync", "off", "autosync mode: on, off, pullonly")
+	allowFork := flag.Bool("allow-fork", false, "bypass fork and lock checks")
+	overrideLock := flag.Bool("override-lock", false, "ignore lock conflicts (implies allow-fork)")
 
 	// OTel flags (fall back to standard OTEL_* env vars)
 	otelEndpoint := flag.String("otel-endpoint", envOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""), "OTel OTLP endpoint")
@@ -70,6 +73,9 @@ func main() {
 		ServeHTTPAddr:    *serveHTTP,
 		ServeNATSEnabled: *serveNATS,
 		Observer:         obs,
+		Autosync:         parseAutosyncMode(*autosyncFlag),
+		AllowFork:        *allowFork,
+		OverrideLock:     *overrideLock,
 	}
 
 	a, err := agent.New(cfg)
@@ -125,6 +131,18 @@ func parseHeaders(s string) map[string]string {
 		}
 	}
 	return headers
+}
+
+// parseAutosyncMode converts a CLI string to an AutosyncMode value.
+func parseAutosyncMode(s string) agent.AutosyncMode {
+	switch strings.ToLower(s) {
+	case "on":
+		return agent.AutosyncOn
+	case "pullonly":
+		return agent.AutosyncPullOnly
+	default:
+		return agent.AutosyncOff
+	}
 }
 
 // envOrDefault returns the value of the environment variable named key,
