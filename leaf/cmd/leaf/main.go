@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
 	"github.com/dmestas/edgesync/leaf/agent"
 	"github.com/dmestas/edgesync/leaf/telemetry"
 
@@ -28,6 +29,9 @@ func main() {
 	serveHTTP := flag.String("serve-http", envOrDefault("LEAF_SERVE_HTTP", ""), "HTTP listen address (e.g. :8080) to serve fossil clone/sync")
 	serveNATS := flag.Bool("serve-nats", false, "enable NATS request/reply listener for leaf-to-leaf sync")
 	uv := flag.Bool("uv", false, "enable unversioned file sync (wiki, forum, attachments)")
+	var verboseFlag bool
+	flag.BoolVar(&verboseFlag, "verbose", false, "log sync round details to stderr (no OTel required)")
+	flag.BoolVar(&verboseFlag, "v", false, "alias for --verbose")
 	autosyncFlag := flag.String("autosync", "off", "autosync mode: on, off, pullonly")
 	allowFork := flag.Bool("allow-fork", false, "bypass fork and lock checks")
 	overrideLock := flag.Bool("override-lock", false, "ignore lock conflicts (implies allow-fork)")
@@ -59,7 +63,10 @@ func main() {
 	}
 
 	// Create observer (nil-safe: if no endpoint, OTel uses no-op providers)
-	obs := telemetry.NewOTelObserver(nil, nil)
+	var obs libsync.Observer = telemetry.NewOTelObserver(nil, nil)
+	if verboseFlag {
+		obs = telemetry.NewVerboseObserver(os.Stderr, obs)
+	}
 
 	cfg := agent.Config{
 		RepoPath:         *repoPath,

@@ -8,26 +8,33 @@
 
 set -e
 
+# run_test: suppress output on success, show full diagnostics on failure.
+run_test() {
+	label="$1"
+	shift
+	if output=$("$@" 2>&1); then
+		echo "  $label: OK"
+	else
+		echo "  $label: FAILED"
+		echo ""
+		echo "$output"
+		echo ""
+		exit 1
+	fi
+}
+
 echo "=== pre-commit: unit tests ==="
-go test ./go-libfossil/... -short -count=1 -timeout=30s > /dev/null 2>&1
-echo "  go-libfossil (incl handler): OK"
-
-go test ./leaf/agent/ -short -count=1 -timeout=30s > /dev/null 2>&1
-echo "  leaf/agent: OK"
-
-go test ./bridge/bridge/ -short -count=1 -timeout=30s > /dev/null 2>&1
-echo "  bridge/bridge: OK"
+run_test "go-libfossil (incl handler)" go test ./go-libfossil/... -short -count=1 -timeout=30s
+run_test "leaf/agent" go test ./leaf/agent/ -short -count=1 -timeout=30s
+run_test "bridge/bridge" go test ./bridge/bridge/ -short -count=1 -timeout=30s
 
 echo "=== pre-commit: DST quick (1 seed) ==="
-go test ./dst/ -run TestDST -count=1 -timeout=30s > /dev/null 2>&1
-echo "  dst: OK"
+run_test "dst" go test ./dst/ -run TestDST -count=1 -timeout=30s
 
 echo "=== pre-commit: sim unit tests ==="
-go test ./sim/ -run "TestFaultProxy|TestGenerateSchedule|TestBuggify" -count=1 -timeout=30s > /dev/null 2>&1
-echo "  sim (unit): OK"
+run_test "sim (unit)" go test ./sim/ -run "TestFaultProxy|TestGenerateSchedule|TestBuggify" -count=1 -timeout=30s
 
 echo "=== pre-commit: sim serve tests ==="
-go test ./sim/ -run "TestServeHTTP|TestLeafToLeaf|TestAgentServe" -count=1 -timeout=60s > /dev/null 2>&1
-echo "  sim (serve): OK"
+run_test "sim (serve)" go test ./sim/ -run "TestServeHTTP|TestLeafToLeaf|TestAgentServe" -count=1 -timeout=60s
 
 echo "=== pre-commit: all passed (~8s) ==="
