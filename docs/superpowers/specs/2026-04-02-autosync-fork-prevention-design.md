@@ -63,18 +63,21 @@ func BranchLeaves(r *repo.Repo, branch string) ([]libfossil.FslID, error)
 **`WouldFork()` implementation:**
 
 1. Get current checkout RID via `c.Version()`
-2. Determine current branch: query `tagxref` for `sym-*` branch tag on current RID; default to `"trunk"`
+2. Determine current branch: query `tagxref` for propagating `branch` tag value on current RID (i.e., `tagname='branch'` with `tagtype=2`); default to `"trunk"` if no branch tag exists
 3. Query same-branch leaves:
    ```sql
    SELECT l.rid FROM leaf l
    JOIN tagxref tx ON tx.rid = l.rid
    JOIN tag t ON t.tagid = tx.tagid
-   WHERE t.tagname = 'sym-' || ?
+   WHERE t.tagname = 'branch'
+     AND tx.value = ?
      AND tx.tagtype > 0
      AND l.rid != ?
    ```
    (Parameters: branch name, current checkout RID)
 4. If any rows returned → would fork
+
+Note: trunk checkins may not have an explicit `sym-trunk` tag. The `branch` tag with `value='trunk'` is the reliable way to identify branch membership, consistent with `branch.List()`.
 
 **`BranchLeaves()` implementation:**
 
@@ -92,20 +95,22 @@ type CommitOpts struct {
     Tags           []string
     Delta          bool
     Time           time.Time
-    PreCommitCheck func(ctx context.Context) error // nil = no check
+    PreCommitCheck func() error // nil = no check
 }
 ```
+
+Note: `Commit()` currently has signature `func (c *Checkout) Commit(opts CommitOpts) (libfossil.FslID, string, error)` with no `context.Context` parameter. `PreCommitCheck` takes no arguments to match this — the agent closure captures everything it needs.
 
 **Integration point in `Commit()`:**
 
 After `ScanChanges()` completes but before `manifest.Checkin()` is called:
 
 ```go
-func (c *Checkout) Commit(ctx context.Context, opts CommitOpts) (libfossil.FslID, string, error) {
+func (c *Checkout) Commit(opts CommitOpts) (libfossil.FslID, string, error) {
     // ... existing: get parent, scan changes, collect vfile entries ...
 
     if opts.PreCommitCheck != nil {
-        if err := opts.PreCommitCheck(ctx); err != nil {
+        if err := opts.PreCommitCheck(); err != nil {
             return 0, "", fmt.Errorf("pre-commit check: %w", err)
         }
     }
@@ -127,27 +132,11 @@ pragma ci-lock PARENT-UUID CLIENT-ID
 pragma ci-lock-fail HOLDING-USER LOCK-TIMESTAMP
 ```
 
-Add to `xfer/card.go`:
-
-```go
-// CkinLockCard requests a check-in lock on a parent commit.
-type CkinLockCard struct {
-    ParentUUID string
-    ClientID   string
-}
-
-// CkinLockFailCard indicates another client holds the lock.
-type CkinLockFailCard struct {
-    User string
-    Time time.Time // when the lock was acquired
-}
-```
-
-These encode/decode as pragma cards in the existing pragma dispatch in `xfer/encode.go` and `xfer/decode.go`.
+These are handled as `PragmaCard` instances in the existing pragma dispatch — no new `CardType` enum values needed. The `ci-lock` and `ci-lock-fail` pragma names are parsed in the handler/client pragma switch, consistent with how `uv-hash` is handled today. Fields are positional arguments on the pragma line.
 
 #### 1.3.2 Server-Side Lock Management (sync package)
 
-**Storage:** Repo `config` table, key format `ci-lock-<PARENT-UUID>`, value is JSON `{"clientid":"...","login":"...","mtime":unix_seconds}`.
+**Storage:** Repo `config` table, key format `edgesync-ci-lock-<PARENT-UUID>`, value is JSON `{"clientid":"...","login":"...","mtime":unix_seconds}`. The `edgesync-` prefix avoids collision with any future upstream Fossil config keys.
 
 **New file: `sync/ckin_lock.go`**
 
@@ -164,7 +153,7 @@ func processCkinLock(tx *db.Tx, req xfer.CkinLockCard, requestingUser string, ti
 // or whose parent is no longer a leaf.
 func expireStaleLocks(tx *db.Tx, timeout time.Duration)
 
-// isLeaf checks whether rid has no same-branch children.
+// isLeaf checks whether rid is in the leaf table (has no children).
 func isLeaf(tx *db.Tx, rid libfossil.FslID) bool
 ```
 
@@ -173,13 +162,13 @@ func isLeaf(tx *db.Tx, rid libfossil.FslID) bool
 1. Call `expireStaleLocks(tx, timeout)` — delete locks where:
    - `mtime + timeout < now`, OR
    - parent UUID's RID is no longer in the `leaf` table
-2. Check for existing lock: `SELECT value FROM config WHERE name = 'ci-lock-' || parentUUID`
+2. Check for existing lock: `SELECT value FROM config WHERE name = 'edgesync-ci-lock-' || parentUUID`
 3. If lock exists AND `clientid != req.ClientID`:
    - Return `&CkinLockFailCard{User: lock.login, Time: lock.mtime}`
 4. Otherwise, upsert lock:
    ```sql
    REPLACE INTO config(name, value, mtime)
-   VALUES('ci-lock-'||?, json_object('clientid',?,'login',?,'mtime',?), ?)
+   VALUES('edgesync-ci-lock-'||?, json_object('clientid',?,'login',?,'mtime',?), ?)
    ```
 5. Return nil (lock acquired)
 
@@ -247,7 +236,6 @@ type AutosyncOpts struct {
     SyncOpts    sync.SyncOpts   // auth, UV, etc.
     AllowFork   bool            // bypass fork + lock checks
     ClientID    string          // unique agent instance ID
-    LockTimeout time.Duration   // server-side lock expiry (default 60s)
 }
 
 var (
@@ -276,14 +264,14 @@ func Commit(ctx context.Context, co *checkout.Checkout,
 
 ```
 1. IF mode == Off:
-      return co.Commit(ctx, commitOpts)
+      return co.Commit(commitOpts)
 
 2. PRE-PULL + CI-LOCK:
       syncOpts := auto.SyncOpts
       syncOpts.Pull = true
       syncOpts.Push = false
       IF !allowFork && commitOpts.Branch == "":
-          parentUUID := co.VersionUUID()
+          _, parentUUID, _ := co.Version()
           syncOpts.CkinLock = &sync.CkinLockReq{
               ParentUUID: parentUUID,
               ClientID:   auto.ClientID,
@@ -301,7 +289,7 @@ func Commit(ctx context.Context, co *checkout.Checkout,
 
 4. INJECT PRE-COMMIT CHECK:
       IF !allowFork && commitOpts.Branch == "":
-          commitOpts.PreCommitCheck = func(ctx context.Context) error {
+          commitOpts.PreCommitCheck = func() error {
               forked, err := co.WouldFork()
               IF err != nil: return err
               IF forked: return ErrWouldFork
@@ -309,15 +297,15 @@ func Commit(ctx context.Context, co *checkout.Checkout,
           }
 
 5. COMMIT:
-      rid, uuid, err := co.Commit(ctx, commitOpts)
+      rid, uuid, err := co.Commit(commitOpts)
       IF err != nil:
           return 0, "", err
 
-6. POST-SYNC (push + pull + renew lock):
+6. POST-SYNC (push + pull):
       IF mode == AutosyncOn:
           syncOpts.Pull = true
           syncOpts.Push = true
-          // CkinLock still set from step 2 (renews lock)
+          syncOpts.CkinLock = nil  // lock served its purpose; parent is no longer a leaf
           postResult, postErr := sync.Sync(ctx, co.Repo(), auto.Transport, syncOpts)
           IF postErr != nil:
               // Commit succeeded — log warning, don't fail
@@ -370,6 +358,7 @@ func ensureClientID(r *repo.Repo, rng simio.Rand) (string, error)
 | `TestWouldFork_SingleLeaf` | `checkout/fork_test.go` | Returns false when checkout is sole leaf |
 | `TestWouldFork_Forked` | `checkout/fork_test.go` | Returns true when another leaf exists on branch |
 | `TestWouldFork_DifferentBranch` | `checkout/fork_test.go` | Returns false when other leaf is on different branch |
+| `TestWouldFork_TrunkNoSymTag` | `checkout/fork_test.go` | Returns true for trunk fork even without explicit sym-trunk tag |
 | `TestBranchLeaves` | `checkout/fork_test.go` | Returns correct leaf RIDs per branch |
 | `TestPreCommitCheck_Abort` | `checkout/checkin_test.go` | Commit aborts when PreCommitCheck returns error |
 | `TestPreCommitCheck_Nil` | `checkout/checkin_test.go` | Commit proceeds when PreCommitCheck is nil |
@@ -416,7 +405,6 @@ func ensureClientID(r *repo.Repo, rng simio.Rand) (string, error)
 | File | Change |
 |------|--------|
 | `go-libfossil/checkout/checkin.go` | Add `PreCommitCheck` to `CommitOpts`, call it in `Commit()` |
-| `go-libfossil/xfer/card.go` | Add `CkinLockCard`, `CkinLockFailCard` types |
 | `go-libfossil/xfer/encode.go` | Encode ci-lock pragma cards |
 | `go-libfossil/xfer/decode.go` | Decode ci-lock pragma cards |
 | `go-libfossil/sync/session.go` | Add `CkinLock` to `SyncOpts`, `CkinLockFail` to `SyncResult` |
