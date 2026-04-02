@@ -164,7 +164,11 @@ func createExtensionTable(d *db.DB, name string, def TableDef) error {
 		default:
 			return fmt.Errorf("createExtensionTable: unsupported column type %q", col.Type)
 		}
-		cols = append(cols, fmt.Sprintf("%s %s NOT NULL", col.Name, sqlType))
+		if col.PK {
+			cols = append(cols, fmt.Sprintf("%s %s NOT NULL", col.Name, sqlType))
+		} else {
+			cols = append(cols, fmt.Sprintf("%s %s", col.Name, sqlType))
+		}
 		if col.PK {
 			pkCols = append(pkCols, col.Name)
 		}

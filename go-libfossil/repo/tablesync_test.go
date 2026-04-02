@@ -156,6 +156,23 @@ func TestUpsertAndLookupXRow(t *testing.T) {
 	}
 }
 
+func TestExtensionTableNullableValueColumns(t *testing.T) {
+	r := setupTSRepo(t)
+	EnsureSyncSchema(r.DB())
+	def := TableDef{
+		Columns:  []ColumnDef{{Name: "id", Type: "text", PK: true}, {Name: "data", Type: "text"}},
+		Conflict: "mtime-wins",
+	}
+	if err := RegisterSyncedTable(r.DB(), "nullable_test", def, 1000); err != nil {
+		t.Fatal(err)
+	}
+	// Insert row with NULL value column — should succeed for tombstone support.
+	_, err := r.DB().Exec("INSERT INTO x_nullable_test(id, data, mtime) VALUES('k1', NULL, 1000)")
+	if err != nil {
+		t.Fatalf("insert with NULL value column should succeed: %v", err)
+	}
+}
+
 func TestCatalogHash(t *testing.T) {
 	r := setupTSRepo(t)
 	EnsureSyncSchema(r.DB())
