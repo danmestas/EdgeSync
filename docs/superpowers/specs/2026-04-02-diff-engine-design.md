@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-02
 **Ticket:** EDG-12
-**Status:** Draft
+**Status:** Approved
 
 ## Problem
 
