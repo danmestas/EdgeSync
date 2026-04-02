@@ -32,3 +32,5 @@ skills-lock.json
 .DS_Store
 .gitnexus
 .claude/worktrees/
+go.work
+go.work.sum
