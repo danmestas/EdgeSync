@@ -315,7 +315,7 @@ func myers(src, dst []string) []editOp {
 
 			if x >= n && y >= m {
 				// Reached the end. Backtrack to build edit script.
-				return backtrack(trace, src, dst, d)
+				return backtrack(trace, src, dst)
 			}
 		}
 	}
@@ -374,8 +374,6 @@ func backtrack(trace [][]int, src, dst []string) []editOp {
 	return ops
 }
 ```
-
-Note: The `backtrack` function signature in the code takes `trace, src, dst` (no `d` parameter) — fix the call site in `myers` accordingly. The `d` value for each trace entry is its index.
 
 - [ ] **Step 7: Run Myers tests**
 
@@ -467,15 +465,15 @@ func TestUnifiedZeroContext(t *testing.T) {
 	a := []byte("a\nb\nc\nd\ne\n")
 	b := []byte("a\nB\nc\nd\nE\n")
 	got := Unified(a, b, Options{ContextLines: 0})
-	// With 0 context, should have two separate hunks (no merging).
-	count := strings.Count(got, "@@")
-	if count < 4 { // 2 hunks = 4 @@ markers (each hunk has @@ ... @@)
-		// Actually each hunk line starts with @@, so 2 hunk headers = 2 lines with @@
-		if strings.Count(got, "\n@@") < 1 {
-			t.Logf("diff:\n%s", got)
-		}
+	// Two changes separated by 2 unchanged lines — with 0 context, must be 2 hunks.
+	hunkCount := strings.Count(got, "\n@@ ") + 1 // first hunk has no leading \n
+	if !strings.HasPrefix(got, "---") {
+		t.Fatalf("expected diff header, got:\n%s", got)
 	}
-	// At minimum, verify no context lines appear.
+	if hunkCount != 2 {
+		t.Fatalf("expected 2 hunks with 0 context, got %d:\n%s", hunkCount, got)
+	}
+	// No context lines should appear.
 	if strings.Contains(got, " a") || strings.Contains(got, " c") || strings.Contains(got, " d") {
 		t.Fatalf("zero-context diff should not have context lines:\n%s", got)
 	}
