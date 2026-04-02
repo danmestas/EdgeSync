@@ -118,6 +118,17 @@ Hard limit: 70 lines. 10 functions were split into same-file private helpers (la
 - Ported code (delta): keeps C-aligned names with mapping comments for cross-reference
 - Non-ported code: full TigerStyle rename (e.g., `srcid` -> `sourceID`)
 
+## Diff Engine
+
+`diff/` package — Myers O(nd) algorithm, line-based, pure `[]byte` in / `string` out. No repo dependencies.
+
+- `Unified(a, b []byte, opts Options) string` — standard unified diff output (`@@ -a,b +c,d @@`)
+- `Stat(a, b []byte) DiffStat` — insertions, deletions, binary detection
+- `Options{ContextLines, SrcName, DstName}` — 0 context = no context lines
+- Binary detection via null byte scan; returns empty diff for binary inputs
+- `\r\n` normalized to `\n` before comparison
+- Side-by-side deferred until a consumer needs it (architecture supports adding formatters)
+
 ## Constraints
 
 - Performance: compute ops within 3x of C libfossil, I/O ops within 5x
