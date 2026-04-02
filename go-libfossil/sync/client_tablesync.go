@@ -119,7 +119,7 @@ func (s *session) buildTableSendCards(info repo.TableInfo) ([]xfer.Card, error) 
 		}
 	}
 
-	// Emit xrow for rows queued to send.
+	// Emit xrow or xdelete for rows queued to send.
 	if sends, ok := s.xTableToSend[info.Name]; ok {
 		for pkHash := range sends {
 			row, mtime, err := repo.LookupXRow(s.repo.DB(), info.Name, info.Def, pkHash)
@@ -130,16 +130,35 @@ func (s *session) buildTableSendCards(info repo.TableInfo) ([]xfer.Card, error) 
 				delete(sends, pkHash)
 				continue
 			}
-			rowJSON, err := json.Marshal(row)
-			if err != nil {
-				return nil, fmt.Errorf("buildTableSendCards: marshal row %s/%s: %w", info.Name, pkHash, err)
+			if repo.IsTombstone(info.Def, row) {
+				// Send xdelete with PK data.
+				pkCols := extractPKColumns(info.Def)
+				pkValues := make(map[string]any)
+				for _, col := range pkCols {
+					pkValues[col] = row[col]
+				}
+				pkData, err := json.Marshal(pkValues)
+				if err != nil {
+					return nil, fmt.Errorf("buildTableSendCards: marshal pk %s/%s: %w", info.Name, pkHash, err)
+				}
+				cards = append(cards, &xfer.XDeleteCard{
+					Table:  info.Name,
+					PKHash: pkHash,
+					MTime:  mtime,
+					PKData: pkData,
+				})
+			} else {
+				rowJSON, err := json.Marshal(row)
+				if err != nil {
+					return nil, fmt.Errorf("buildTableSendCards: marshal row %s/%s: %w", info.Name, pkHash, err)
+				}
+				cards = append(cards, &xfer.XRowCard{
+					Table:   info.Name,
+					PKHash:  pkHash,
+					MTime:   mtime,
+					Content: rowJSON,
+				})
 			}
-			cards = append(cards, &xfer.XRowCard{
-				Table:   info.Name,
-				PKHash:  pkHash,
-				MTime:   mtime,
-				Content: rowJSON,
-			})
 			delete(sends, pkHash)
 		}
 	}
@@ -158,6 +177,8 @@ func (s *session) processXTableCard(card xfer.Card) error {
 		return s.handleXGimmeResponse(c)
 	case *xfer.XRowCard:
 		return s.handleXRowResponse(c)
+	case *xfer.XDeleteCard:
+		return s.handleXDeleteResponse(c)
 	}
 	return nil
 }
@@ -265,6 +286,54 @@ func (s *session) handleXRowResponse(c *xfer.XRowCard) error {
 	}
 
 	// Remove from gimmes.
+	if gimmes, ok := s.xTableGimmes[c.Table]; ok {
+		delete(gimmes, c.PKHash)
+	}
+
+	return nil
+}
+
+// handleXDeleteResponse processes an xdelete from the server response.
+func (s *session) handleXDeleteResponse(c *xfer.XDeleteCard) error {
+	if c == nil {
+		panic("session.handleXDeleteResponse: c must not be nil")
+	}
+
+	if err := repo.EnsureSyncSchema(s.repo.DB()); err != nil {
+		return fmt.Errorf("handleXDeleteResponse: ensure schema: %w", err)
+	}
+
+	def, err := s.getXTableDef(c.Table)
+	if err != nil {
+		return fmt.Errorf("handleXDeleteResponse: get table def %s: %w", c.Table, err)
+	}
+	if def == nil {
+		return nil
+	}
+
+	deleted, err := repo.DeleteXRowByPKHash(s.repo.DB(), c.Table, *def, c.PKHash, c.MTime)
+	if err != nil {
+		return fmt.Errorf("handleXDeleteResponse: delete %s/%s: %w", c.Table, c.PKHash, err)
+	}
+
+	// If row didn't exist locally, insert tombstone using PKData.
+	if !deleted {
+		existingRow, _, lookupErr := repo.LookupXRow(s.repo.DB(), c.Table, *def, c.PKHash)
+		if lookupErr != nil {
+			return fmt.Errorf("handleXDeleteResponse: lookup: %w", lookupErr)
+		}
+		if existingRow == nil && len(c.PKData) > 0 {
+			var pkValues map[string]any
+			if err := json.Unmarshal(c.PKData, &pkValues); err != nil {
+				return fmt.Errorf("handleXDeleteResponse: bad PKData: %w", err)
+			}
+			if err := repo.UpsertXRow(s.repo.DB(), c.Table, pkValues, c.MTime); err != nil {
+				return fmt.Errorf("handleXDeleteResponse: insert tombstone: %w", err)
+			}
+		}
+	}
+
+	// Remove from gimmes if present.
 	if gimmes, ok := s.xTableGimmes[c.Table]; ok {
 		delete(gimmes, c.PKHash)
 	}
