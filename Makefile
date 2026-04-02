@@ -1,4 +1,4 @@
-.PHONY: build test clean leaf bridge edgesync wasm-wasi wasm-browser wasm dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks drivers test-interop
+.PHONY: build test clean leaf bridge edgesync wasm-wasi wasm-browser wasm dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks setup drivers test-interop
 
 # --- Build ---
 
@@ -40,7 +40,13 @@ test:
 	go test ./sim/ -run 'TestServeHTTP|TestLeafToLeaf|TestAgentServe' -count=1 -timeout=120s
 	go test ./sim/ -run 'TestInterop' -count=1 -short -timeout=60s
 
-# --- Pre-commit hook setup ---
+# --- Setup (first-time onboarding) ---
+
+setup: setup-hooks build test
+	@echo ""
+	@echo "Setup complete. Binaries in bin/. Try:"
+	@echo "  bin/edgesync repo info"
+	@echo "  bin/leaf --help"
 
 setup-hooks:
 	git config core.hooksPath .githooks

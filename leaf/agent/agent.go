@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
@@ -81,27 +82,44 @@ func New(cfg Config) (*Agent, error) {
 		return nil, fmt.Errorf("agent: read server-code: %w", err)
 	}
 
-	natsOpts := []nats.Option{nats.Name("edgesync-leaf")}
+	natsOpts := []nats.Option{
+		nats.Name("edgesync-leaf"),
+		nats.MaxReconnects(-1),
+		nats.ReconnectWait(2 * time.Second),
+		nats.RetryOnFailedConnect(true),
+	}
 	if cfg.CustomDialer != nil {
 		natsOpts = append(natsOpts, nats.SetCustomDialer(cfg.CustomDialer))
 	}
-	if cfg.Logger != nil {
-		natsOpts = append(natsOpts, nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
-			if err != nil {
+	natsOpts = append(natsOpts, nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
+		if err != nil {
+			slog.Warn("NATS disconnected", "error", err)
+			if cfg.Logger != nil {
 				cfg.Logger("NATS disconnected: " + err.Error())
 			}
-		}))
-		natsOpts = append(natsOpts, nats.ReconnectHandler(func(_ *nats.Conn) {
+		}
+	}))
+	natsOpts = append(natsOpts, nats.ReconnectHandler(func(_ *nats.Conn) {
+		slog.Info("NATS reconnected", "url", cfg.NATSUrl)
+		if cfg.Logger != nil {
 			cfg.Logger("NATS reconnected")
-		}))
-	}
+		}
+	}))
 	nc, err := nats.Connect(cfg.NATSUrl, natsOpts...)
 	if err != nil {
 		r.Close()
 		return nil, fmt.Errorf("agent: nats connect: %w", err)
 	}
-	if cfg.Logger != nil {
-		cfg.Logger("connected to NATS: " + cfg.NATSUrl)
+	if nc.IsConnected() {
+		slog.Info("connected to NATS", "url", cfg.NATSUrl)
+		if cfg.Logger != nil {
+			cfg.Logger("connected to NATS: " + cfg.NATSUrl)
+		}
+	} else {
+		slog.Warn("NATS not yet reachable, will retry in background", "url", cfg.NATSUrl)
+		if cfg.Logger != nil {
+			cfg.Logger("warning: NATS not yet reachable at " + cfg.NATSUrl + ", will retry in background")
+		}
 	}
 
 	transport := NewNATSTransport(nc, projectCode, 0, cfg.SubjectPrefix)
