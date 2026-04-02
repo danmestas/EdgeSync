@@ -24,8 +24,9 @@ type HandleFunc func(ctx context.Context, r *repo.Repo, req *xfer.Message) (*xfe
 
 // HandleOpts configures optional behavior for HandleSync.
 type HandleOpts struct {
-	Buggify  BuggifyChecker // nil in production.
-	Observer Observer       // nil defaults to no-op.
+	Buggify      BuggifyChecker // nil in production.
+	Observer     Observer       // nil defaults to no-op.
+	ContentCache *content.Cache // nil = no caching.
 }
 
 // HandleSync processes an incoming xfer request and produces a response.
@@ -49,7 +50,7 @@ func HandleSyncWithOpts(ctx context.Context, r *repo.Repo, req *xfer.Message, op
 		Operation: detectOperation(req),
 	})
 
-	h := &handler{repo: r, buggify: opts.Buggify}
+	h := &handler{repo: r, buggify: opts.Buggify, cache: opts.ContentCache}
 	resp, err := h.process(ctx, req)
 	if err == nil && resp == nil {
 		panic("sync.HandleSync: resp must not be nil on success")
@@ -92,6 +93,7 @@ type handler struct {
 	syncedTables  map[string]*SyncedTable // cached table definitions
 	xrowsSent     int  // table sync rows sent
 	xrowsRecvd    int  // table sync rows received
+	cache         *content.Cache // nil = passthrough to content.Expand
 
 	// Auth state
 	user   string // verified username ("nobody" if no login card)
@@ -362,7 +364,7 @@ func (h *handler) handleGimme(c *xfer.GimmeCard) error {
 	if isPriv && !h.syncPrivate {
 		return nil // private blob, client not authorized — skip.
 	}
-	data, err := content.Expand(h.repo.DB(), rid)
+	data, err := h.cache.Expand(h.repo.DB(), rid)
 	if err != nil {
 		h.resp = append(h.resp, &xfer.ErrorCard{
 			Message: fmt.Sprintf("expand %s: %v", c.UUID, err),
@@ -398,7 +400,7 @@ func (h *handler) handleFile(uuid, deltaSrc string, payload []byte) error {
 		})
 		return nil
 	}
-	if err := storeReceivedFile(h.repo, uuid, deltaSrc, payload); err != nil {
+	if err := storeReceivedFile(h.repo, uuid, deltaSrc, payload, h.cache); err != nil {
 		h.resp = append(h.resp, &xfer.ErrorCard{
 			Message: fmt.Sprintf("storing %s: %v", uuid, err),
 		})
@@ -582,7 +584,7 @@ func (h *handler) emitCloneBatch() error {
 			break
 		}
 
-		data, err := content.Expand(h.repo.DB(), libfossil.FslID(rid))
+		data, err := h.cache.Expand(h.repo.DB(), libfossil.FslID(rid))
 		if err != nil {
 			return fmt.Errorf("handler: expanding rid %d: %w", rid, err)
 		}
