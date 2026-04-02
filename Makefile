@@ -26,11 +26,15 @@ clean:
 	rm -rf bin/
 
 # --- Test (what CI runs) ---
+# Unit tests run in parallel across modules; sim/dst run sequentially after.
 
 test:
-	go test ./go-libfossil/... -short -count=1
-	go test ./leaf/... -short -count=1
-	go test ./bridge/... -short -count=1
+	@pids=""; fail=0; \
+	go test ./go-libfossil/... -short -count=1 & pids="$$pids $$!"; \
+	go test ./leaf/... -short -count=1 & pids="$$pids $$!"; \
+	go test ./bridge/... -short -count=1 & pids="$$pids $$!"; \
+	for pid in $$pids; do wait $$pid || fail=1; done; \
+	if [ $$fail -ne 0 ]; then echo "FAIL: unit tests"; exit 1; fi
 	go test ./dst/ -run 'TestScenario|TestE2E|TestMockFossil|TestSimulator|TestCheck' -count=1
 	go test ./sim/ -run 'TestFaultProxy|TestGenerateSchedule|TestBuggify' -count=1
 	go test ./sim/ -run 'TestServeHTTP|TestLeafToLeaf|TestAgentServe' -count=1 -timeout=120s
