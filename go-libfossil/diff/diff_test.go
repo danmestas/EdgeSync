@@ -307,6 +307,90 @@ func TestUnifiedLargeFile(t *testing.T) {
 	}
 }
 
+func TestUnifiedWhitespaceOnly(t *testing.T) {
+	a := []byte("  hello  \n  world  \n")
+	b := []byte("  hello\n  world  \n")
+	got := Unified(a, b, Options{ContextLines: 3})
+	if got == "" {
+		t.Fatal("whitespace change should produce diff")
+	}
+}
+
+func TestUnifiedEmptyLinesOnly(t *testing.T) {
+	a := []byte("\n\n\n")
+	b := []byte("\n\n\n\n")
+	got := Unified(a, b, Options{ContextLines: 3})
+	if got == "" {
+		t.Fatal("added empty line should produce diff")
+	}
+}
+
+func TestUnifiedSingleChar(t *testing.T) {
+	a := []byte("x")
+	b := []byte("y")
+	got := Unified(a, b, Options{ContextLines: 3})
+	if !strings.Contains(got, "-x") || !strings.Contains(got, "+y") {
+		t.Fatalf("single char diff:\n%s", got)
+	}
+}
+
+func TestUnifiedLongLine(t *testing.T) {
+	long := strings.Repeat("x", 10000)
+	a := []byte(long + "\n")
+	b := []byte(long + "y\n")
+	got := Unified(a, b, Options{ContextLines: 3})
+	if got == "" {
+		t.Fatal("long line change should produce diff")
+	}
+}
+
+func TestUnifiedUnicode(t *testing.T) {
+	a := []byte("hello 世界\n")
+	b := []byte("hello 🌍\n")
+	got := Unified(a, b, Options{ContextLines: 3})
+	if got == "" {
+		t.Fatal("unicode change should produce diff")
+	}
+	if !strings.Contains(got, "-hello 世界") {
+		t.Fatalf("missing unicode deletion:\n%s", got)
+	}
+}
+
+func TestUnifiedNoTrailingNewlineBoth(t *testing.T) {
+	a := []byte("line1\nline2")
+	b := []byte("line1\nchanged")
+	got := Unified(a, b, Options{ContextLines: 3})
+	if got == "" {
+		t.Fatal("expected diff for no-trailing-newline")
+	}
+}
+
+func TestUnifiedAllDifferent(t *testing.T) {
+	// Worst case for Myers: every line differs.
+	var a, b strings.Builder
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&a, "old line %d\n", i)
+		fmt.Fprintf(&b, "new line %d\n", i)
+	}
+	got := Unified([]byte(a.String()), []byte(b.String()), Options{ContextLines: 3})
+	if got == "" {
+		t.Fatal("all-different should produce diff")
+	}
+	stat := Stat([]byte(a.String()), []byte(b.String()))
+	if stat.Insertions != 100 || stat.Deletions != 100 {
+		t.Fatalf("all-different stat: %+v", stat)
+	}
+}
+
+func TestUnifiedNegativeContextPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for negative ContextLines")
+		}
+	}()
+	Unified([]byte("a\n"), []byte("b\n"), Options{ContextLines: -1})
+}
+
 func BenchmarkMyers(b *testing.B) {
 	var src, dst []string
 	for i := 0; i < 1000; i++ {
