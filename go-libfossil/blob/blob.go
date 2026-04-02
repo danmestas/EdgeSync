@@ -9,6 +9,20 @@ import (
 	"github.com/dmestas/edgesync/go-libfossil/hash"
 )
 
+// verifyHash re-hashes data using the algorithm matching the UUID length.
+func verifyHash(uuid string, data []byte) error {
+	var computed string
+	if len(uuid) == 64 {
+		computed = hash.SHA3(data)
+	} else {
+		computed = hash.SHA1(data)
+	}
+	if computed != uuid {
+		return fmt.Errorf("round-trip verification failed: computed %s, expected %s", computed, uuid)
+	}
+	return nil
+}
+
 func Store(q db.Querier, content []byte) (rid libfossil.FslID, uuid string, err error) {
 	if q == nil {
 		panic("blob.Store: q must not be nil")
@@ -47,6 +61,15 @@ func Store(q db.Querier, content []byte) (rid libfossil.FslID, uuid string, err 
 	}
 
 	rid = libfossil.FslID(ridInt)
+
+	// Verify round-trip: decompress what we just compressed and re-hash.
+	decompressed, err := Decompress(compressed)
+	if err != nil {
+		return 0, "", fmt.Errorf("blob.Store verify decompress: %w", err)
+	}
+	if err := verifyHash(uuid, decompressed); err != nil {
+		return 0, "", fmt.Errorf("blob.Store: %w", err)
+	}
 
 	// Mark as unclustered — matches Fossil's content_put_ex (content.c:633).
 	// Only new blobs reach here; Exists early-return skips this.

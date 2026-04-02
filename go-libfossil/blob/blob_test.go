@@ -181,6 +181,26 @@ func TestStoreExistingBlobSkipsUnclustered(t *testing.T) {
 	}
 }
 
+func TestStoreVerifiesRoundTrip(t *testing.T) {
+	d := setupTestDB(t)
+	content := []byte("round-trip verification test content")
+
+	rid, uuid, err := Store(d, content)
+	if err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+
+	// Verify the stored blob survived compression round-trip.
+	got, err := Load(d, rid)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatal("content mismatch after round-trip")
+	}
+	_ = uuid
+}
+
 func BenchmarkStore(b *testing.B) {
 	d := func() *db.DB {
 		path := filepath.Join(b.TempDir(), "bench.fossil")
