@@ -42,6 +42,8 @@ type OTelObserver struct {
 	filesRecvd    metric.Int64Histogram
 	uvFilesSent   metric.Int64Histogram
 	uvFilesRecvd  metric.Int64Histogram
+	bytesSent     metric.Int64Histogram
+	bytesRecvd    metric.Int64Histogram
 }
 
 // NewOTelObserver creates an OTelObserver. Pass nil for either provider
@@ -63,7 +65,8 @@ func NewOTelObserver(tp trace.TracerProvider, mp metric.MeterProvider) *OTelObse
 		metric.WithDescription("Sessions ending with error"))
 	obs.duration, _ = m.Float64Histogram("sync.duration.seconds",
 		metric.WithDescription("End-to-end session duration"),
-		metric.WithUnit("s"))
+		metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120))
 	obs.rounds, _ = m.Int64Histogram("sync.rounds",
 		metric.WithDescription("Rounds to convergence"))
 	obs.filesSent, _ = m.Int64Histogram("sync.files.sent",
@@ -74,20 +77,32 @@ func NewOTelObserver(tp trace.TracerProvider, mp metric.MeterProvider) *OTelObse
 		metric.WithDescription("UV files sent per session"))
 	obs.uvFilesRecvd, _ = m.Int64Histogram("sync.uv.files.received",
 		metric.WithDescription("UV files received per session"))
+	obs.bytesSent, _ = m.Int64Histogram("sync.bytes.sent",
+		metric.WithDescription("Bytes sent per session"),
+		metric.WithUnit("By"),
+		metric.WithExplicitBucketBoundaries(1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216))
+	obs.bytesRecvd, _ = m.Int64Histogram("sync.bytes.received",
+		metric.WithDescription("Bytes received per session"),
+		metric.WithUnit("By"),
+		metric.WithExplicitBucketBoundaries(1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216))
 	return obs
 }
 
 func (o *OTelObserver) Started(ctx context.Context, info libsync.SessionStart) context.Context {
 	ctx = withOperation(ctx, info.Operation)
 	ctx = context.WithValue(ctx, startTimeKey{}, time.Now())
+	spanAttrs := []attribute.KeyValue{
+		attribute.String("sync.operation", info.Operation),
+		attribute.Bool("sync.push", info.Push),
+		attribute.Bool("sync.pull", info.Pull),
+		attribute.Bool("sync.uv", info.UV),
+		attribute.String("sync.project_code", info.ProjectCode),
+	}
+	if info.PeerID != "" {
+		spanAttrs = append(spanAttrs, attribute.String("sync.peer_id", info.PeerID))
+	}
 	ctx, _ = o.tracer.Start(ctx, info.Operation+".session",
-		trace.WithAttributes(
-			attribute.String("sync.operation", info.Operation),
-			attribute.Bool("sync.push", info.Push),
-			attribute.Bool("sync.pull", info.Pull),
-			attribute.Bool("sync.uv", info.UV),
-			attribute.String("sync.project_code", info.ProjectCode),
-		),
+		trace.WithAttributes(spanAttrs...),
 	)
 	return ctx
 }
@@ -123,6 +138,8 @@ func (o *OTelObserver) Completed(ctx context.Context, info libsync.SessionEnd, e
 		attribute.Int("sync.files_received", info.FilesRecvd),
 		attribute.Int("sync.uv_files_sent", info.UVFilesSent),
 		attribute.Int("sync.uv_files_received", info.UVFilesRecvd),
+		attribute.Int64("sync.bytes_sent", info.BytesSent),
+		attribute.Int64("sync.bytes_received", info.BytesRecvd),
 		attribute.Int("sync.errors_count", len(info.Errors)),
 	)
 	if err != nil {
@@ -152,6 +169,8 @@ func (o *OTelObserver) Completed(ctx context.Context, info libsync.SessionEnd, e
 	o.filesRecvd.Record(ctx, int64(info.FilesRecvd), attrs)
 	o.uvFilesSent.Record(ctx, int64(info.UVFilesSent), attrs)
 	o.uvFilesRecvd.Record(ctx, int64(info.UVFilesRecvd), attrs)
+	o.bytesSent.Record(ctx, info.BytesSent, attrs)
+	o.bytesRecvd.Record(ctx, info.BytesRecvd, attrs)
 }
 
 func (o *OTelObserver) Error(ctx context.Context, err error) {

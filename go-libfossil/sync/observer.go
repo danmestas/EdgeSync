@@ -8,6 +8,7 @@ type SessionStart struct {
 	Push, Pull  bool
 	UV          bool
 	ProjectCode string
+	PeerID      string // identifies the leaf agent instance
 }
 
 // SessionEnd describes the result of a sync or clone operation.
@@ -17,6 +18,7 @@ type SessionEnd struct {
 	FilesSent, FilesRecvd         int
 	UVFilesSent, UVFilesRecvd     int
 	UVGimmesSent                  int
+	BytesSent, BytesRecvd         int64
 	ProjectCode                   string
 	Errors                        []string
 }

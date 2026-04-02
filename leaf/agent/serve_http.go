@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/dmestas/edgesync/go-libfossil/sync"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // serveHTTP starts an HTTP server with the xfer handler and operational
@@ -20,7 +21,8 @@ func (a *Agent) serveHTTP(ctx context.Context) error {
 	mux.HandleFunc("/healthz", healthzHandler)
 	mux.Handle("/", sync.XferHandler(a.repo, sync.HandleSync))
 
-	srv := &http.Server{Handler: mux}
+	handler := otelhttp.NewMiddleware("edgesync-leaf-http")(mux)
+	srv := &http.Server{Handler: handler}
 
 	ln, err := net.Listen("tcp", a.config.ServeHTTPAddr)
 	if err != nil {

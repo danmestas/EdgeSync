@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -17,6 +16,9 @@ import (
 
 	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
 )
+
+// version is set at build time via ldflags.
+var version = "dev"
 
 func main() {
 	repoPath := flag.String("repo", envOrDefault("LEAF_REPO", ""), "path to Fossil repository file (required)")
@@ -37,9 +39,12 @@ func main() {
 	overrideLock := flag.Bool("override-lock", false, "ignore lock conflicts (implies allow-fork)")
 
 	// OTel flags (fall back to standard OTEL_* env vars)
-	otelEndpoint := flag.String("otel-endpoint", envOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""), "OTel OTLP endpoint")
-	otelHeaders := flag.String("otel-headers", envOrDefault("OTEL_EXPORTER_OTLP_HEADERS", ""), "OTel OTLP headers (key=value,key=value)")
+	otelEndpoint := flag.String("otel-endpoint", envOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""), "OTel OTLP gRPC endpoint (e.g. 100.105.156.92:4317)")
+	otelInsecure := flag.Bool("otel-insecure", envOrDefault("OTEL_EXPORTER_OTLP_INSECURE", "true") == "true", "skip TLS for OTel endpoint (default true for Tailscale)")
 	otelServiceName := flag.String("otel-service-name", envOrDefault("OTEL_SERVICE_NAME", "edgesync-leaf"), "OTel service name")
+	otelEnvironment := flag.String("otel-environment", envOrDefault("EDGESYNC_ENVIRONMENT", "dev"), "deployment environment (dev, production)")
+	otelSampleRatio := flag.Float64("otel-sample-ratio", 1.0, "trace sampling ratio (0.0-1.0)")
+	otelMetricInterval := flag.Duration("otel-metric-interval", 0, "metric export interval (0 = SDK default 60s)")
 
 	flag.Parse()
 
@@ -52,9 +57,14 @@ func main() {
 	// Setup telemetry
 	ctx := context.Background()
 	telCfg := telemetry.TelemetryConfig{
-		ServiceName: *otelServiceName,
-		Endpoint:    *otelEndpoint,
-		Headers:     parseHeaders(*otelHeaders),
+		ServiceName:    *otelServiceName,
+		Endpoint:       *otelEndpoint,
+		Insecure:       *otelInsecure,
+		Environment:    *otelEnvironment,
+		Version:        version,
+		RepoPath:       *repoPath,
+		SampleRatio:    *otelSampleRatio,
+		MetricInterval: *otelMetricInterval,
 	}
 	shutdown, err := telemetry.Setup(ctx, telCfg)
 	if err != nil {
@@ -65,7 +75,7 @@ func main() {
 	if *otelEndpoint == "" {
 		slog.Info("telemetry disabled: no OTEL_EXPORTER_OTLP_ENDPOINT or --otel-endpoint set")
 	} else {
-		slog.Info("telemetry enabled", "endpoint", *otelEndpoint, "service", *otelServiceName)
+		slog.Info("telemetry enabled", "endpoint", *otelEndpoint, "service", *otelServiceName, "environment", *otelEnvironment)
 	}
 
 	// Create observer (nil-safe: if no endpoint, OTel uses no-op providers)
@@ -89,6 +99,7 @@ func main() {
 		Autosync:         parseAutosyncMode(*autosyncFlag),
 		AllowFork:        *allowFork,
 		OverrideLock:     *overrideLock,
+		Logger:           func(msg string) { slog.Info(msg) },
 	}
 
 	a, err := agent.New(cfg)
@@ -97,12 +108,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Register content cache metrics (no-op if cache is nil).
+	telemetry.RegisterCacheMetrics(nil, a.ContentCache())
+
 	if err := a.Start(); err != nil {
 		slog.Error("agent start failed", "error", err)
 		os.Exit(1)
 	}
 
-	slog.Info("leaf-agent started", "repo", *repoPath, "nats", *natsURL, "poll", *poll)
+	slog.Info("leaf-agent started", "repo", *repoPath, "nats", *natsURL, "poll", *poll, "version", version)
 	awaitSignals(a, shutdown)
 }
 
@@ -131,24 +145,9 @@ func awaitSignals(a *agent.Agent, shutdown func(context.Context) error) {
 	}
 }
 
-// parseHeaders parses "key=value,key=value" into a map.
-func parseHeaders(s string) map[string]string {
-	if s == "" {
-		return nil
-	}
-	headers := make(map[string]string)
-	for _, pair := range strings.Split(s, ",") {
-		k, v, ok := strings.Cut(pair, "=")
-		if ok {
-			headers[strings.TrimSpace(k)] = strings.TrimSpace(v)
-		}
-	}
-	return headers
-}
-
 // parseAutosyncMode converts a CLI string to an AutosyncMode value.
 func parseAutosyncMode(s string) agent.AutosyncMode {
-	switch strings.ToLower(s) {
+	switch s {
 	case "on":
 		return agent.AutosyncOn
 	case "pullonly":

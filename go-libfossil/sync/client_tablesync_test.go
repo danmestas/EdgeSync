@@ -75,7 +75,7 @@ func TestTableSyncEndToEnd(t *testing.T) {
 	}}
 
 	_, err := Sync(context.Background(), clientRepo, transport, SyncOpts{
-		Pull: true, Push: true,
+		Pull: true, Push: true, XTableSync: true,
 		ProjectCode: "p", ServerCode: "s",
 	})
 	if err != nil {
@@ -168,7 +168,7 @@ func TestTableSyncDeletion(t *testing.T) {
 	}}
 
 	_, err = Sync(context.Background(), clientRepo, transport, SyncOpts{
-		Pull: true, Push: true,
+		Pull: true, Push: true, XTableSync: true,
 		ProjectCode: "p", ServerCode: "s",
 	})
 	if err != nil {
@@ -222,7 +222,7 @@ func TestTableSyncSchemaDeployment(t *testing.T) {
 	}}
 
 	_, err := Sync(context.Background(), clientRepo, transport, SyncOpts{
-		Pull: true, Push: true,
+		Pull: true, Push: true, XTableSync: true,
 		ProjectCode: "p", ServerCode: "s",
 	})
 	if err != nil {

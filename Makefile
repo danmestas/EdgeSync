@@ -4,11 +4,13 @@
 
 build: edgesync leaf bridge
 
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
 edgesync:
 	go build -buildvcs=false -o bin/edgesync ./cmd/edgesync
 
 leaf:
-	cd leaf && go build -buildvcs=false -o ../bin/leaf ./cmd/leaf
+	cd leaf && go build -buildvcs=false -ldflags "-X main.version=$(VERSION)" -o ../bin/leaf ./cmd/leaf
 
 bridge:
 	cd bridge && go build -buildvcs=false -o ../bin/bridge ./cmd/bridge
@@ -39,6 +41,7 @@ test:
 	go test ./sim/ -run 'TestFaultProxy|TestGenerateSchedule|TestBuggify' -count=1
 	go test ./sim/ -run 'TestServeHTTP|TestLeafToLeaf|TestAgentServe' -count=1 -timeout=120s
 	go test ./sim/ -run 'TestInterop' -count=1 -short -timeout=60s
+	go test ./sim/ -run 'TestSimulation' -sim.seed=1 -count=1 -timeout=120s
 
 # --- Setup (first-time onboarding) ---
 
