@@ -81,13 +81,14 @@ func (s *session) buildTableXIGotCards(info repo.TableInfo) ([]xfer.Card, error)
 	}
 
 	pkCols := extractPKColumns(info.Def)
+	pkColDefs := extractPKColumnDefs(info.Def)
 	var cards []xfer.Card
 	for i, row := range rows {
 		pkValues := make(map[string]any)
 		for _, col := range pkCols {
 			pkValues[col] = row[col]
 		}
-		pkHash := repo.PKHash(pkValues)
+		pkHash := repo.PKHash(pkColDefs, pkValues)
 		mtime := mtimes[i]
 
 		// BUGGIFY: 2% chance send stale mtime to test server-side comparison.
@@ -118,7 +119,7 @@ func (s *session) buildTableSendCards(info repo.TableInfo) ([]xfer.Card, error) 
 		}
 	}
 
-	// Emit xrow for rows queued to send.
+	// Emit xrow or xdelete for rows queued to send.
 	if sends, ok := s.xTableToSend[info.Name]; ok {
 		for pkHash := range sends {
 			row, mtime, err := repo.LookupXRow(s.repo.DB(), info.Name, info.Def, pkHash)
@@ -129,16 +130,40 @@ func (s *session) buildTableSendCards(info repo.TableInfo) ([]xfer.Card, error) 
 				delete(sends, pkHash)
 				continue
 			}
-			rowJSON, err := json.Marshal(row)
-			if err != nil {
-				return nil, fmt.Errorf("buildTableSendCards: marshal row %s/%s: %w", info.Name, pkHash, err)
+			if repo.IsTombstone(info.Def, row) {
+				// BUGGIFY: 3% chance skip sending xdelete to test re-queue next round.
+				if s.opts.Buggify != nil && s.opts.Buggify.Check("client.buildTableSendCards.skipXDelete", 0.03) {
+					delete(sends, pkHash)
+					continue
+				}
+				// Send xdelete with PK data.
+				pkCols := extractPKColumns(info.Def)
+				pkValues := make(map[string]any)
+				for _, col := range pkCols {
+					pkValues[col] = row[col]
+				}
+				pkData, err := json.Marshal(pkValues)
+				if err != nil {
+					return nil, fmt.Errorf("buildTableSendCards: marshal pk %s/%s: %w", info.Name, pkHash, err)
+				}
+				cards = append(cards, &xfer.XDeleteCard{
+					Table:  info.Name,
+					PKHash: pkHash,
+					MTime:  mtime,
+					PKData: pkData,
+				})
+			} else {
+				rowJSON, err := json.Marshal(row)
+				if err != nil {
+					return nil, fmt.Errorf("buildTableSendCards: marshal row %s/%s: %w", info.Name, pkHash, err)
+				}
+				cards = append(cards, &xfer.XRowCard{
+					Table:   info.Name,
+					PKHash:  pkHash,
+					MTime:   mtime,
+					Content: rowJSON,
+				})
 			}
-			cards = append(cards, &xfer.XRowCard{
-				Table:   info.Name,
-				PKHash:  pkHash,
-				MTime:   mtime,
-				Content: rowJSON,
-			})
 			delete(sends, pkHash)
 		}
 	}
@@ -148,6 +173,9 @@ func (s *session) buildTableSendCards(info repo.TableInfo) ([]xfer.Card, error) 
 
 // processXTableCard dispatches incoming table sync cards to their handlers.
 func (s *session) processXTableCard(card xfer.Card) error {
+	if card == nil {
+		panic("session.processXTableCard: card must not be nil")
+	}
 	switch c := card.(type) {
 	case *xfer.SchemaCard:
 		return s.handleXSchemaCard(c)
@@ -157,6 +185,8 @@ func (s *session) processXTableCard(card xfer.Card) error {
 		return s.handleXGimmeResponse(c)
 	case *xfer.XRowCard:
 		return s.handleXRowResponse(c)
+	case *xfer.XDeleteCard:
+		return s.handleXDeleteResponse(c)
 	}
 	return nil
 }
@@ -254,9 +284,19 @@ func (s *session) handleXRowResponse(c *xfer.XRowCard) error {
 		return fmt.Errorf("handleXRowResponse: ensure schema: %w", err)
 	}
 
+	def, err := s.getXTableDef(c.Table)
+	if err != nil {
+		return fmt.Errorf("handleXRowResponse: get table def %s: %w", c.Table, err)
+	}
+
 	var row map[string]any
-	if err := json.Unmarshal(c.Content, &row); err != nil {
+	rowDec := json.NewDecoder(bytesReader(c.Content))
+	rowDec.UseNumber()
+	if err := rowDec.Decode(&row); err != nil {
 		return fmt.Errorf("handleXRowResponse: unmarshal %s/%s: %w", c.Table, c.PKHash, err)
+	}
+	if def != nil {
+		coerceJSONNumbers(row, *def)
 	}
 
 	if err := repo.UpsertXRow(s.repo.DB(), c.Table, row, c.MTime); err != nil {
@@ -271,13 +311,65 @@ func (s *session) handleXRowResponse(c *xfer.XRowCard) error {
 	return nil
 }
 
+// handleXDeleteResponse processes an xdelete from the server response.
+func (s *session) handleXDeleteResponse(c *xfer.XDeleteCard) error {
+	if c == nil {
+		panic("session.handleXDeleteResponse: c must not be nil")
+	}
+
+	// BUGGIFY: 5% chance drop received xdelete to test re-send next round.
+	if s.opts.Buggify != nil && s.opts.Buggify.Check("client.handleXDeleteResponse.drop", 0.05) {
+		return nil
+	}
+
+	if err := repo.EnsureSyncSchema(s.repo.DB()); err != nil {
+		return fmt.Errorf("handleXDeleteResponse: ensure schema: %w", err)
+	}
+
+	def, err := s.getXTableDef(c.Table)
+	if err != nil {
+		return fmt.Errorf("handleXDeleteResponse: get table def %s: %w", c.Table, err)
+	}
+	if def == nil {
+		return nil
+	}
+
+	if err := applyXDeleteLocally(s.repo.DB(), c.Table, *def, c.PKHash, c.MTime, c.PKData); err != nil {
+		return err
+	}
+
+	// Remove from gimmes if present.
+	if gimmes, ok := s.xTableGimmes[c.Table]; ok {
+		delete(gimmes, c.PKHash)
+	}
+
+	return nil
+}
+
 // extractPKColumns returns the names of all primary key columns from a TableDef.
 // This is a package-level function shared by both client and handler.
 func extractPKColumns(def repo.TableDef) []string {
+	if len(def.Columns) == 0 {
+		panic("extractPKColumns: def.Columns must not be empty")
+	}
 	var pkCols []string
 	for _, col := range def.Columns {
 		if col.PK {
 			pkCols = append(pkCols, col.Name)
+		}
+	}
+	return pkCols
+}
+
+// extractPKColumnDefs returns the ColumnDef of all PK columns from a TableDef.
+func extractPKColumnDefs(def repo.TableDef) []repo.ColumnDef {
+	if len(def.Columns) == 0 {
+		panic("extractPKColumnDefs: def.Columns must not be empty")
+	}
+	var pkCols []repo.ColumnDef
+	for _, col := range def.Columns {
+		if col.PK {
+			pkCols = append(pkCols, col)
 		}
 	}
 	return pkCols

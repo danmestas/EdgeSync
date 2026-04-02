@@ -101,6 +101,51 @@ func TestXGimmeCard_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestXDeleteCardType(t *testing.T) {
+	c := &XDeleteCard{Table: "devices", PKHash: "abc123", MTime: 2000, PKData: []byte(`{"device_id":"d1"}`)}
+	if c.Type() != CardXDelete {
+		t.Fatalf("got %v, want CardXDelete", c.Type())
+	}
+}
+
+func TestXDeleteCard_RoundTrip(t *testing.T) {
+	original := &XDeleteCard{
+		Table:  "devices",
+		PKHash: "abc123def456",
+		MTime:  1711300000,
+		PKData: []byte(`{"device_id":"d1"}`),
+	}
+	var buf bytes.Buffer
+	if err := EncodeCard(&buf, original); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	r := bufio.NewReader(&buf)
+	got, err := DecodeCard(r)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	xd, ok := got.(*XDeleteCard)
+	if !ok {
+		t.Fatalf("got %T, want *XDeleteCard", got)
+	}
+	if xd.Table != original.Table || xd.PKHash != original.PKHash || xd.MTime != original.MTime {
+		t.Errorf("fields mismatch: got %+v", xd)
+	}
+	if string(xd.PKData) != string(original.PKData) {
+		t.Errorf("PKData = %q, want %q", xd.PKData, original.PKData)
+	}
+}
+
+func FuzzParseXDelete(f *testing.F) {
+	f.Add("devices abc123 1711300000 18\n{\"device_id\":\"d1\"}\n")
+	f.Add("t a 0 0\n\n")
+	f.Add("")
+	f.Fuzz(func(t *testing.T, input string) {
+		r := bufio.NewReader(bytes.NewReader([]byte("xdelete " + input)))
+		_, _ = DecodeCard(r) // must not panic
+	})
+}
+
 func TestXRowCard_RoundTrip(t *testing.T) {
 	original := &XRowCard{
 		Table: "peer_registry", PKHash: "abc123", MTime: 1711300000,

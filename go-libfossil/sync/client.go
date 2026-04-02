@@ -549,7 +549,7 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 				s.uvToSend[c.Name] = true
 			}
 
-		case *xfer.SchemaCard, *xfer.XIGotCard, *xfer.XGimmeCard, *xfer.XRowCard:
+		case *xfer.SchemaCard, *xfer.XIGotCard, *xfer.XGimmeCard, *xfer.XRowCard, *xfer.XDeleteCard:
 			if err := s.processXTableCard(card); err != nil {
 				return false, err
 			}
