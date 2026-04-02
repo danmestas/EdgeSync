@@ -328,7 +328,7 @@ func (s *session) loadFileCard(uuid string) (*xfer.FileCard, int, error) {
 	if !ok {
 		return nil, 0, fmt.Errorf("blob %s not found", uuid)
 	}
-	data, err := content.Expand(s.repo.DB(), rid)
+	data, err := s.cache.Expand(s.repo.DB(), rid)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -647,7 +647,7 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 // For non-delta files, returns the payload directly. For deltas, expands
 // the base and applies the delta. Returns ErrDeltaSourceMissing if the
 // delta source is not in the repo.
-func resolveFileContent(r *repo.Repo, uuid, deltaSrc string, payload []byte) ([]byte, error) {
+func resolveFileContent(r *repo.Repo, uuid, deltaSrc string, payload []byte, cache *content.Cache) ([]byte, error) {
 	if deltaSrc == "" {
 		return payload, nil
 	}
@@ -655,7 +655,7 @@ func resolveFileContent(r *repo.Repo, uuid, deltaSrc string, payload []byte) ([]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrDeltaSourceMissing, deltaSrc)
 	}
-	baseContent, err := content.Expand(r.DB(), srcRid)
+	baseContent, err := cache.Expand(r.DB(), srcRid)
 	if err != nil {
 		return nil, fmt.Errorf("expanding delta source %s: %w", deltaSrc, err)
 	}
@@ -668,7 +668,7 @@ func resolveFileContent(r *repo.Repo, uuid, deltaSrc string, payload []byte) ([]
 
 // storeReceivedFile validates and stores a received file/cfile blob.
 // Returns ErrDeltaSourceMissing if the delta source is not found.
-func storeReceivedFile(r *repo.Repo, uuid, deltaSrc string, payload []byte) error {
+func storeReceivedFile(r *repo.Repo, uuid, deltaSrc string, payload []byte, cache *content.Cache) error {
 	if r == nil { panic("storeReceivedFile: r must not be nil") }
 	if uuid == "" { panic("storeReceivedFile: uuid must not be empty") }
 	if payload == nil { panic("storeReceivedFile: payload must not be nil") }
@@ -676,7 +676,7 @@ func storeReceivedFile(r *repo.Repo, uuid, deltaSrc string, payload []byte) erro
 		return fmt.Errorf("sync: invalid UUID format: %s", uuid)
 	}
 
-	fullContent, err := resolveFileContent(r, uuid, deltaSrc, payload)
+	fullContent, err := resolveFileContent(r, uuid, deltaSrc, payload, cache)
 	if err != nil {
 		return err
 	}
@@ -781,7 +781,7 @@ func (s *session) loadDBPhantoms() error {
 // phantoms for referenced blobs; we promote those to session phantoms so
 // gimme cards are emitted in the next round.
 func (s *session) handleFileCard(uuid, deltaSrc string, payload []byte) error {
-	if err := storeReceivedFile(s.repo, uuid, deltaSrc, payload); err != nil {
+	if err := storeReceivedFile(s.repo, uuid, deltaSrc, payload, s.cache); err != nil {
 		return err
 	}
 
