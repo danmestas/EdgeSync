@@ -51,6 +51,8 @@ Fossil stores blobs with a 4-byte big-endian uncompressed size prefix followed b
 
 `blob.Compress()` and `blob.Decompress()` handle this format. `blob.Store` auto-marks new blobs as `unclustered` (matching C's `content_put_ex`). `unsent` is a caller concern.
 
+**Verify-before-commit:** `Store()` and `StoreDelta()` re-read, decompress (and for deltas, re-apply), and re-hash after INSERT — unconditionally, matching Fossil's `content_put_pk()`. Catches compression or delta bugs before they persist. BUGGIFY sites in `Decompress` (2% truncation) and `Expand` (1% byte-flip) exercise this in DST.
+
 ## Xfer Wire Format
 
 HTTP POST to `/xfer`, Content-Type `application/x-fossil`, body is zlib-compressed (RFC 1950). Newline-separated cards.
