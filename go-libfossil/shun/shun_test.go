@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/db"
 	"github.com/dmestas/edgesync/go-libfossil/shun"
 
@@ -103,5 +104,47 @@ func TestAddIdempotent(t *testing.T) {
 	}
 	if entries[0].Comment != "second" {
 		t.Errorf("comment = %q, want %q", entries[0].Comment, "second")
+	}
+}
+
+func TestPurgeStandaloneBlob(t *testing.T) {
+	d := setupDB(t)
+
+	// Store a blob and shun it.
+	rid, uuid, err := blob.Store(d, []byte("secret content"))
+	if err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+
+	if err := shun.Add(d, uuid, "purge test"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	result, err := shun.Purge(d)
+	if err != nil {
+		t.Fatalf("Purge: %v", err)
+	}
+
+	if result.BlobsDeleted != 1 {
+		t.Errorf("BlobsDeleted = %d, want 1", result.BlobsDeleted)
+	}
+
+	// Verify blob is gone.
+	var count int
+	d.QueryRow("SELECT COUNT(*) FROM blob WHERE rid=?", rid).Scan(&count)
+	if count != 0 {
+		t.Error("blob row still exists after purge")
+	}
+}
+
+func TestPurgeEmpty(t *testing.T) {
+	d := setupDB(t)
+
+	result, err := shun.Purge(d)
+	if err != nil {
+		t.Fatalf("Purge: %v", err)
+	}
+	if result.BlobsDeleted != 0 || result.DeltasExpanded != 0 || result.PrivateCleaned != 0 {
+		t.Errorf("expected zero counts, got %+v", result)
 	}
 }
