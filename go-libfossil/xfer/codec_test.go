@@ -871,3 +871,36 @@ func TestDecodeCFile_FossilBlobFormat(t *testing.T) {
 		t.Errorf("Content = %q, want %q", cf.Content, content)
 	}
 }
+
+// --- ci-lock pragma round-trip ---
+
+func TestCkinLockPragma_RoundTrip(t *testing.T) {
+	cards := []Card{
+		&PragmaCard{Name: "ci-lock", Values: []string{"abc123def456", "client-001"}},
+		&PragmaCard{Name: "ci-lock-fail", Values: []string{"alice", "1712000000"}},
+	}
+	msg := &Message{Cards: cards}
+	encoded, err := msg.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(decoded.Cards) != 2 {
+		t.Fatalf("got %d cards, want 2", len(decoded.Cards))
+	}
+
+	lock := decoded.Cards[0].(*PragmaCard)
+	if lock.Name != "ci-lock" || len(lock.Values) != 2 ||
+		lock.Values[0] != "abc123def456" || lock.Values[1] != "client-001" {
+		t.Fatalf("ci-lock = %+v", lock)
+	}
+
+	fail := decoded.Cards[1].(*PragmaCard)
+	if fail.Name != "ci-lock-fail" || len(fail.Values) != 2 ||
+		fail.Values[0] != "alice" || fail.Values[1] != "1712000000" {
+		t.Fatalf("ci-lock-fail = %+v", fail)
+	}
+}
