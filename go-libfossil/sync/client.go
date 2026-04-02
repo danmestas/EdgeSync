@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/dmestas/edgesync/go-libfossil/blob"
 	"github.com/dmestas/edgesync/go-libfossil/content"
@@ -109,6 +111,14 @@ func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
 		s.igotSentThisRound += len(privCards)
 		s.roundStats.IgotsSent += len(privCards)
 		cards = append(cards, privCards...)
+	}
+
+	// ci-lock: request check-in lock on first round only.
+	if s.opts.CkinLock != nil && cycle == 0 {
+		cards = append(cards, &xfer.PragmaCard{
+			Name:   "ci-lock",
+			Values: []string{s.opts.CkinLock.ParentUUID, s.opts.CkinLock.ClientID},
+		})
 	}
 
 	// UV: pragma uv-hash on first round
@@ -507,6 +517,12 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 				s.uvPushOK = true
 			} else if c.Name == "uv-pull-only" {
 				s.uvPullOnly = true
+			} else if c.Name == "ci-lock-fail" && len(c.Values) >= 2 {
+				mtime, _ := strconv.ParseInt(c.Values[1], 10, 64)
+				s.result.CkinLockFail = &CkinLockFail{
+					HeldBy: c.Values[0],
+					Since:  time.Unix(mtime, 0),
+				}
 			}
 
 		case *xfer.UVIGotCard:

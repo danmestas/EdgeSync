@@ -1,12 +1,14 @@
 package sync
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/dmestas/edgesync/go-libfossil/xfer"
 	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
 )
 
@@ -117,5 +119,55 @@ func TestCkinLock_ParentNotLeaf(t *testing.T) {
 	fail = processCkinLock(d, uuid, "client-B", "bob", DefaultCkinLockTimeout)
 	if fail != nil {
 		t.Fatalf("expected non-leaf parent lock to be cleaned, got: %+v", fail)
+	}
+}
+
+func TestCkinLock_SyncRoundTrip(t *testing.T) {
+	serverRepo := newCkinLockTestRepo(t)
+
+	// Insert a leaf blob on the server so the lock doesn't get cleaned
+	// up by expireStaleLocks (which removes locks for non-leaf parents).
+	parentUUID := "abcd0000000000000000000000000000000000ab"
+	insertLeafBlob(t, serverRepo, parentUUID)
+
+	transport := &MockTransport{
+		Handler: func(req *xfer.Message) *xfer.Message {
+			resp, _ := HandleSync(context.Background(), serverRepo, req)
+			return resp
+		},
+	}
+
+	clientRepo := newCkinLockTestRepo(t)
+	result, err := Sync(context.Background(), clientRepo, transport, SyncOpts{
+		Pull: true,
+		CkinLock: &CkinLockReq{
+			ParentUUID: parentUUID,
+			ClientID:   "client-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if result.CkinLockFail != nil {
+		t.Fatalf("unexpected lock fail: %+v", result.CkinLockFail)
+	}
+
+	// Second client should get lock-fail.
+	result2, err := Sync(context.Background(), clientRepo, transport, SyncOpts{
+		Pull: true,
+		CkinLock: &CkinLockReq{
+			ParentUUID: parentUUID,
+			ClientID:   "client-2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Sync 2: %v", err)
+	}
+	if result2.CkinLockFail == nil {
+		t.Fatal("expected lock fail for second client")
+	}
+	// Default user with no login card is "nobody"
+	if result2.CkinLockFail.HeldBy != "nobody" {
+		t.Fatalf("HeldBy = %q, want %q", result2.CkinLockFail.HeldBy, "nobody")
 	}
 }
