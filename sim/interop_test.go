@@ -12,16 +12,16 @@ import (
 	"testing"
 	"time"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/content"
-	"github.com/dmestas/edgesync/go-libfossil/db"
-	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
-	"github.com/dmestas/edgesync/go-libfossil/delta"
-	"github.com/dmestas/edgesync/go-libfossil/hash"
-	"github.com/dmestas/edgesync/go-libfossil/manifest"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/sync"
-	"github.com/dmestas/edgesync/go-libfossil/uv"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/content"
+	"github.com/danmestas/go-libfossil/db"
+	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
+	"github.com/danmestas/go-libfossil/delta"
+	"github.com/danmestas/go-libfossil/hash"
+	"github.com/danmestas/go-libfossil/manifest"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/sync"
+	"github.com/danmestas/go-libfossil/uv"
 )
 
 // verifyAllBlobs queries all non-phantom blobs from the database,

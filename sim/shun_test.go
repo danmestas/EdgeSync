@@ -10,15 +10,15 @@ import (
 	"testing"
 	"time"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/blob"
-	"github.com/dmestas/edgesync/go-libfossil/content"
-	"github.com/dmestas/edgesync/go-libfossil/db"
-	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/shun"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	"github.com/dmestas/edgesync/go-libfossil/sync"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/blob"
+	"github.com/danmestas/go-libfossil/content"
+	"github.com/danmestas/go-libfossil/db"
+	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/shun"
+	"github.com/danmestas/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/sync"
 )
 
 // TestInterop_ShunPurge_FossilRebuild creates a go-libfossil repo, shuns one

@@ -6,7 +6,7 @@ import (
 	"math/rand"
 
 	"github.com/dmestas/edgesync/bridge/bridge"
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
+	"github.com/danmestas/go-libfossil/xfer"
 )
 
 // SimNetwork simulates the network between leaf agents and the bridge.

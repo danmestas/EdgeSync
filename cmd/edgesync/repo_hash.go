@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dmestas/edgesync/go-libfossil/hash"
+	"github.com/danmestas/go-libfossil/hash"
 )
 
 type RepoHashCmd struct {

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"math/rand"
 
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
+	"github.com/danmestas/go-libfossil/repo"
+	libsync "github.com/danmestas/go-libfossil/sync"
+	"github.com/danmestas/go-libfossil/xfer"
 )
 
 // PeerNetwork simulates a peer-to-peer network where each leaf's

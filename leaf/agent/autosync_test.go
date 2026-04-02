@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/checkout"
-	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
-	"github.com/dmestas/edgesync/go-libfossil/manifest"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/checkout"
+	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
+	"github.com/danmestas/go-libfossil/manifest"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
+	libsync "github.com/danmestas/go-libfossil/sync"
+	"github.com/danmestas/go-libfossil/xfer"
 )
 
 // newTestCheckout creates a repo with an initial checkin, opens a checkout,

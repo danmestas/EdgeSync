@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/bisect"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/bisect"
 )
 
 type RepoBisectCmd struct {

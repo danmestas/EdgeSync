@@ -1,0 +1,9 @@
+/Users/dmestas/projects/EdgeSync/iroh-sidecar/target/debug/deps/num_enum_derive-c71d391f04b8e9e4.d: /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num_enum_derive-0.7.6/src/lib.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num_enum_derive-0.7.6/src/enum_attributes.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num_enum_derive-0.7.6/src/parsing.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num_enum_derive-0.7.6/src/utils.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num_enum_derive-0.7.6/src/variant_attributes.rs
+
+/Users/dmestas/projects/EdgeSync/iroh-sidecar/target/debug/deps/libnum_enum_derive-c71d391f04b8e9e4.dylib: /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num_enum_derive-0.7.6/src/lib.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num_enum_derive-0.7.6/src/enum_attributes.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num_enum_derive-0.7.6/src/parsing.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num_enum_derive-0.7.6/src/utils.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num_enum_derive-0.7.6/src/variant_attributes.rs
+
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num_enum_derive-0.7.6/src/lib.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num_enum_derive-0.7.6/src/enum_attributes.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num_enum_derive-0.7.6/src/parsing.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num_enum_derive-0.7.6/src/utils.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num_enum_derive-0.7.6/src/variant_attributes.rs:

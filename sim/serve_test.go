@@ -13,12 +13,12 @@ import (
 
 	natsserver "github.com/nats-io/nats-server/v2/server"
 
-	"github.com/dmestas/edgesync/go-libfossil/blob"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	"github.com/dmestas/edgesync/go-libfossil/sync"
+	"github.com/danmestas/go-libfossil/blob"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/sync"
 	"github.com/dmestas/edgesync/leaf/agent"
-	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
+	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
 )
 
 // TestServeHTTPFossilClone starts a leaf serving HTTP, then uses a real

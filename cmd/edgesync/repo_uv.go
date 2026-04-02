@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/dmestas/edgesync/go-libfossil/uv"
+	"github.com/danmestas/go-libfossil/uv"
 )
 
 type RepoUVCmd struct {

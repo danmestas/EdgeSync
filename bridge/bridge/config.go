@@ -3,7 +3,7 @@ package bridge
 import (
 	"fmt"
 
-	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
+	libsync "github.com/danmestas/go-libfossil/sync"
 )
 
 // Config holds the settings for a Bridge instance.

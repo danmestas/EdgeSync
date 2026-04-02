@@ -5,8 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/dmestas/edgesync/go-libfossil/auth"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/auth"
+	"github.com/danmestas/go-libfossil/repo"
 )
 
 type RepoUserCmd struct {

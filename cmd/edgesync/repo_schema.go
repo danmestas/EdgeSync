@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dmestas/edgesync/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/repo"
 )
 
 type SchemaCmd struct {

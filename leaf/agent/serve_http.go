@@ -6,7 +6,7 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/dmestas/edgesync/go-libfossil/sync"
+	"github.com/danmestas/go-libfossil/sync"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 

@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
+	libsync "github.com/danmestas/go-libfossil/sync"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )

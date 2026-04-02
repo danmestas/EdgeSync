@@ -6,7 +6,7 @@ import (
 	"context"
 	"time"
 
-	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
+	libsync "github.com/danmestas/go-libfossil/sync"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"

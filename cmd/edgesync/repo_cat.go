@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dmestas/edgesync/go-libfossil/blob"
-	"github.com/dmestas/edgesync/go-libfossil/content"
+	"github.com/danmestas/go-libfossil/blob"
+	"github.com/danmestas/go-libfossil/content"
 )
 
 type RepoCatCmd struct {

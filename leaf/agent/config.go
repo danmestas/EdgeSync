@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
+	"github.com/danmestas/go-libfossil/simio"
+	libsync "github.com/danmestas/go-libfossil/sync"
 	"github.com/nats-io/nats.go"
 )
 

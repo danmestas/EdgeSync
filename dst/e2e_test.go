@@ -5,12 +5,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmestas/edgesync/go-libfossil/blob"
-	"github.com/dmestas/edgesync/go-libfossil/db"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/blob"
+	"github.com/danmestas/go-libfossil/db"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
 
-	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
+	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
 )
 
 func createMasterRepo(t *testing.T) *repo.Repo {

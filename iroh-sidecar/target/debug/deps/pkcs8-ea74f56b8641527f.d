@@ -1,0 +1,10 @@
+/Users/dmestas/projects/EdgeSync/iroh-sidecar/target/debug/deps/pkcs8-ea74f56b8641527f.d: /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pkcs8-0.11.0-rc.11/src/lib.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pkcs8-0.11.0-rc.11/src/error.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pkcs8-0.11.0-rc.11/src/private_key_info.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pkcs8-0.11.0-rc.11/src/traits.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pkcs8-0.11.0-rc.11/src/version.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pkcs8-0.11.0-rc.11/src/../README.md
+
+/Users/dmestas/projects/EdgeSync/iroh-sidecar/target/debug/deps/libpkcs8-ea74f56b8641527f.rmeta: /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pkcs8-0.11.0-rc.11/src/lib.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pkcs8-0.11.0-rc.11/src/error.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pkcs8-0.11.0-rc.11/src/private_key_info.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pkcs8-0.11.0-rc.11/src/traits.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pkcs8-0.11.0-rc.11/src/version.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pkcs8-0.11.0-rc.11/src/../README.md
+
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pkcs8-0.11.0-rc.11/src/lib.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pkcs8-0.11.0-rc.11/src/error.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pkcs8-0.11.0-rc.11/src/private_key_info.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pkcs8-0.11.0-rc.11/src/traits.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pkcs8-0.11.0-rc.11/src/version.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pkcs8-0.11.0-rc.11/src/../README.md:

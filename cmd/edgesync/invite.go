@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dmestas/edgesync/go-libfossil/auth"
+	"github.com/danmestas/go-libfossil/auth"
 )
 
 type RepoInviteCmd struct {

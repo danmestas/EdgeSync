@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	"github.com/dmestas/edgesync/go-libfossil/sync"
-	"github.com/dmestas/edgesync/go-libfossil/uv"
+	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/sync"
+	"github.com/danmestas/go-libfossil/uv"
 )
 
 // TestSimUVSyncPull verifies that UV files added via fossil CLI can be

@@ -1,6 +1,6 @@
 package main
 
-import "github.com/dmestas/edgesync/go-libfossil/undo"
+import "github.com/danmestas/go-libfossil/undo"
 
 type RepoUndoCmd struct {
 	Dir string `short:"d" help:"Checkout directory" default:"."`

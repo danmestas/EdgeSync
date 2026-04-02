@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/uv"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/uv"
 )
 
 // --- Table sync test helpers ---

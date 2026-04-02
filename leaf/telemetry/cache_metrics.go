@@ -5,7 +5,7 @@ package telemetry
 import (
 	"context"
 
-	"github.com/dmestas/edgesync/go-libfossil/content"
+	"github.com/danmestas/go-libfossil/content"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
 )

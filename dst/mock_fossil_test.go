@@ -5,11 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dmestas/edgesync/go-libfossil/blob"
-	"github.com/dmestas/edgesync/go-libfossil/hash"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
+	"github.com/danmestas/go-libfossil/blob"
+	"github.com/danmestas/go-libfossil/hash"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/xfer"
 )
 
 func createMockFossil(t *testing.T) *MockFossil {

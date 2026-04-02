@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/dmestas/edgesync/bridge/bridge"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	"github.com/dmestas/edgesync/go-libfossil/sync"
-	"github.com/dmestas/edgesync/go-libfossil/uv"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/sync"
+	"github.com/danmestas/go-libfossil/uv"
 	"github.com/dmestas/edgesync/leaf/agent"
 )
 

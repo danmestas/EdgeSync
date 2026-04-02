@@ -13,8 +13,8 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
-	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
+	libsync "github.com/danmestas/go-libfossil/sync"
+	"github.com/danmestas/go-libfossil/xfer"
 )
 
 const instrumentationName = "edgesync-bridge"

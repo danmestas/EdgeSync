@@ -12,12 +12,12 @@ import (
 
 	natsserver "github.com/nats-io/nats-server/v2/server"
 
-	"github.com/dmestas/edgesync/go-libfossil/checkout"
-	"github.com/dmestas/edgesync/go-libfossil/manifest"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	"github.com/dmestas/edgesync/go-libfossil/testutil"
-	"github.com/dmestas/edgesync/go-libfossil/verify"
+	"github.com/danmestas/go-libfossil/checkout"
+	"github.com/danmestas/go-libfossil/manifest"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/testutil"
+	"github.com/danmestas/go-libfossil/verify"
 	"github.com/dmestas/edgesync/leaf/agent"
 )
 
