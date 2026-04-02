@@ -328,6 +328,7 @@ func (a *Agent) runSync(ctx context.Context) (*sync.SyncResult, error) {
 		PeerID:       a.config.PeerID,
 		Buggify:      a.config.Buggify,
 		UV:           a.config.UV,
+		XTableSync:   a.config.ServeNATSEnabled, // only sync x-tables between EdgeSync peers
 		Private:      a.config.Private,
 		Observer:     a.config.Observer,
 		ContentCache: a.contentCache,

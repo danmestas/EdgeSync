@@ -38,6 +38,7 @@ type SyncOpts struct {
 	PeerID      string // identifies this leaf agent instance (for observability)
 	MaxSend     int    // byte budget per round for file payloads (0 defaults to DefaultMaxSend)
 	UV          bool   // enable unversioned file sync (wiki, forum, attachments)
+	XTableSync  bool   // enable extension table sync (peer_registry, etc.) — only between EdgeSync peers
 	Private     bool   // enable private artifact sync
 	Env         *simio.Env     // nil defaults to RealEnv
 	Buggify     BuggifyChecker // nil in production — used by DST for fault injection

@@ -41,6 +41,7 @@ test:
 	go test ./sim/ -run 'TestFaultProxy|TestGenerateSchedule|TestBuggify' -count=1
 	go test ./sim/ -run 'TestServeHTTP|TestLeafToLeaf|TestAgentServe' -count=1 -timeout=120s
 	go test ./sim/ -run 'TestInterop' -count=1 -short -timeout=60s
+	go test ./sim/ -run 'TestSimulation' -sim.seed=1 -count=1 -timeout=120s
 
 # --- Setup (first-time onboarding) ---
 

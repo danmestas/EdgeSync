@@ -157,12 +157,14 @@ func (s *session) buildRequest(cycle int) (*xfer.Message, error) {
 		cards = append(cards, uvCards...)
 	}
 
-	// Table sync cards
-	xTableCards, err := s.buildXTableCards()
-	if err != nil {
-		return nil, fmt.Errorf("buildRequest xtable: %w", err)
+	// Table sync cards (only between EdgeSync peers, not real Fossil servers)
+	if s.opts.XTableSync {
+		xTableCards, err := s.buildXTableCards()
+		if err != nil {
+			return nil, fmt.Errorf("buildRequest xtable: %w", err)
+		}
+		cards = append(cards, xTableCards...)
 	}
-	cards = append(cards, xTableCards...)
 
 	// 7. Login card computed LAST, prepended to the front.
 	// Nonce = SHA1 of all other cards encoded + random comment.
@@ -624,15 +626,17 @@ func (s *session) processResponse(msg *xfer.Message) (bool, error) {
 	s.nUvGimmeSent = 0
 	s.nUvFileRcvd = 0
 
-	// Table sync convergence
-	for _, gimmes := range s.xTableGimmes {
-		if len(gimmes) > 0 {
-			return false, nil
+	// Table sync convergence (only when x-table sync is enabled)
+	if s.opts.XTableSync {
+		for _, gimmes := range s.xTableGimmes {
+			if len(gimmes) > 0 {
+				return false, nil
+			}
 		}
-	}
-	for _, sends := range s.xTableToSend {
-		if len(sends) > 0 {
-			return false, nil
+		for _, sends := range s.xTableToSend {
+			if len(sends) > 0 {
+				return false, nil
+			}
 		}
 	}
 
