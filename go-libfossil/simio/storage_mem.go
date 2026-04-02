@@ -12,15 +12,17 @@ import (
 
 // MemStorage is an in-memory Storage implementation for tests and browser fallback.
 type MemStorage struct {
-	files map[string][]byte
-	dirs  map[string]bool
+	files  map[string][]byte
+	dirs   map[string]bool
+	mtimes map[string]time.Time
 }
 
 // NewMemStorage creates a new in-memory storage.
 func NewMemStorage() *MemStorage {
 	return &MemStorage{
-		files: make(map[string][]byte),
-		dirs:  make(map[string]bool),
+		files:  make(map[string][]byte),
+		dirs:   make(map[string]bool),
+		mtimes: make(map[string]time.Time),
 	}
 }
 
@@ -35,6 +37,7 @@ func (m *MemStorage) Stat(path string) (os.FileInfo, error) {
 			name:  filepath.Base(path),
 			size:  int64(len(data)),
 			isDir: false,
+			mtime: m.mtimes[path],
 		}, nil
 	}
 
@@ -195,6 +198,18 @@ func (m *MemStorage) ReadDir(path string) ([]fs.DirEntry, error) {
 	return entries, nil
 }
 
+// Chtimes sets the access and modification times of the named file.
+func (m *MemStorage) Chtimes(path string, atime, mtime time.Time) error {
+	if path == "" {
+		panic("MemStorage.Chtimes: path must not be empty")
+	}
+	if _, ok := m.files[path]; !ok {
+		return fmt.Errorf("chtimes %s: %w", path, os.ErrNotExist)
+	}
+	m.mtimes[path] = mtime
+	return nil
+}
+
 // memDirEntry implements fs.DirEntry for in-memory directory entries.
 type memDirEntry struct {
 	name  string
@@ -222,6 +237,7 @@ type memFileInfo struct {
 	name  string
 	size  int64
 	isDir bool
+	mtime time.Time
 }
 
 func (f *memFileInfo) Name() string       { return f.name }
@@ -232,6 +248,6 @@ func (f *memFileInfo) Mode() os.FileMode {
 	}
 	return 0644
 }
-func (f *memFileInfo) ModTime() time.Time { return time.Time{} }
+func (f *memFileInfo) ModTime() time.Time { return f.mtime }
 func (f *memFileInfo) IsDir() bool        { return f.isDir }
 func (f *memFileInfo) Sys() any           { return nil }
