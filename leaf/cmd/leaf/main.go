@@ -62,6 +62,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	if *otelEndpoint == "" {
+		slog.Info("telemetry disabled: no OTEL_EXPORTER_OTLP_ENDPOINT or --otel-endpoint set")
+	} else {
+		slog.Info("telemetry enabled", "endpoint", *otelEndpoint, "service", *otelServiceName)
+	}
+
 	// Create observer (nil-safe: if no endpoint, OTel uses no-op providers)
 	var obs libsync.Observer = telemetry.NewOTelObserver(nil, nil)
 	if verboseFlag {
