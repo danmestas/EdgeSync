@@ -173,6 +173,108 @@ func TestExtensionTableNullableValueColumns(t *testing.T) {
 	}
 }
 
+func TestIsTombstone(t *testing.T) {
+	def := TableDef{
+		Columns: []ColumnDef{
+			{Name: "id", Type: "text", PK: true},
+			{Name: "data", Type: "text"},
+			{Name: "count", Type: "integer"},
+		},
+		Conflict: "mtime-wins",
+	}
+	if IsTombstone(def, map[string]any{"id": "k1", "data": "hello", "count": int64(5)}) {
+		t.Error("live row should not be tombstone")
+	}
+	if !IsTombstone(def, map[string]any{"id": "k1", "data": nil, "count": nil}) {
+		t.Error("row with all nil values should be tombstone")
+	}
+	if IsTombstone(def, map[string]any{"id": "k1", "data": nil, "count": int64(5)}) {
+		t.Error("partial nil should not be tombstone")
+	}
+}
+
+func TestDeleteXRowByPKHash(t *testing.T) {
+	r := setupTSRepo(t)
+	EnsureSyncSchema(r.DB())
+	def := TableDef{
+		Columns:  []ColumnDef{{Name: "id", Type: "text", PK: true}, {Name: "data", Type: "text"}},
+		Conflict: "mtime-wins",
+	}
+	RegisterSyncedTable(r.DB(), "del_test", def, 1000)
+	UpsertXRow(r.DB(), "del_test", map[string]any{"id": "k1", "data": "hello"}, 1000)
+
+	pkColDefs := []ColumnDef{{Name: "id", Type: "text", PK: true}}
+	pkHash := PKHash(pkColDefs, map[string]any{"id": "k1"})
+	deleted, err := DeleteXRowByPKHash(r.DB(), "del_test", def, pkHash, 2000)
+	if err != nil {
+		t.Fatalf("DeleteXRowByPKHash: %v", err)
+	}
+	if !deleted {
+		t.Fatal("expected deletion to apply")
+	}
+
+	row, mtime, err := LookupXRow(r.DB(), "del_test", def, pkHash)
+	if err != nil {
+		t.Fatalf("LookupXRow: %v", err)
+	}
+	if row == nil {
+		t.Fatal("tombstone row should still exist")
+	}
+	if mtime != 2000 {
+		t.Errorf("mtime = %d, want 2000", mtime)
+	}
+	if !IsTombstone(def, row) {
+		t.Error("row should be tombstone after deletion")
+	}
+
+	deleted, err = DeleteXRowByPKHash(r.DB(), "del_test", def, pkHash, 1500)
+	if err != nil {
+		t.Fatalf("DeleteXRowByPKHash (older): %v", err)
+	}
+	if deleted {
+		t.Error("older delete should be rejected")
+	}
+
+	UpsertXRow(r.DB(), "del_test", map[string]any{"id": "k1", "data": "revived"}, 3000)
+	row, _, _ = LookupXRow(r.DB(), "del_test", def, pkHash)
+	if IsTombstone(def, row) {
+		t.Error("row should be live after resurrection")
+	}
+}
+
+func TestCatalogHashExcludesTombstones(t *testing.T) {
+	r := setupTSRepo(t)
+	EnsureSyncSchema(r.DB())
+	def := TableDef{
+		Columns:  []ColumnDef{{Name: "id", Type: "text", PK: true}, {Name: "data", Type: "text"}},
+		Conflict: "mtime-wins",
+	}
+	RegisterSyncedTable(r.DB(), "cat_test", def, 1000)
+
+	UpsertXRow(r.DB(), "cat_test", map[string]any{"id": "k1", "data": "a"}, 1000)
+	UpsertXRow(r.DB(), "cat_test", map[string]any{"id": "k2", "data": "b"}, 1000)
+	hashBefore, _ := CatalogHash(r.DB(), "cat_test", def)
+
+	pkColDefs := []ColumnDef{{Name: "id", Type: "text", PK: true}}
+	pkHash := PKHash(pkColDefs, map[string]any{"id": "k1"})
+	DeleteXRowByPKHash(r.DB(), "cat_test", def, pkHash, 2000)
+	hashAfter, _ := CatalogHash(r.DB(), "cat_test", def)
+
+	if hashBefore == hashAfter {
+		t.Error("catalog hash should change after deletion")
+	}
+
+	pkHash2 := PKHash(pkColDefs, map[string]any{"id": "k2"})
+	DeleteXRowByPKHash(r.DB(), "cat_test", def, pkHash2, 2000)
+	hashEmpty, _ := CatalogHash(r.DB(), "cat_test", def)
+
+	RegisterSyncedTable(r.DB(), "cat_empty", def, 1000)
+	hashFresh, _ := CatalogHash(r.DB(), "cat_empty", def)
+	if hashEmpty != hashFresh {
+		t.Errorf("all-tombstone table hash %q != empty table hash %q", hashEmpty, hashFresh)
+	}
+}
+
 func TestCatalogHash(t *testing.T) {
 	r := setupTSRepo(t)
 	EnsureSyncSchema(r.DB())

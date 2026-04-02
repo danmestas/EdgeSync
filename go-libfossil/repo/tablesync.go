@@ -438,6 +438,81 @@ func LookupXRow(d *db.DB, tableName string, def TableDef, pkHash string) (map[st
 	return nil, 0, nil
 }
 
+// IsTombstone returns true if all non-PK value columns in the row are nil.
+// A tombstone represents a deleted row (UV-style convention).
+// Returns false for tables with only PK columns (no value columns to NULL).
+func IsTombstone(def TableDef, row map[string]any) bool {
+	hasValueCol := false
+	for _, col := range def.Columns {
+		if col.PK {
+			continue
+		}
+		hasValueCol = true
+		if row[col.Name] != nil {
+			return false
+		}
+	}
+	return hasValueCol
+}
+
+// DeleteXRowByPKHash tombstones a row identified by PK hash. Sets all non-PK
+// value columns to NULL and updates mtime. Returns true if applied, false if
+// row doesn't exist or has a newer mtime.
+func DeleteXRowByPKHash(d *db.DB, tableName string, def TableDef, pkHash string, mtime int64) (bool, error) {
+	if d == nil {
+		panic("repo.DeleteXRowByPKHash: d must not be nil")
+	}
+
+	row, currentMtime, err := LookupXRow(d, tableName, def, pkHash)
+	if err != nil {
+		return false, err
+	}
+	if row == nil {
+		return false, nil
+	}
+	if currentMtime > mtime {
+		return false, nil
+	}
+
+	var pkCols []string
+	var pkValues []any
+	for _, col := range def.Columns {
+		if col.PK {
+			pkCols = append(pkCols, col.Name)
+			pkValues = append(pkValues, row[col.Name])
+		}
+	}
+
+	var setClauses []string
+	for _, col := range def.Columns {
+		if col.PK {
+			continue
+		}
+		setClauses = append(setClauses, fmt.Sprintf("%s = NULL", col.Name))
+	}
+	setClauses = append(setClauses, "mtime = ?")
+
+	var whereClauses []string
+	for _, pk := range pkCols {
+		whereClauses = append(whereClauses, fmt.Sprintf("%s = ?", pk))
+	}
+
+	args := []any{mtime}
+	args = append(args, pkValues...)
+
+	sqlStr := fmt.Sprintf(
+		"UPDATE x_%s SET %s WHERE %s",
+		tableName,
+		strings.Join(setClauses, ", "),
+		strings.Join(whereClauses, " AND "),
+	)
+	_, err = d.Exec(sqlStr, args...)
+	if err != nil {
+		return false, fmt.Errorf("repo.DeleteXRowByPKHash: update: %w", err)
+	}
+	return true, nil
+}
+
 // CatalogHash computes the SHA1 hash of all rows in the extension table.
 // Format: "pk_hash mtime\n" for each row, sorted by pk_hash.
 func CatalogHash(d *db.DB, tableName string, def TableDef) (string, error) {
@@ -468,6 +543,10 @@ func CatalogHash(d *db.DB, tableName string, def TableDef) (string, error) {
 	}
 	var entries []entry
 	for i, row := range rows {
+		// Exclude tombstones from catalog hash (UV convention).
+		if IsTombstone(def, row) {
+			continue
+		}
 		pkValues := make(map[string]any)
 		for _, col := range pkColDefs {
 			pkValues[col.Name] = row[col.Name]
