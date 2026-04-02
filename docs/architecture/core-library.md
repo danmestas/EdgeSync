@@ -129,6 +129,16 @@ Hard limit: 70 lines. 10 functions were split into same-file private helpers (la
 - `\r\n` normalized to `\n` before comparison
 - Side-by-side deferred until a consumer needs it (architecture supports adding formatters)
 
+## File History (finfo)
+
+`manifest.FileHistory()` — walks the `mlink` table to return a file's change history across checkins, ordered by date descending.
+
+- **Query**: `mlink JOIN event JOIN blob` by `fnid`, with `COALESCE` for nullable `pid`/`pfnid` columns
+- **Action classification**: `fid=0` → deleted, `pid=0` → added, `pfnid != fnid` → renamed, `fid=pid` → unchanged (filtered out), else → modified
+- **Unchanged filtering**: `insertMlinks` (in `Checkin`) creates rows for all files in a commit, not just changes. `FileHistory` skips entries where `fid == pid` so consumers only see actual modifications.
+- **`FileAt(r, checkinRID, path)`**: convenience function resolving a file's blob RID at a specific checkin via `mlink`. Enables diff-between-versions (`content.Expand` both sides, pipe through `diff.Unified`).
+- **Rename tracking**: `pfnid` column is in the schema but not yet populated by `Checkin` or `crosslink`. When wired, `FileHistory` will automatically surface renames via the existing `pfnid != fnid` check.
+
 ## Content Cache
 
 `content.Cache` — concurrency-safe LRU cache for `content.Expand` results, keyed by `FslID`. Eliminates redundant delta-chain walks (SQLite queries + zlib decompress + delta apply per chain link).
