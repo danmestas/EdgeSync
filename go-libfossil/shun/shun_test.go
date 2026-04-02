@@ -250,3 +250,48 @@ func TestPurgeOrphanPrivate(t *testing.T) {
 		t.Error("private row still exists after purge")
 	}
 }
+
+func TestPurgeCorruptDeltaRollback(t *testing.T) {
+	d := setupDB(t)
+
+	// Store blob A (full).
+	contentA := []byte("base content for corruption test, needs to be long enough")
+	ridA, uuidA, err := blob.Store(d, contentA)
+	if err != nil {
+		t.Fatalf("Store A: %v", err)
+	}
+
+	// Store blob B as delta from A, then corrupt B's content.
+	ridB, _, err := blob.StoreDelta(d, []byte("derived content for corruption test, also long"), ridA)
+	if err != nil {
+		t.Fatalf("StoreDelta B: %v", err)
+	}
+
+	// Corrupt B's blob content so delta expansion fails.
+	_, err = d.Exec("UPDATE blob SET content=X'DEADBEEF' WHERE rid=?", ridB)
+	if err != nil {
+		t.Fatalf("corrupt B: %v", err)
+	}
+
+	// Shun A and attempt purge — should fail and roll back.
+	if err := shun.Add(d, uuidA, "corrupt test"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	_, err = shun.Purge(d)
+	if err == nil {
+		t.Fatal("expected Purge to fail with corrupt delta")
+	}
+	t.Logf("Purge error (expected): %v", err)
+
+	// Verify both blobs still exist (transaction rolled back).
+	var countA, countB int
+	d.QueryRow("SELECT COUNT(*) FROM blob WHERE rid=?", ridA).Scan(&countA)
+	d.QueryRow("SELECT COUNT(*) FROM blob WHERE rid=?", ridB).Scan(&countB)
+	if countA != 1 {
+		t.Error("blob A should still exist after failed purge")
+	}
+	if countB != 1 {
+		t.Error("blob B should still exist after failed purge")
+	}
+}
