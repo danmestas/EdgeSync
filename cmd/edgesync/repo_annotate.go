@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	ann "github.com/dmestas/edgesync/go-libfossil/annotate"
+	libfossil "github.com/danmestas/go-libfossil"
+	ann "github.com/danmestas/go-libfossil/annotate"
 )
 
 type RepoAnnotateCmd struct {

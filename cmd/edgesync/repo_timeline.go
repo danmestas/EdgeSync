@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/dmestas/edgesync/go-libfossil/manifest"
+	"github.com/danmestas/go-libfossil/manifest"
 )
 
 type RepoTimelineCmd struct {

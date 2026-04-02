@@ -5,7 +5,7 @@ package telemetry
 import (
 	"context"
 
-	"github.com/dmestas/edgesync/go-libfossil/checkout"
+	"github.com/danmestas/go-libfossil/checkout"
 )
 
 // CheckoutOTelObserver is a no-op on WASM builds.

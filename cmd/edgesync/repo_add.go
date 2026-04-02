@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/dmestas/edgesync/go-libfossil/undo"
+	"github.com/danmestas/go-libfossil/undo"
 )
 
 type RepoAddCmd struct {

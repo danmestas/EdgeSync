@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dmestas/edgesync/go-libfossil/undo"
+	"github.com/danmestas/go-libfossil/undo"
 )
 
 type RepoRenameCmd struct {

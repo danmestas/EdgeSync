@@ -14,8 +14,8 @@ import (
 	natsserver "github.com/nats-io/nats-server/v2/server"
 
 	"github.com/dmestas/edgesync/bridge/bridge"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
 	"github.com/dmestas/edgesync/leaf/agent"
 )
 

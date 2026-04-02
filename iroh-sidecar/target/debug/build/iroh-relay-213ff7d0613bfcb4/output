@@ -1,0 +1,7 @@
+cargo:rustc-check-cfg=cfg(wasm_browser)
+cargo:rustc-env=VERGEN_GIT_SHA=VERGEN_IDEMPOTENT_OUTPUT
+cargo:warning=not within a suitable 'git' worktree!
+cargo:warning=VERGEN_GIT_SHA set to default
+cargo:rerun-if-changed=build.rs
+cargo:rerun-if-env-changed=VERGEN_IDEMPOTENT
+cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH

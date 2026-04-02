@@ -11,11 +11,11 @@ import (
 
 	leafagent "github.com/dmestas/edgesync/leaf/agent"
 
-	"github.com/dmestas/edgesync/go-libfossil/manifest"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	"github.com/dmestas/edgesync/go-libfossil/testutil"
-	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
+	"github.com/danmestas/go-libfossil/manifest"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/testutil"
+	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
 )
 
 // startFossilServer starts a fossil server on a free port and returns the URL

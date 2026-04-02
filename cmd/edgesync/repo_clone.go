@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dmestas/edgesync/go-libfossil/auth"
-	"github.com/dmestas/edgesync/go-libfossil/sync"
+	"github.com/danmestas/go-libfossil/auth"
+	"github.com/danmestas/go-libfossil/sync"
 )
 
 type RepoCloneCmd struct {

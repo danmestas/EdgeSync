@@ -3,9 +3,9 @@ module github.com/dmestas/edgesync/leaf
 go 1.26.0
 
 require (
-	github.com/dmestas/edgesync/go-libfossil v0.0.0
-	github.com/dmestas/edgesync/go-libfossil/db/driver/modernc v0.0.0-00010101000000-000000000000
-	github.com/dmestas/edgesync/go-libfossil/db/driver/ncruces v0.0.0-00010101000000-000000000000
+	github.com/danmestas/go-libfossil v0.1.0
+	github.com/danmestas/go-libfossil/db/driver/modernc v0.1.0
+	github.com/danmestas/go-libfossil/db/driver/ncruces v0.1.0
 	github.com/nats-io/nats-server/v2 v2.12.6
 	github.com/nats-io/nats.go v1.49.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.17.0
@@ -20,13 +20,6 @@ require (
 	go.opentelemetry.io/otel/sdk/log v0.18.0
 	go.opentelemetry.io/otel/sdk/metric v1.42.0
 	go.opentelemetry.io/otel/trace v1.42.0
-)
-
-replace (
-	github.com/dmestas/edgesync/go-libfossil => ../go-libfossil
-	github.com/dmestas/edgesync/go-libfossil/db/driver/mattn => ../go-libfossil/db/driver/mattn
-	github.com/dmestas/edgesync/go-libfossil/db/driver/modernc => ../go-libfossil/db/driver/modernc
-	github.com/dmestas/edgesync/go-libfossil/db/driver/ncruces => ../go-libfossil/db/driver/ncruces
 )
 
 require (

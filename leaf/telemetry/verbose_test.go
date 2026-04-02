@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
+	libsync "github.com/danmestas/go-libfossil/sync"
 )
 
 func TestVerboseObserver(t *testing.T) {

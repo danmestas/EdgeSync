@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/dmestas/edgesync/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/repo"
 )
 
 // ensureClientID returns the persistent edgesync-client-id for this repo,

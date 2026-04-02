@@ -5,7 +5,7 @@ package telemetry
 import (
 	"context"
 
-	"github.com/dmestas/edgesync/go-libfossil/checkout"
+	"github.com/danmestas/go-libfossil/checkout"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"

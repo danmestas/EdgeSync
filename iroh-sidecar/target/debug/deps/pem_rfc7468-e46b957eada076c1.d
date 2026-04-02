@@ -1,0 +1,10 @@
+/Users/dmestas/projects/EdgeSync/iroh-sidecar/target/debug/deps/pem_rfc7468-e46b957eada076c1.d: /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pem-rfc7468-1.0.0/src/lib.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pem-rfc7468-1.0.0/src/decoder.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pem-rfc7468-1.0.0/src/encoder.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pem-rfc7468-1.0.0/src/error.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pem-rfc7468-1.0.0/src/grammar.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pem-rfc7468-1.0.0/src/../README.md
+
+/Users/dmestas/projects/EdgeSync/iroh-sidecar/target/debug/deps/libpem_rfc7468-e46b957eada076c1.rmeta: /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pem-rfc7468-1.0.0/src/lib.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pem-rfc7468-1.0.0/src/decoder.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pem-rfc7468-1.0.0/src/encoder.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pem-rfc7468-1.0.0/src/error.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pem-rfc7468-1.0.0/src/grammar.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pem-rfc7468-1.0.0/src/../README.md
+
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pem-rfc7468-1.0.0/src/lib.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pem-rfc7468-1.0.0/src/decoder.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pem-rfc7468-1.0.0/src/encoder.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pem-rfc7468-1.0.0/src/error.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pem-rfc7468-1.0.0/src/grammar.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pem-rfc7468-1.0.0/src/../README.md:

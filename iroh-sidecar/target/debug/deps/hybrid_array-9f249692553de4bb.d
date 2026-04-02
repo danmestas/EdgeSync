@@ -1,0 +1,11 @@
+/Users/dmestas/projects/EdgeSync/iroh-sidecar/target/debug/deps/hybrid_array-9f249692553de4bb.d: /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/lib.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/sizes.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/flatten.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/from_fn.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/iter.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/traits.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/../README.md
+
+/Users/dmestas/projects/EdgeSync/iroh-sidecar/target/debug/deps/libhybrid_array-9f249692553de4bb.rmeta: /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/lib.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/sizes.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/flatten.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/from_fn.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/iter.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/traits.rs /Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/../README.md
+
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/lib.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/sizes.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/flatten.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/from_fn.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/iter.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/traits.rs:
+/Users/dmestas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hybrid-array-0.4.8/src/../README.md:
