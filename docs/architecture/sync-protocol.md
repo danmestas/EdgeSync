@@ -63,6 +63,7 @@ Transport listeners (`ServeHTTP`, `ServeNATS`, `ServeP2P` stub) call `HandleFunc
 | `xigot TABLE PK_HASH MTIME` | Both | "I have this row at this version." |
 | `xgimme TABLE PK_HASH` | Both | "Send me this row." |
 | `xrow TABLE PK_HASH MTIME SIZE\nJSON` | Both | Full row payload |
+| `xdelete TABLE PK_HASH MTIME SIZE\nPKDATA` | Both | Row deletion (tombstone). PKData = JSON PK column values for tombstone insertion on peers that never had the row. |
 
 ### Cluster Cards
 
@@ -138,18 +139,24 @@ Client sends `reqconfig` for `project-code`, `project-name`, `server-code`. Serv
 
 ### Remote Schema Sync (Extension Tables)
 
-Generic table sync primitive using `xigot`/`xgimme`/`xrow` exchange pattern (same as UV sync). All extension tables prefixed `x_` to protect Fossil core tables.
+Generic table sync primitive using `xigot`/`xgimme`/`xrow`/`xdelete` exchange pattern (same as UV sync). All extension tables prefixed `x_` to protect Fossil core tables.
 
 **Conflict strategies** (per-table):
-- `self-write`: peer can only write rows where PK matches its identity
-- `mtime-wins`: last mtime wins (any peer can write any row)
-- `owner-write`: row has `_owner` field, only owner can update
+- `self-write`: peer can only write/delete rows where `_owner` matches its identity
+- `mtime-wins`: last mtime wins (any peer can write/delete any row)
+- `owner-write`: row has `_owner` field, only owner can update/delete
 
 **Schema propagation:** `schema` card in control phase creates table on receiving peer. Append-only evolution (ADD COLUMN only). Version monotonically increases; downgrades rejected.
 
-**Short-circuit:** `pragma xtable-hash TABLE HASH` skips exchange when catalog hashes match. Catalog hash = SHA1 of sorted `pk_hash + " " + mtime + "\n"`.
+**Short-circuit:** `pragma xtable-hash TABLE HASH` skips exchange when catalog hashes match. Catalog hash = SHA1 of sorted `pk_hash + " " + mtime + "\n"` for live (non-tombstone) rows only.
 
-**SQL injection protection:** Table/column names validated against `^[a-z_][a-z0-9_]*$`. JSON payloads always parameterized.
+**Row deletion (tombstones):** Following Fossil's UV pattern, deleted rows remain in `x_<table>` with all non-PK value columns set to NULL and mtime updated to the deletion timestamp. Convention: all value columns NULL = tombstone. Tombstones are excluded from catalog hash but included in xigot exchange so deletions propagate. When a peer receives an xdelete for a row it never had, it inserts a tombstone from the PKData payload. PKData hash is verified against PKHash before insertion. Resurrection: an xrow with a newer mtime than the tombstone overwrites the NULLs.
+
+**PK hash:** Type-aware canonical normalization — values normalized to strings by declared column type (`integer` → `strconv.FormatInt`, `text` → as-is, etc.) then SHA1'd. No JSON in the hash path. Ensures determinism across JSON round-trips that coerce `int64` → `float64`.
+
+**Conflict resolution for deletions:** `self-write`/`owner-write` tables check `_owner` before accepting xdelete — only the row owner can delete. `mtime-wins` allows any peer to delete. Same ownership rules as xrow.
+
+**SQL injection protection:** Table/column names validated against `^[a-z_][a-z0-9_]*$`. JSON payloads always parameterized. Non-PK columns are nullable (required for tombstone support); PK columns remain NOT NULL.
 
 ## Private Artifacts
 

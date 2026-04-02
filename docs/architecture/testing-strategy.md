@@ -58,6 +58,8 @@ Uses production constructors (`agent.New()`, `bridge.New()`), real embedded NATS
 2. Content integrity -- byte-identical expanded content (per-repo rid via `content.Expand`)
 3. Liveness -- convergence within timeout after faults heal
 4. No duplicate blobs -- each UUID appears exactly once per repo
+5. Table sync integrity -- PK hashes and mtimes match across peers
+6. Tombstone convergence -- all peers agree on which extension table rows are tombstones
 
 ## BUGGIFY
 
@@ -78,6 +80,11 @@ Goroutine-safe fault injection inside application code. Complements the fault pr
 | `runSync()` | Return early after 1 round | 5% |
 | `handleMessage()` | Respond with empty message | 3% |
 | `buildLoginCard()` | Use wrong nonce | 2% |
+| `handleXDelete.reject` | Reject valid xdelete | 3% |
+| `sendXDelete.corruptPKData` | Corrupt PKData JSON | 2% |
+| `handleXIGot.skipXDelete` | Skip sending xdelete for tombstone | 5% |
+| `handleXDeleteResponse.drop` | Drop received xdelete | 5% |
+| `buildTableSendCards.skipXDelete` | Skip queued xdelete send | 3% |
 
 ## Fossil Interop Tests
 
