@@ -11,10 +11,14 @@ import (
 )
 
 type RepoCiCmd struct {
-	Message string   `short:"m" required:"" help:"Checkin comment"`
-	Files   []string `arg:"" required:"" help:"Files to checkin"`
-	User    string   `help:"Checkin user (default: OS username)"`
-	Parent  string   `help:"Parent version UUID (default: tip)"`
+	Message      string   `short:"m" required:"" help:"Checkin comment"`
+	Files        []string `arg:"" required:"" help:"Files to checkin"`
+	User         string   `help:"Checkin user (default: OS username)"`
+	Parent       string   `help:"Parent version UUID (default: tip)"`
+	Branch       string   `help:"Branch name for this checkin"`
+	Autosync     string   `enum:"on,off,pullonly" default:"off" help:"Autosync mode: on, off, pullonly"`
+	AllowFork    bool     `help:"Bypass fork and lock checks"`
+	OverrideLock bool     `help:"Ignore lock conflicts (implies --allow-fork)"`
 }
 
 func (c *RepoCiCmd) Run(g *Globals) error {

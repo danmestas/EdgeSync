@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "signoz": {
+      "type": "stdio",
+      "command": "/Users/dmestas/go/bin/server",
+      "args": [],
+      "env": {
+        "SIGNOZ_URL": "http://signoz.inputwizard.com",
+        "SIGNOZ_API_KEY": "not-required",
+        "LOG_LEVEL": "info"
+      }
+    }
+  }
+}

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
 	"github.com/dmestas/edgesync/go-libfossil/sync"
@@ -55,6 +56,7 @@ type Agent struct {
 	cancel         context.CancelFunc
 	done           chan struct{}
 	syncNow        chan struct{} // buffer 1
+	contentCache   *content.Cache
 	irohSidecar    *sidecar     // nil when iroh is disabled
 	irohSock       string       // Unix socket path for iroh sidecar
 	irohEndpointID string       // local iroh endpoint ID (set after sidecar ready)
@@ -88,40 +90,63 @@ func New(cfg Config) (*Agent, error) {
 		return nil, fmt.Errorf("agent: read server-code: %w", err)
 	}
 
-	natsOpts := []nats.Option{nats.Name("edgesync-leaf")}
+	natsOpts := []nats.Option{
+		nats.Name("edgesync-leaf"),
+		nats.MaxReconnects(-1),
+		nats.ReconnectWait(2 * time.Second),
+		nats.RetryOnFailedConnect(true),
+	}
 	if cfg.CustomDialer != nil {
 		natsOpts = append(natsOpts, nats.SetCustomDialer(cfg.CustomDialer))
 	}
-	if cfg.Logger != nil {
-		natsOpts = append(natsOpts, nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
-			if err != nil {
+	natsOpts = append(natsOpts, nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
+		if err != nil {
+			slog.Warn("NATS disconnected", "error", err)
+			if cfg.Logger != nil {
 				cfg.Logger("NATS disconnected: " + err.Error())
 			}
-		}))
-		natsOpts = append(natsOpts, nats.ReconnectHandler(func(_ *nats.Conn) {
+		}
+	}))
+	natsOpts = append(natsOpts, nats.ReconnectHandler(func(_ *nats.Conn) {
+		slog.Info("NATS reconnected", "url", cfg.NATSUrl)
+		if cfg.Logger != nil {
 			cfg.Logger("NATS reconnected")
-		}))
-	}
+		}
+	}))
 	nc, err := nats.Connect(cfg.NATSUrl, natsOpts...)
 	if err != nil {
 		r.Close()
 		return nil, fmt.Errorf("agent: nats connect: %w", err)
 	}
-	if cfg.Logger != nil {
-		cfg.Logger("connected to NATS: " + cfg.NATSUrl)
+	if nc.IsConnected() {
+		slog.Info("connected to NATS", "url", cfg.NATSUrl)
+		if cfg.Logger != nil {
+			cfg.Logger("connected to NATS: " + cfg.NATSUrl)
+		}
+	} else {
+		slog.Warn("NATS not yet reachable, will retry in background", "url", cfg.NATSUrl)
+		if cfg.Logger != nil {
+			cfg.Logger("warning: NATS not yet reachable at " + cfg.NATSUrl + ", will retry in background")
+		}
 	}
 
 	transport := NewNATSTransport(nc, projectCode, 0, cfg.SubjectPrefix)
 
+	var cc *content.Cache
+	if cfg.ContentCacheSize > 0 {
+		cc = content.NewCache(cfg.ContentCacheSize)
+	}
+
 	a := &Agent{
-		config:      cfg,
-		clock:       cfg.Clock,
-		repo:        r,
-		conn:        nc,
-		transport:   transport,
-		projectCode: projectCode,
-		serverCode:  serverCode,
-		syncNow:     make(chan struct{}, 1),
+		config:       cfg,
+		clock:        cfg.Clock,
+		repo:         r,
+		conn:         nc,
+		transport:    transport,
+		projectCode:  projectCode,
+		serverCode:   serverCode,
+		syncNow:      make(chan struct{}, 1),
+		contentCache: cc,
 	}
 
 	// Initialize peer registry (log warnings, don't fail startup).
@@ -139,14 +164,19 @@ func New(cfg Config) (*Agent, error) {
 // any I/O. Used by tests and the deterministic simulation harness.
 func NewFromParts(cfg Config, r *repo.Repo, t sync.Transport, projectCode, serverCode string) *Agent {
 	cfg.applyDefaults()
+	var cc *content.Cache
+	if cfg.ContentCacheSize > 0 {
+		cc = content.NewCache(cfg.ContentCacheSize)
+	}
 	return &Agent{
-		config:      cfg,
-		clock:       cfg.Clock,
-		repo:        r,
-		transport:   t,
-		projectCode: projectCode,
-		serverCode:  serverCode,
-		syncNow:     make(chan struct{}, 1),
+		config:       cfg,
+		clock:        cfg.Clock,
+		repo:         r,
+		transport:    t,
+		projectCode:  projectCode,
+		serverCode:   serverCode,
+		syncNow:      make(chan struct{}, 1),
+		contentCache: cc,
 	}
 }
 
@@ -405,16 +435,17 @@ func (a *Agent) findIrohBinary() (string, error) {
 // buildSyncOpts constructs SyncOpts from the agent's config.
 func (a *Agent) buildSyncOpts() sync.SyncOpts {
 	return sync.SyncOpts{
-		Push:        a.config.Push,
-		Pull:        a.config.Pull,
-		ProjectCode: a.projectCode,
-		ServerCode:  a.serverCode,
-		User:        a.config.User,
-		Password:    a.config.Password,
-		Buggify:     a.config.Buggify,
-		UV:          a.config.UV,
-		Private:     a.config.Private,
-		Observer:    a.config.Observer,
+		Push:         a.config.Push,
+		Pull:         a.config.Pull,
+		ProjectCode:  a.projectCode,
+		ServerCode:   a.serverCode,
+		User:         a.config.User,
+		Password:     a.config.Password,
+		Buggify:      a.config.Buggify,
+		UV:           a.config.UV,
+		Private:      a.config.Private,
+		Observer:     a.config.Observer,
+		ContentCache: a.contentCache,
 	}
 }
 

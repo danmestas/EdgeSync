@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
+	"github.com/dmestas/edgesync/go-libfossil/content"
 	"github.com/dmestas/edgesync/go-libfossil/manifest"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
 	"github.com/dmestas/edgesync/go-libfossil/simio"
@@ -40,6 +41,14 @@ type SyncOpts struct {
 	Env         *simio.Env     // nil defaults to RealEnv
 	Buggify     BuggifyChecker // nil in production — used by DST for fault injection
 	Observer    Observer       // nil defaults to no-op
+	CkinLock     *CkinLockReq    // nil = no lock requested
+	ContentCache *content.Cache  // nil = no caching (every Expand walks the full delta chain)
+}
+
+// CkinLockReq requests a server-side check-in lock.
+type CkinLockReq struct {
+	ParentUUID string
+	ClientID   string
 }
 
 // SyncResult reports what happened during a sync.
@@ -49,6 +58,7 @@ type SyncResult struct {
 	UVGimmesSent                  int
 	ArtifactsLinked               int
 	Errors                        []string
+	CkinLockFail *CkinLockFail // nil = no conflict
 }
 
 // session holds the mutable state of a running sync.
@@ -80,6 +90,7 @@ type session struct {
 	xTableToSend   map[string]map[string]bool // table -> pkHash -> true
 	xTableCache    map[string]*repo.TableDef  // cached table defs, lazily loaded
 	dephantomizeHook    func(libfossil.FslID) // called after phantom→real transition
+	cache               *content.Cache // nil = passthrough to content.Expand
 }
 
 func newSession(r *repo.Repo, opts SyncOpts) *session {
@@ -106,6 +117,7 @@ func newSession(r *repo.Repo, opts SyncOpts) *session {
 		xTableHashSent: make(map[string]bool),
 		xTableGimmes:   make(map[string]map[string]bool),
 		xTableToSend:   make(map[string]map[string]bool),
+		cache:          opts.ContentCache,
 	}
 
 	// Pre-populate uvToSend with all local non-tombstone UV files.

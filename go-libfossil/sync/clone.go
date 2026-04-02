@@ -324,7 +324,7 @@ func (cs *cloneSession) processResponse(msg *xfer.Message) (bool, error) {
 
 // handleFile stores a received file, creating a phantom on delta source miss.
 func (cs *cloneSession) handleFile(uuid, deltaSrc string, payload []byte) error {
-	err := storeReceivedFile(cs.repo, uuid, deltaSrc, payload)
+	err := storeReceivedFile(cs.repo, uuid, deltaSrc, payload, nil)
 	if err == nil {
 		delete(cs.phantoms, uuid)
 		return nil

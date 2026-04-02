@@ -3,6 +3,7 @@ package simio
 import (
 	"io/fs"
 	"os"
+	"time"
 )
 
 // Storage abstracts filesystem operations for WASM portability.
@@ -13,6 +14,7 @@ type Storage interface {
 	ReadFile(path string) ([]byte, error)
 	WriteFile(path string, data []byte, perm os.FileMode) error
 	ReadDir(path string) ([]fs.DirEntry, error)
+	Chtimes(path string, atime, mtime time.Time) error
 }
 
 // OSStorage delegates to the os package. Used in production and WASI.
@@ -24,3 +26,4 @@ func (OSStorage) MkdirAll(path string, perm os.FileMode) error                { 
 func (OSStorage) ReadFile(path string) ([]byte, error)                         { return os.ReadFile(path) }
 func (OSStorage) WriteFile(path string, data []byte, perm os.FileMode) error  { return os.WriteFile(path, data, perm) }
 func (OSStorage) ReadDir(path string) ([]fs.DirEntry, error)                  { return os.ReadDir(path) }
+func (OSStorage) Chtimes(path string, atime, mtime time.Time) error           { return os.Chtimes(path, atime, mtime) }

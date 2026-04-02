@@ -1,8 +1,11 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
+	"os"
 	"os/user"
+	"path/filepath"
 
 	libfossil "github.com/dmestas/edgesync/go-libfossil"
 	"github.com/dmestas/edgesync/go-libfossil/repo"
@@ -14,6 +17,7 @@ type CLI struct {
 	Repo   RepoCmd   `cmd:"" help:"Repository operations"`
 	Sync   SyncCmd   `cmd:"" help:"Leaf agent sync"`
 	Bridge BridgeCmd `cmd:"" help:"NATS-to-Fossil bridge"`
+	Doctor DoctorCmd `cmd:"" help:"Check development environment health"`
 }
 
 type Globals struct {
@@ -73,9 +77,57 @@ type BridgeCmd struct {
 
 func openRepo(g *Globals) (*repo.Repo, error) {
 	if g.Repo == "" {
-		return nil, fmt.Errorf("no repository specified (use -R <path>)")
+		found, err := findRepo()
+		if err != nil {
+			return nil, fmt.Errorf("no repository specified (use -R <path>)")
+		}
+		g.Repo = found
 	}
 	return repo.Open(g.Repo)
+}
+
+// findRepo searches the current directory and its parents for a .fossil file
+// or a .fslckout checkout database that points to a repo.
+func findRepo() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		// Check for .fslckout (checkout database with repo pointer).
+		ckout := filepath.Join(dir, ".fslckout")
+		if _, err := os.Stat(ckout); err == nil {
+			return repoFromCheckout(ckout)
+		}
+
+		// Check for a single .fossil file in this directory.
+		matches, _ := filepath.Glob(filepath.Join(dir, "*.fossil"))
+		if len(matches) == 1 {
+			return matches[0], nil
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return "", fmt.Errorf("no .fossil file found")
+}
+
+// repoFromCheckout reads the repository path from a .fslckout database.
+func repoFromCheckout(ckoutPath string) (string, error) {
+	db, err := sql.Open("sqlite", ckoutPath+"?mode=ro")
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	var repoPath string
+	err = db.QueryRow("SELECT value FROM vvar WHERE name='repository'").Scan(&repoPath)
+	if err != nil {
+		return "", fmt.Errorf("checkout %s: no repository path found", ckoutPath)
+	}
+	return repoPath, nil
 }
 
 // resolveRID resolves a version string to a rid.

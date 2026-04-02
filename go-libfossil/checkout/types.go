@@ -103,7 +103,7 @@ type CreateOpts struct {
 // ExtractOpts configures file extraction from a checkin.
 type ExtractOpts struct {
 	Callback func(name string, change UpdateChange) error // per-file notification
-	SetMTime bool                                         // TODO: not yet implemented
+	SetMTime bool // set file mtime to checkin timestamp
 	DryRun   bool
 	Force    bool // overwrite locally modified files
 }
@@ -112,7 +112,7 @@ type ExtractOpts struct {
 type UpdateOpts struct {
 	TargetRID libfossil.FslID // 0 → auto-calculate via CalcUpdateVersion
 	Callback  func(name string, change UpdateChange) error
-	SetMTime  bool // TODO: not yet implemented
+	SetMTime  bool // set file mtime to checkin timestamp
 	DryRun    bool
 }
 
@@ -152,7 +152,8 @@ type CommitOpts struct {
 	Branch   string    // empty → current branch
 	Tags     []string  // additional T-cards
 	Delta    bool
-	Time     time.Time // zero → env.Clock.Now()
+	Time           time.Time    // zero → env.Clock.Now()
+	PreCommitCheck func() error // nil = no check; non-nil error aborts commit
 }
 
 // RevertOpts configures reverting file changes.

@@ -29,14 +29,41 @@ graph LR
 ## Quick Start
 
 ```bash
-# Build everything
-make build
+# One command: install hooks + build + test
+make setup
 
-# Run tests (what CI runs)
-make test
+# Run the leaf agent
+bin/leaf --repo my.fossil --nats nats://localhost:4222 --serve-http :8080
 
-# Install pre-commit hook (~8s of tests before each commit)
-make setup-hooks
+# Run the edgesync CLI
+bin/edgesync repo info
+```
+
+### Dual VCS Note
+
+This repo is tracked by both Git and Fossil. Go's VCS stamping gets confused by this, so **all `go build` commands need `-buildvcs=false`**. The Makefile handles this automatically. If you run `go build` directly:
+
+```bash
+# Either pass the flag every time:
+go build -buildvcs=false ./cmd/edgesync/
+
+# Or set it once per shell session:
+export GOFLAGS="-buildvcs=false"
+go build ./cmd/edgesync/   # works without the flag now
+```
+
+If you use [direnv](https://direnv.net/), the included `.envrc` sets this for you automatically.
+
+### Telemetry (Optional)
+
+Traces, metrics, and structured logs via OpenTelemetry. Zero overhead when disabled — the leaf agent logs whether telemetry is active at startup.
+
+```bash
+# With Doppler (manages OTel secrets):
+doppler run -- bin/leaf --repo my.fossil --nats nats://localhost:4222
+
+# Or set the endpoint directly:
+OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4318 bin/leaf --repo my.fossil --nats nats://localhost:4222
 ```
 
 ## Project Layout

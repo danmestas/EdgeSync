@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
 	"github.com/dmestas/edgesync/leaf/agent"
 	"github.com/dmestas/edgesync/leaf/telemetry"
 
@@ -40,6 +41,12 @@ func main() {
 		}
 	}
 	flag.Var(&irohPeers, "iroh-peer", "remote iroh EndpointId to sync with (repeatable)")
+	var verboseFlag bool
+	flag.BoolVar(&verboseFlag, "verbose", false, "log sync round details to stderr (no OTel required)")
+	flag.BoolVar(&verboseFlag, "v", false, "alias for --verbose")
+	autosyncFlag := flag.String("autosync", "off", "autosync mode: on, off, pullonly")
+	allowFork := flag.Bool("allow-fork", false, "bypass fork and lock checks")
+	overrideLock := flag.Bool("override-lock", false, "ignore lock conflicts (implies allow-fork)")
 
 	// OTel flags (fall back to standard OTEL_* env vars)
 	otelEndpoint := flag.String("otel-endpoint", envOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""), "OTel OTLP endpoint")
@@ -67,8 +74,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	if *otelEndpoint == "" {
+		slog.Info("telemetry disabled: no OTEL_EXPORTER_OTLP_ENDPOINT or --otel-endpoint set")
+	} else {
+		slog.Info("telemetry enabled", "endpoint", *otelEndpoint, "service", *otelServiceName)
+	}
+
 	// Create observer (nil-safe: if no endpoint, OTel uses no-op providers)
-	obs := telemetry.NewOTelObserver(nil, nil)
+	var obs libsync.Observer = telemetry.NewOTelObserver(nil, nil)
+	if verboseFlag {
+		obs = telemetry.NewVerboseObserver(os.Stderr, obs)
+	}
 
 	cfg := agent.Config{
 		RepoPath:         *repoPath,
@@ -85,6 +101,9 @@ func main() {
 		IrohEnabled:      *iroh,
 		IrohPeers:        irohPeers,
 		IrohKeyPath:      *irohKeyPath,
+		Autosync:         parseAutosyncMode(*autosyncFlag),
+		AllowFork:        *allowFork,
+		OverrideLock:     *overrideLock,
 	}
 
 	a, err := agent.New(cfg)
@@ -144,6 +163,18 @@ func parseHeaders(s string) map[string]string {
 		}
 	}
 	return headers
+}
+
+// parseAutosyncMode converts a CLI string to an AutosyncMode value.
+func parseAutosyncMode(s string) agent.AutosyncMode {
+	switch strings.ToLower(s) {
+	case "on":
+		return agent.AutosyncOn
+	case "pullonly":
+		return agent.AutosyncPullOnly
+	default:
+		return agent.AutosyncOff
+	}
 }
 
 // envOrDefault returns the value of the environment variable named key,

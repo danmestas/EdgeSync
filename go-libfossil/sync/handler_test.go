@@ -31,7 +31,7 @@ func findCards[T xfer.Card](msg *xfer.Message) []T {
 func storeTestBlob(t *testing.T, r *repo.Repo, data []byte) string {
 	t.Helper()
 	uuid := hash.SHA1(data)
-	if err := storeReceivedFile(r, uuid, "", data); err != nil {
+	if err := storeReceivedFile(r, uuid, "", data, nil); err != nil {
 		t.Fatalf("storeReceivedFile: %v", err)
 	}
 	return uuid
@@ -924,7 +924,7 @@ func TestHandlerPublicFileClearsPrivate(t *testing.T) {
 	uuid := hash.SHA1(data)
 
 	// Pre-store as private.
-	storeReceivedFile(r, uuid, "", data)
+	storeReceivedFile(r, uuid, "", data, nil)
 	rid, _ := blob.Exists(r.DB(), uuid)
 	content.MakePrivate(r.DB(), int64(rid))
 	if !content.IsPrivate(r.DB(), int64(rid)) {
@@ -1237,5 +1237,117 @@ func TestSendAllClustersExcludesPrivate(t *testing.T) {
 		if ig, ok := c.(*xfer.IGotCard); ok && ig.UUID == clusterUUID {
 			t.Error("private cluster blob should be excluded from sendAllClusters")
 		}
+	}
+}
+
+func TestHandleGimmeWithContentCache(t *testing.T) {
+	r := setupSyncTestRepo(t)
+	data := []byte("cached gimme blob")
+	uuid := storeTestBlob(t, r, data)
+
+	cache := content.NewCache(1 << 20)
+
+	req := &xfer.Message{Cards: []xfer.Card{
+		&xfer.PullCard{ServerCode: "test", ProjectCode: "test"},
+		&xfer.GimmeCard{UUID: uuid},
+	}}
+	resp, err := HandleSyncWithOpts(context.Background(), r, req, HandleOpts{
+		ContentCache: cache,
+	})
+	if err != nil {
+		t.Fatalf("HandleSyncWithOpts: %v", err)
+	}
+
+	files := findCards[*xfer.FileCard](resp)
+	found := false
+	for _, f := range files {
+		if f.UUID == uuid && string(f.Content) == string(data) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected file card with correct content via cached handler")
+	}
+
+	// Cache should have been populated.
+	stats := cache.Stats()
+	if stats.Misses == 0 {
+		t.Fatal("expected at least 1 cache miss (the initial expand)")
+	}
+
+	// Second request for the same blob should hit cache.
+	resp2, err := HandleSyncWithOpts(context.Background(), r, req, HandleOpts{
+		ContentCache: cache,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files2 := findCards[*xfer.FileCard](resp2)
+	found2 := false
+	for _, f := range files2 {
+		if f.UUID == uuid && string(f.Content) == string(data) {
+			found2 = true
+		}
+	}
+	if !found2 {
+		t.Fatal("expected file card on second request (cache hit path)")
+	}
+
+	stats2 := cache.Stats()
+	if stats2.Hits == 0 {
+		t.Fatal("expected cache hit on second handler call")
+	}
+}
+
+func TestSyncRoundTripWithContentCache(t *testing.T) {
+	server := setupSyncTestRepo(t)
+	client := setupSyncTestRepo(t)
+
+	// Store a blob on the server.
+	data := []byte("sync round trip cached data")
+	serverUUID := storeTestBlob(t, server, data)
+
+	cache := content.NewCache(1 << 20)
+
+	transport := &MockTransport{
+		Handler: func(req *xfer.Message) *xfer.Message {
+			resp, err := HandleSyncWithOpts(context.Background(), server, req, HandleOpts{
+				ContentCache: cache,
+			})
+			if err != nil {
+				t.Fatalf("HandleSyncWithOpts: %v", err)
+			}
+			return resp
+		},
+	}
+
+	result, err := Sync(context.Background(), client, transport, SyncOpts{
+		Pull:         true,
+		ContentCache: cache,
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if result.FilesRecvd == 0 {
+		t.Fatal("expected to receive files")
+	}
+
+	// Verify client has the blob.
+	rid, ok := blob.Exists(client.DB(), serverUUID)
+	if !ok {
+		t.Fatal("blob not found on client after sync")
+	}
+	got, err := content.Expand(client.DB(), rid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(data) {
+		t.Fatalf("got %q, want %q", got, data)
+	}
+
+	// Cache should have recorded activity.
+	stats := cache.Stats()
+	if stats.Hits+stats.Misses == 0 {
+		t.Fatal("cache was never used during sync")
 	}
 }

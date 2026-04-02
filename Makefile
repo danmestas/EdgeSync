@@ -1,4 +1,4 @@
-.PHONY: build test clean leaf bridge edgesync iroh-sidecar wasm-wasi wasm-browser wasm dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks drivers test-interop test-iroh
+.PHONY: build test clean leaf bridge edgesync iroh-sidecar wasm-wasi wasm-browser wasm dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks setup drivers test-interop test-iroh
 
 # --- Build ---
 
@@ -30,17 +30,27 @@ clean:
 	rm -rf bin/
 
 # --- Test (what CI runs) ---
+# Unit tests run in parallel across modules; sim/dst run sequentially after.
 
 test:
-	go test ./go-libfossil/... -short -count=1
-	go test ./leaf/... -short -count=1
-	go test ./bridge/... -short -count=1
+	@pids=""; fail=0; \
+	go test ./go-libfossil/... -short -count=1 & pids="$$pids $$!"; \
+	go test ./leaf/... -short -count=1 & pids="$$pids $$!"; \
+	go test ./bridge/... -short -count=1 & pids="$$pids $$!"; \
+	for pid in $$pids; do wait $$pid || fail=1; done; \
+	if [ $$fail -ne 0 ]; then echo "FAIL: unit tests"; exit 1; fi
 	go test ./dst/ -run 'TestScenario|TestE2E|TestMockFossil|TestSimulator|TestCheck' -count=1
 	go test ./sim/ -run 'TestFaultProxy|TestGenerateSchedule|TestBuggify' -count=1
 	go test ./sim/ -run 'TestServeHTTP|TestLeafToLeaf|TestAgentServe' -count=1 -timeout=120s
 	go test ./sim/ -run 'TestInterop' -count=1 -short -timeout=60s
 
-# --- Pre-commit hook setup ---
+# --- Setup (first-time onboarding) ---
+
+setup: setup-hooks build test
+	@echo ""
+	@echo "Setup complete. Binaries in bin/. Try:"
+	@echo "  bin/edgesync repo info"
+	@echo "  bin/leaf --help"
 
 setup-hooks:
 	git config core.hooksPath .githooks

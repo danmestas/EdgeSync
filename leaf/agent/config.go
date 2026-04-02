@@ -90,6 +90,20 @@ type Config struct {
 	// IrohKeyPath is the path to the persistent Ed25519 keypair.
 	// Defaults to "<repo-dir>.iroh-key" (adjacent to the repo file).
 	IrohKeyPath string
+
+	// ContentCacheSize is the maximum bytes of expanded blob content to cache
+	// in memory (LRU). Eliminates redundant delta-chain walks during sync.
+	// 0 defaults to 32 MiB. Negative disables caching.
+	ContentCacheSize int64
+
+	// Autosync controls automatic sync around commit (default: AutosyncOff).
+	Autosync AutosyncMode
+
+	// AllowFork bypasses fork and lock checks during commit.
+	AllowFork bool
+
+	// OverrideLock ignores lock conflicts during commit (implies AllowFork).
+	OverrideLock bool
 }
 
 // applyDefaults fills in zero-valued fields with sensible defaults.
@@ -121,6 +135,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.IrohEnabled && c.IrohKeyPath == "" {
 		c.IrohKeyPath = c.RepoPath + ".iroh-key"
+	}
+	if c.ContentCacheSize == 0 {
+		c.ContentCacheSize = 32 << 20 // 32 MiB
 	}
 }
 

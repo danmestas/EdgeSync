@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestOSStorageStat(t *testing.T) {
@@ -419,6 +420,58 @@ func TestMemStorageReadDir(t *testing.T) {
 	}
 	if subdirEntries[1].Name() != "file3.txt" {
 		t.Errorf("expected file3.txt, got %s", subdirEntries[1].Name())
+	}
+}
+
+func TestMemStorageChtimes(t *testing.T) {
+	storage := NewMemStorage()
+	path := "/test/file.txt"
+
+	storage.WriteFile(path, []byte("content"), 0644)
+
+	mtime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+	if err := storage.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+
+	info, err := storage.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if !info.ModTime().Equal(mtime) {
+		t.Fatalf("ModTime = %v, want %v", info.ModTime(), mtime)
+	}
+}
+
+func TestMemStorageChtimesNotExist(t *testing.T) {
+	storage := NewMemStorage()
+
+	err := storage.Chtimes("/nonexistent.txt", time.Now(), time.Now())
+	if err == nil {
+		t.Fatal("expected error for nonexistent file")
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected ErrNotExist, got: %v", err)
+	}
+}
+
+func TestOSStorageChtimes(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.txt")
+	os.WriteFile(path, []byte("content"), 0644)
+
+	storage := OSStorage{}
+	mtime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+	if err := storage.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if !info.ModTime().Equal(mtime) {
+		t.Fatalf("ModTime = %v, want %v", info.ModTime(), mtime)
 	}
 }
 

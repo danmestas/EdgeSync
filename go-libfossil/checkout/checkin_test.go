@@ -1,6 +1,8 @@
 package checkout
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/dmestas/edgesync/go-libfossil/simio"
@@ -335,5 +337,62 @@ func TestDiscardQueue(t *testing.T) {
 	enqueued, _ = co.IsEnqueued("c")
 	if !enqueued {
 		t.Fatal("after DiscardQueue, all files should be implicitly enqueued")
+	}
+}
+
+func TestPreCommitCheck_Abort(t *testing.T) {
+	r, cleanup := newTestRepoWithCheckin(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	co, err := Create(r, dir, CreateOpts{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer co.Close()
+
+	rid1, _, _ := co.Version()
+	if err := co.Extract(rid1, ExtractOpts{}); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	co.env.Storage.WriteFile(co.dir+"/abort.txt", []byte("abort"), 0644)
+
+	wantErr := fmt.Errorf("blocked by policy")
+	_, _, err = co.Commit(CommitOpts{
+		Message:        "should not commit",
+		User:           "test",
+		PreCommitCheck: func() error { return wantErr },
+	})
+	if err == nil {
+		t.Fatal("Commit succeeded, want error from PreCommitCheck")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want wrapping %v", err, wantErr)
+	}
+}
+
+func TestPreCommitCheck_Nil(t *testing.T) {
+	r, cleanup := newTestRepoWithCheckin(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	co, err := Create(r, dir, CreateOpts{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer co.Close()
+
+	rid1, _, _ := co.Version()
+	if err := co.Extract(rid1, ExtractOpts{}); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	co.env.Storage.WriteFile(co.dir+"/ok.txt", []byte("ok"), 0644)
+
+	_, _, err = co.Commit(CommitOpts{
+		Message: "normal commit",
+		User:    "test",
+	})
+	if err != nil {
+		t.Fatalf("Commit with nil PreCommitCheck failed: %v", err)
 	}
 }

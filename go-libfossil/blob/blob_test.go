@@ -2,11 +2,14 @@ package blob
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dmestas/edgesync/go-libfossil/db"
 	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
+	"github.com/dmestas/edgesync/go-libfossil/simio"
 )
 
 func setupTestDB(t *testing.T) *db.DB {
@@ -179,6 +182,63 @@ func TestStoreExistingBlobSkipsUnclustered(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("unclustered count = %d, want 0 (already-existing blob)", count)
 	}
+}
+
+// TestStoreVerifyCatchesBuggify enables BUGGIFY and runs Store in a loop.
+// The Decompress BUGGIFY site (2% truncation) should cause at least one
+// verify failure, confirming the round-trip check catches corruption.
+func TestStoreVerifyCatchesBuggify(t *testing.T) {
+	var caught int
+	for seed := int64(0); seed < 50; seed++ {
+		d := setupTestDB(t)
+		simio.EnableBuggify(seed)
+
+		content := []byte(fmt.Sprintf("buggify store test seed=%d with enough data to compress", seed))
+		_, _, err := Store(d, content)
+
+		simio.DisableBuggify()
+
+		if err != nil && strings.Contains(err.Error(), "verify") {
+			caught++
+		}
+	}
+	if caught == 0 {
+		t.Fatal("expected at least one verify failure across 50 BUGGIFY seeds")
+	}
+	t.Logf("caught %d verify failures out of 50 seeds", caught)
+}
+
+// TestStoreDeltaVerifyCatchesBuggify enables BUGGIFY and runs StoreDelta in a loop.
+// The Decompress BUGGIFY site should cause verify failures on delta round-trip.
+func TestStoreDeltaVerifyCatchesBuggify(t *testing.T) {
+	var caught int
+	// StoreDelta calls Decompress multiple times (source load + verify read-back),
+	// so we need more seeds to hit the 2% BUGGIFY on the right call.
+	for seed := int64(0); seed < 200; seed++ {
+		d := setupTestDB(t)
+
+		// Store source without BUGGIFY so we have a clean base.
+		source := []byte("delta source content that is long enough to compress well in the test")
+		srcRid, _, err := Store(d, source)
+		if err != nil {
+			t.Fatalf("seed %d: Store source: %v", seed, err)
+		}
+
+		simio.EnableBuggify(seed)
+
+		target := []byte(fmt.Sprintf("delta target content modified for seed=%d with padding to ensure compression", seed))
+		_, _, err = StoreDelta(d, target, srcRid)
+
+		simio.DisableBuggify()
+
+		if err != nil && strings.Contains(err.Error(), "verify") {
+			caught++
+		}
+	}
+	if caught == 0 {
+		t.Fatal("expected at least one verify failure across 200 BUGGIFY seeds")
+	}
+	t.Logf("caught %d verify failures out of 200 seeds", caught)
 }
 
 func BenchmarkStore(b *testing.B) {

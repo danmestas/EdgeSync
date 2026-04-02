@@ -4,6 +4,14 @@ Fossil sync engine — replace Fossil's HTTP sync with NATS messaging or direct 
 
 See `MEMORY.md` for detailed project history, patterns, and decisions across sessions.
 
+See `docs/architecture/` for condensed architectural decision records (ARDs):
+- `core-library.md` — go-libfossil package architecture, blob format, xfer wire format, SQLite drivers
+- `sync-protocol.md` — xfer card protocol, client/server flow, clone, UV, config sync, private artifacts
+- `agent-deployment.md` — leaf agent, bridge, Docker, WASM targets, observability
+- `checkout-merge.md` — checkout/checkin, merge strategies, fork prevention, autosync, ci-lock
+- `repo-operations.md` — CLI, tags, FTS, verify/rebuild, auth, shun/purge
+- `testing-strategy.md` — test tiers, DST, sim, interop, BUGGIFY
+
 ## Architecture
 
 - **Leaf Agent** (Go): daemon that reads/writes Fossil SQLite repo DB directly. Syncs via NATS (client) and serves via HTTP or NATS (server). Can replace both client and server roles.

@@ -477,6 +477,103 @@ func TestUpdateWithFileRemoval(t *testing.T) {
 	_ = rid2 // used above
 }
 
+func TestUpdateSetMTime(t *testing.T) {
+	r, rid1, rid2, cleanup := newTestRepoWithTwoCheckins(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	co, err := Create(r, dir, CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer co.Close()
+
+	// Set checkout to rid1.
+	if err := setVVar(co.db, "checkout", itoa(int64(rid1))); err != nil {
+		t.Fatal(err)
+	}
+	var uuid1 string
+	r.DB().QueryRow("SELECT uuid FROM blob WHERE rid=?", rid1).Scan(&uuid1)
+	if err := setVVar(co.db, "checkout-hash", uuid1); err != nil {
+		t.Fatal(err)
+	}
+
+	mem := simio.NewMemStorage()
+	co.env = &simio.Env{Storage: mem, Clock: simio.RealClock{}, Rand: simio.CryptoRand{}}
+	co.dir = "/checkout"
+
+	if err := co.Extract(rid1, ExtractOpts{}); err != nil {
+		t.Fatal("extract:", err)
+	}
+
+	// Update to rid2 with SetMTime.
+	if err := co.Update(UpdateOpts{TargetRID: rid2, SetMTime: true}); err != nil {
+		t.Fatal("update:", err)
+	}
+
+	// hello.txt was modified in rid2 — should have rid2's checkin mtime (2026-01-02).
+	info, err := mem.Stat("/checkout/hello.txt")
+	if err != nil {
+		t.Fatal("stat hello.txt:", err)
+	}
+	mtime := info.ModTime()
+	if mtime.IsZero() {
+		t.Fatal("mtime should not be zero when SetMTime is true")
+	}
+	// rid2 timestamp is 2026-01-02.
+	expected := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	if !mtime.Equal(expected) {
+		t.Fatalf("hello.txt mtime = %v, want %v", mtime, expected)
+	}
+
+	// new.txt was added in rid2 — should also have rid2's mtime.
+	info2, err := mem.Stat("/checkout/new.txt")
+	if err != nil {
+		t.Fatal("stat new.txt:", err)
+	}
+	if !info2.ModTime().Equal(expected) {
+		t.Fatalf("new.txt mtime = %v, want %v", info2.ModTime(), expected)
+	}
+}
+
+func TestUpdateSetMTimeFalse(t *testing.T) {
+	r, rid1, rid2, cleanup := newTestRepoWithTwoCheckins(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	co, err := Create(r, dir, CreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer co.Close()
+
+	if err := setVVar(co.db, "checkout", itoa(int64(rid1))); err != nil {
+		t.Fatal(err)
+	}
+	var uuid1 string
+	r.DB().QueryRow("SELECT uuid FROM blob WHERE rid=?", rid1).Scan(&uuid1)
+	setVVar(co.db, "checkout-hash", uuid1)
+
+	mem := simio.NewMemStorage()
+	co.env = &simio.Env{Storage: mem, Clock: simio.RealClock{}, Rand: simio.CryptoRand{}}
+	co.dir = "/checkout"
+
+	co.Extract(rid1, ExtractOpts{})
+
+	// Update WITHOUT SetMTime.
+	if err := co.Update(UpdateOpts{TargetRID: rid2, SetMTime: false}); err != nil {
+		t.Fatal("update:", err)
+	}
+
+	info, err := mem.Stat("/checkout/hello.txt")
+	if err != nil {
+		t.Fatal("stat:", err)
+	}
+	if !info.ModTime().IsZero() {
+		t.Fatalf("mtime should be zero when SetMTime is false, got %v", info.ModTime())
+	}
+}
+
 // itoa is a helper to avoid importing strconv in tests.
 func itoa(n int64) string {
 	return strconv.FormatInt(n, 10)
