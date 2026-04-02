@@ -129,6 +129,33 @@ Hard limit: 70 lines. 10 functions were split into same-file private helpers (la
 - `\r\n` normalized to `\n` before comparison
 - Side-by-side deferred until a consumer needs it (architecture supports adding formatters)
 
+## Content Cache
+
+`content.Cache` — concurrency-safe LRU cache for `content.Expand` results, keyed by `FslID`. Eliminates redundant delta-chain walks (SQLite queries + zlib decompress + delta apply per chain link).
+
+### Design Decisions
+
+- **Memory-bounded, not entry-bounded**: Capped by total bytes of cached content. A few large blobs won't blow the budget since Fossil blobs range from tiny manifests (~200 bytes) to multi-MB files.
+- **LRU eviction**: Sync access patterns have strong temporal locality — the same manifests and file blobs are expanded repeatedly across sync rounds and crosslink passes.
+- **Nil-safe receiver**: `(*Cache)(nil).Expand(q, rid)` falls through to raw `content.Expand`. This lets all integration points use `cache.Expand()` unconditionally — nil means no caching, no branching needed at callsites.
+- **Copy semantics**: Both cache storage and cache returns are copies. Callers can't corrupt cached data.
+- **Opt-in via `SyncOpts.ContentCache` / `HandleOpts.ContentCache`**: Existing code passes nil (zero-value) and gets identical uncached behavior. No forced migration.
+- **DST stays uncached**: Simulation tests use nil cache to maximize fault surface — BUGGIFY's 1% byte-flip in `Expand` would become persistent if cached, changing the failure mode.
+- **Oversized blobs**: A single blob larger than `maxSize` is inserted then immediately evicted. The data is still returned correctly to the caller.
+
+### Integration Points
+
+| Layer | Where | How |
+|-------|-------|-----|
+| `content/cache.go` | Core type | `NewCache(maxBytes)`, `Expand`, `Invalidate`, `Clear`, `Stats` |
+| `sync/session.go` | `SyncOpts.ContentCache` | Client sync uses cache for `loadFileCard` (push) and `resolveFileContent` (delta base) |
+| `sync/handler.go` | `HandleOpts.ContentCache` | Server handler uses cache for gimme responses and clone batch sending |
+| `leaf/agent/` | `Config.ContentCacheSize` | Agent creates 32 MiB cache by default (negative disables). Shared across sync rounds for agent lifetime. |
+
+### Performance
+
+Cache hits: ~550ns / 1 alloc (copy only). Uncached 5-deep delta chain: ~65µs / 224 allocs. **~120x speedup on hits.**
+
 ## Constraints
 
 - Performance: compute ops within 3x of C libfossil, I/O ops within 5x
