@@ -81,13 +81,14 @@ func (s *session) buildTableXIGotCards(info repo.TableInfo) ([]xfer.Card, error)
 	}
 
 	pkCols := extractPKColumns(info.Def)
+	pkColDefs := extractPKColumnDefs(info.Def)
 	var cards []xfer.Card
 	for i, row := range rows {
 		pkValues := make(map[string]any)
 		for _, col := range pkCols {
 			pkValues[col] = row[col]
 		}
-		pkHash := repo.PKHash(pkValues)
+		pkHash := repo.PKHash(pkColDefs, pkValues)
 		mtime := mtimes[i]
 
 		// BUGGIFY: 2% chance send stale mtime to test server-side comparison.
@@ -278,6 +279,17 @@ func extractPKColumns(def repo.TableDef) []string {
 	for _, col := range def.Columns {
 		if col.PK {
 			pkCols = append(pkCols, col.Name)
+		}
+	}
+	return pkCols
+}
+
+// extractPKColumnDefs returns the ColumnDef of all PK columns from a TableDef.
+func extractPKColumnDefs(def repo.TableDef) []repo.ColumnDef {
+	var pkCols []repo.ColumnDef
+	for _, col := range def.Columns {
+		if col.PK {
+			pkCols = append(pkCols, col)
 		}
 	}
 	return pkCols

@@ -244,11 +244,12 @@ func (h *handler) verifyXRowPKHash(c *xfer.XRowCard, st *SyncedTable) (map[strin
 	}
 
 	pkCols := extractPKColumns(st.Def)
+	pkColDefs := extractPKColumnDefs(st.Def)
 	pkValues := make(map[string]any)
 	for _, col := range pkCols {
 		pkValues[col] = row[col]
 	}
-	computedPK := repo.PKHash(pkValues)
+	computedPK := repo.PKHash(pkColDefs, pkValues)
 	if computedPK != c.PKHash {
 		h.resp = append(h.resp, &xfer.ErrorCard{
 			Message: fmt.Sprintf("xrow %s/%s: pk hash mismatch", c.Table, c.PKHash),
@@ -373,13 +374,14 @@ func (h *handler) emitXIGotsForTable(table string, st *SyncedTable) error {
 	}
 
 	pkCols := extractPKColumns(st.Def)
+	pkColDefs := extractPKColumnDefs(st.Def)
 
 	for i, row := range rows {
 		pkValues := make(map[string]any)
 		for _, col := range pkCols {
 			pkValues[col] = row[col]
 		}
-		pkHash := repo.PKHash(pkValues)
+		pkHash := repo.PKHash(pkColDefs, pkValues)
 
 		h.resp = append(h.resp, &xfer.XIGotCard{
 			Table:  table,

@@ -41,8 +41,9 @@ func TestHandleXIGotXGimmeXRow(t *testing.T) {
 	repo.EnsureSyncSchema(r.DB())
 	repo.RegisterSyncedTable(r.DB(), "kv", def, 100)
 	repo.UpsertXRow(r.DB(), "kv", map[string]any{"id": "local-key", "val": "local-val"}, 200)
-	localPK := repo.PKHash(map[string]any{"id": "local-key"})
-	remotePK := repo.PKHash(map[string]any{"id": "remote-key"})
+	pkColDefs := []repo.ColumnDef{{Name: "id", Type: "text", PK: true}}
+	localPK := repo.PKHash(pkColDefs, map[string]any{"id": "local-key"})
+	remotePK := repo.PKHash(pkColDefs, map[string]any{"id": "remote-key"})
 	req := &xfer.Message{Cards: []xfer.Card{
 		&xfer.PushCard{ServerCode: "s", ProjectCode: "p"},
 		&xfer.PullCard{ServerCode: "s", ProjectCode: "p"},

@@ -170,8 +170,8 @@ func createExtensionTable(d *db.DB, name string, def TableDef) error {
 		}
 	}
 	cols = append(cols, "mtime INTEGER NOT NULL")
-	if def.Conflict == "owner-write" {
-		cols = append(cols, "_owner TEXT NOT NULL")
+	if def.Conflict == "owner-write" || def.Conflict == "self-write" {
+		cols = append(cols, "_owner TEXT NOT NULL DEFAULT ''")
 	}
 
 	// Paired assertion — RegisterSyncedTable validates hasPK above, but

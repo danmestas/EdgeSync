@@ -100,7 +100,13 @@ func assertRowCount(t *testing.T, r *repo.Repo, label, table string, def repo.Ta
 // assertRowValue checks a specific row's column value by PK lookup.
 func assertRowValue(t *testing.T, r *repo.Repo, label, table string, def repo.TableDef, pk map[string]any, col, want string) {
 	t.Helper()
-	pkHash := repo.PKHash(pk)
+	var pkColDefs []repo.ColumnDef
+	for _, c := range def.Columns {
+		if c.PK {
+			pkColDefs = append(pkColDefs, c)
+		}
+	}
+	pkHash := repo.PKHash(pkColDefs, pk)
 	row, _, err := repo.LookupXRow(r.DB(), table, def, pkHash)
 	if err != nil {
 		t.Fatalf("LookupXRow %s: %v", label, err)

@@ -367,9 +367,11 @@ func CheckTableSyncIntegrity(nodeID string, r *repo.Repo) error {
 		}
 		// Extract PK columns.
 		var pkCols []string
+		var pkColDefs []repo.ColumnDef
 		for _, col := range tbl.Def.Columns {
 			if col.PK {
 				pkCols = append(pkCols, col.Name)
+				pkColDefs = append(pkColDefs, col)
 			}
 		}
 		for i, row := range rows {
@@ -378,7 +380,7 @@ func CheckTableSyncIntegrity(nodeID string, r *repo.Repo) error {
 			for _, col := range pkCols {
 				pk[col] = row[col]
 			}
-			h := repo.PKHash(pk)
+			h := repo.PKHash(pkColDefs, pk)
 			if h == "" {
 				return &InvariantError{Invariant: "tablesync-integrity", NodeID: nodeID,
 					Detail: fmt.Sprintf("table %s row %d: empty PK hash", tbl.Name, i)}
