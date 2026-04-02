@@ -269,6 +269,12 @@ func (c *Checkout) Commit(opts CommitOpts) (libfossil.FslID, string, error) {
 		return 0, "", fmt.Errorf("checkout.Commit: scan: %w", err)
 	}
 
+	if opts.PreCommitCheck != nil {
+		if err := opts.PreCommitCheck(); err != nil {
+			return 0, "", fmt.Errorf("checkout.Commit: pre-commit check: %w", err)
+		}
+	}
+
 	vfEntries, changedFiles, deletedFiles, err := c.collectVFileEntries(parentRID)
 	if err != nil {
 		return 0, "", err
