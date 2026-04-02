@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
@@ -238,14 +239,19 @@ func (h *handler) handleXRow(c *xfer.XRowCard) error {
 
 // verifyXRowPKHash unmarshals the row JSON and verifies the PK hash matches.
 // Returns the row map and true on success, or nil and false if an error card was emitted.
+// UseNumber is required to preserve large integers (>2^53) that float64 cannot represent exactly.
 func (h *handler) verifyXRowPKHash(c *xfer.XRowCard, st *SyncedTable) (map[string]any, bool) {
 	var row map[string]any
-	if err := json.Unmarshal(c.Content, &row); err != nil {
+	dec := json.NewDecoder(bytesReader(c.Content))
+	dec.UseNumber()
+	if err := dec.Decode(&row); err != nil {
 		h.resp = append(h.resp, &xfer.ErrorCard{
 			Message: fmt.Sprintf("xrow %s/%s: unmarshal: %v", c.Table, c.PKHash, err),
 		})
 		return nil, false
 	}
+	// Coerce json.Number values to native Go types based on column definitions.
+	coerceJSONNumbers(row, st.Def)
 
 	pkCols := extractPKColumns(st.Def)
 	pkColDefs := extractPKColumnDefs(st.Def)
@@ -426,12 +432,15 @@ func (h *handler) handleXDelete(c *xfer.XDeleteCard) error {
 		}
 		if existingRow == nil && len(c.PKData) > 0 {
 			var pkValues map[string]any
-			if err := json.Unmarshal(c.PKData, &pkValues); err != nil {
+			pkDec := json.NewDecoder(bytesReader(c.PKData))
+			pkDec.UseNumber()
+			if err := pkDec.Decode(&pkValues); err != nil {
 				h.resp = append(h.resp, &xfer.ErrorCard{
 					Message: fmt.Sprintf("xdelete %s/%s: bad PKData: %v", c.Table, c.PKHash, err),
 				})
 				return nil
 			}
+			coerceJSONNumbers(pkValues, st.Def)
 			// Insert tombstone row with only PK values (value cols will be NULL).
 			if err := repo.UpsertXRow(h.repo.DB(), c.Table, pkValues, c.MTime); err != nil {
 				return fmt.Errorf("handler.handleXDelete: insert tombstone: %w", err)
@@ -467,3 +476,38 @@ func (h *handler) sendXDelete(table string, st *SyncedTable, pkHash string, mtim
 
 // extractPKColumns is defined in client_tablesync.go as a package-level
 // function shared by both client and handler code.
+
+// bytesReader wraps a byte slice in a bytes.Reader for use with json.NewDecoder.
+func bytesReader(b []byte) *bytes.Reader {
+	return bytes.NewReader(b)
+}
+
+// coerceJSONNumbers converts json.Number values in a row map to native Go types
+// (int64 for "integer" columns, float64 for "real" columns) based on the
+// declared column definitions. This is required after UseNumber decoding to
+// preserve large integers (>2^53) that float64 cannot represent exactly.
+func coerceJSONNumbers(row map[string]any, def repo.TableDef) {
+	for _, col := range def.Columns {
+		v, ok := row[col.Name]
+		if !ok {
+			continue
+		}
+		n, ok := v.(json.Number)
+		if !ok {
+			continue
+		}
+		switch col.Type {
+		case "integer":
+			if i, err := n.Int64(); err == nil {
+				row[col.Name] = i
+			}
+		case "real":
+			if f, err := n.Float64(); err == nil {
+				row[col.Name] = f
+			}
+		default:
+			// text, blob: leave as string representation of the number
+			row[col.Name] = n.String()
+		}
+	}
+}

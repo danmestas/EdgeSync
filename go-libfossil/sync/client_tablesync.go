@@ -276,9 +276,19 @@ func (s *session) handleXRowResponse(c *xfer.XRowCard) error {
 		return fmt.Errorf("handleXRowResponse: ensure schema: %w", err)
 	}
 
+	def, err := s.getXTableDef(c.Table)
+	if err != nil {
+		return fmt.Errorf("handleXRowResponse: get table def %s: %w", c.Table, err)
+	}
+
 	var row map[string]any
-	if err := json.Unmarshal(c.Content, &row); err != nil {
+	rowDec := json.NewDecoder(bytesReader(c.Content))
+	rowDec.UseNumber()
+	if err := rowDec.Decode(&row); err != nil {
 		return fmt.Errorf("handleXRowResponse: unmarshal %s/%s: %w", c.Table, c.PKHash, err)
+	}
+	if def != nil {
+		coerceJSONNumbers(row, *def)
 	}
 
 	if err := repo.UpsertXRow(s.repo.DB(), c.Table, row, c.MTime); err != nil {
@@ -324,9 +334,12 @@ func (s *session) handleXDeleteResponse(c *xfer.XDeleteCard) error {
 		}
 		if existingRow == nil && len(c.PKData) > 0 {
 			var pkValues map[string]any
-			if err := json.Unmarshal(c.PKData, &pkValues); err != nil {
+			pkDec := json.NewDecoder(bytesReader(c.PKData))
+			pkDec.UseNumber()
+			if err := pkDec.Decode(&pkValues); err != nil {
 				return fmt.Errorf("handleXDeleteResponse: bad PKData: %w", err)
 			}
+			coerceJSONNumbers(pkValues, *def)
 			if err := repo.UpsertXRow(s.repo.DB(), c.Table, pkValues, c.MTime); err != nil {
 				return fmt.Errorf("handleXDeleteResponse: insert tombstone: %w", err)
 			}

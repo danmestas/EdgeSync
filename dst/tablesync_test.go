@@ -1087,3 +1087,144 @@ func TestTS_StressTest1000Rows(t *testing.T) {
 	assertBoundedProgress(t, sim, table, def, 1)
 	logRowCounts(t, sim, table, def)
 }
+
+// =============================================================================
+// Deletion, Resurrection, and Integer PK tests
+// =============================================================================
+
+// TestTableSync_Deletion_Convergence: peer A deletes, peers B and C converge to tombstone.
+func TestTableSync_Deletion_Convergence(t *testing.T) {
+	sim, masterRepo, _ := newTableSyncSim(t, 42, 3, false)
+	def := deviceTableDef()
+	registerTableAll(t, sim, masterRepo, "devices", def, 1000)
+
+	// Seed a row on master.
+	upsertRow(t, masterRepo, "devices", map[string]any{
+		"device_id": "d1", "hostname": "alpha", "status": "online",
+	}, 1000)
+
+	// Sync so all leaves have the row.
+	if err := sim.Run(30); err != nil {
+		t.Fatalf("Run (seed): %v", err)
+	}
+	for _, leafID := range sim.LeafIDs() {
+		assertRowCount(t, sim.Leaf(leafID).Repo(), string(leafID), "devices", def, 1)
+	}
+
+	// Delete on master.
+	pkColDefs := []repo.ColumnDef{{Name: "device_id", Type: "text", PK: true}}
+	pkHash := repo.PKHash(pkColDefs, map[string]any{"device_id": "d1"})
+	deleted, err := repo.DeleteXRowByPKHash(masterRepo.DB(), "devices", def, pkHash, 2000)
+	if err != nil || !deleted {
+		t.Fatalf("master delete: deleted=%v err=%v", deleted, err)
+	}
+
+	// Sync until convergence.
+	if err := sim.Run(50); err != nil {
+		t.Fatalf("Run (delete): %v", err)
+	}
+
+	// All leaves should have a tombstone.
+	for _, leafID := range sim.LeafIDs() {
+		row, mtime, _ := repo.LookupXRow(sim.Leaf(leafID).Repo().DB(), "devices", def, pkHash)
+		if row == nil {
+			t.Errorf("%s: row should exist as tombstone", leafID)
+			continue
+		}
+		if !repo.IsTombstone(def, row) {
+			t.Errorf("%s: row should be tombstone", leafID)
+		}
+		if mtime != 2000 {
+			t.Errorf("%s: mtime=%d, want 2000", leafID, mtime)
+		}
+	}
+}
+
+// TestTableSync_Deletion_Resurrection: delete then resurrect with newer mtime — all converge to live row.
+func TestTableSync_Deletion_Resurrection(t *testing.T) {
+	sim, masterRepo, _ := newTableSyncSim(t, 99, 2, false)
+	def := deviceTableDef()
+	registerTableAll(t, sim, masterRepo, "devices", def, 1000)
+
+	// Seed and sync.
+	upsertRow(t, masterRepo, "devices", map[string]any{
+		"device_id": "d1", "hostname": "alpha", "status": "online",
+	}, 1000)
+	if err := sim.Run(30); err != nil {
+		t.Fatalf("Run (seed): %v", err)
+	}
+
+	// Delete on master.
+	pkColDefs := []repo.ColumnDef{{Name: "device_id", Type: "text", PK: true}}
+	pkHash := repo.PKHash(pkColDefs, map[string]any{"device_id": "d1"})
+	repo.DeleteXRowByPKHash(masterRepo.DB(), "devices", def, pkHash, 2000)
+
+	// Sync deletion.
+	if err := sim.Run(30); err != nil {
+		t.Fatalf("Run (delete): %v", err)
+	}
+
+	// Resurrect on a leaf with newer mtime.
+	leaf0 := sim.Leaf(sim.LeafIDs()[0]).Repo()
+	upsertRow(t, leaf0, "devices", map[string]any{
+		"device_id": "d1", "hostname": "beta", "status": "active",
+	}, 3000)
+
+	// Sync resurrection.
+	if err := sim.Run(50); err != nil {
+		t.Fatalf("Run (resurrect): %v", err)
+	}
+
+	// All peers should have the live row with mtime 3000.
+	for _, leafID := range sim.LeafIDs() {
+		row, mtime, _ := repo.LookupXRow(sim.Leaf(leafID).Repo().DB(), "devices", def, pkHash)
+		if row == nil {
+			t.Errorf("%s: row missing after resurrection", leafID)
+			continue
+		}
+		if repo.IsTombstone(def, row) {
+			t.Errorf("%s: row should be live after resurrection", leafID)
+		}
+		if mtime != 3000 {
+			t.Errorf("%s: mtime=%d, want 3000", leafID, mtime)
+		}
+	}
+	// Master too.
+	row, mtime, _ := repo.LookupXRow(masterRepo.DB(), "devices", def, pkHash)
+	if row == nil || repo.IsTombstone(def, row) || mtime != 3000 {
+		t.Errorf("master: row=%v tombstone=%v mtime=%d", row != nil, row != nil && repo.IsTombstone(def, row), mtime)
+	}
+}
+
+// TestTableSync_IntegerPK_Convergence: large integer PK (>2^53) convergence across peers.
+func TestTableSync_IntegerPK_Convergence(t *testing.T) {
+	sim, masterRepo, _ := newTableSyncSim(t, 77, 2, false)
+	def := repo.TableDef{
+		Columns: []repo.ColumnDef{
+			{Name: "seq", Type: "integer", PK: true},
+			{Name: "payload", Type: "text"},
+		},
+		Conflict: "mtime-wins",
+	}
+	registerTableAll(t, sim, masterRepo, "events", def, 1000)
+
+	// Seed row with large integer PK (>2^53).
+	bigPK := int64(1<<53 + 1)
+	upsertRow(t, masterRepo, "events", map[string]any{
+		"seq": bigPK, "payload": "event-data",
+	}, 1000)
+
+	// Sync.
+	if err := sim.Run(100); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// Verify all peers have matching catalog hashes.
+	masterHash, _ := repo.CatalogHash(masterRepo.DB(), "events", def)
+	for _, leafID := range sim.LeafIDs() {
+		leafHash, _ := repo.CatalogHash(sim.Leaf(leafID).Repo().DB(), "events", def)
+		if leafHash != masterHash {
+			t.Errorf("%s: catalog hash %q != master %q", leafID, leafHash, masterHash)
+		}
+	}
+}
