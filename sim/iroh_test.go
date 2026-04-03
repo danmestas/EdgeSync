@@ -10,6 +10,7 @@ import (
 	"time"
 
 	libfossil "github.com/danmestas/go-libfossil"
+	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
 	"github.com/danmestas/go-libfossil/simio"
 	"github.com/dmestas/edgesync/leaf/agent"
 )
@@ -178,22 +179,30 @@ func TestIrohConvergence(t *testing.T) {
 	// 5. Sync leaf-0 → leaf-1 via iroh: leaf-0 pushes to leaf-1's endpoint.
 	ctx := t.Context()
 	irohTransport := agent.NewIrohTransport(
-		filepath.Join(dir, "leaf-0.iroh-sidecar.sock"),
-		endpoints[1], // target leaf-1
+		leaves[0].agent.IrohSocketPath(), // leaf-0's sidecar socket
+		endpoints[1],                      // target leaf-1's endpoint
 	)
 
-	// Find the iroh socket path — it's set by the agent during Start().
-	// We need to use the agent's actual socket. The agent stores it internally
-	// but we can construct it from the config pattern.
-	// Actually, let's just do a direct sync via the handle API using the transport.
-	result, err := leaves[0].repo.Sync(ctx, irohTransport, libfossil.SyncOpts{
-		Push:        true,
-		Pull:        true,
-		ProjectCode: projCode,
-		ServerCode:  srvCode,
-	})
+	// Give sidecars time to discover each other via relay/STUN.
+	// Local peers may need up to 10s for relay registration.
+	time.Sleep(5 * time.Second)
+
+	var result *libfossil.SyncResult
+	for attempt := 0; attempt < 3; attempt++ {
+		result, err = leaves[0].repo.Sync(ctx, irohTransport, libfossil.SyncOpts{
+			Push:        true,
+			Pull:        true,
+			ProjectCode: projCode,
+			ServerCode:  srvCode,
+		})
+		if err == nil {
+			break
+		}
+		t.Logf("attempt %d: %v (retrying...)", attempt+1, err)
+		time.Sleep(3 * time.Second)
+	}
 	if err != nil {
-		t.Fatalf("iroh sync leaf-0 → leaf-1: %v", err)
+		t.Fatalf("iroh sync leaf-0 → leaf-1 failed after 3 attempts: %v", err)
 	}
 	t.Logf("sync result: ↑%d ↓%d rounds=%d", result.FilesSent, result.FilesRecvd, result.Rounds)
 

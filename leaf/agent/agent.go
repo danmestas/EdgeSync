@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log/slog"
 	"net"
@@ -231,7 +232,10 @@ func (a *Agent) Start() error {
 			return fmt.Errorf("agent: iroh: %w", err)
 		}
 
-		a.irohSock = fmt.Sprintf("/tmp/iroh-%d.sock", os.Getpid())
+		// Use a hash of the repo path to make the socket unique per agent instance,
+		// so multiple agents in the same process (tests) don't collide.
+		sockHash := fmt.Sprintf("%x", sha256.Sum256([]byte(a.config.RepoPath)))[:12]
+		a.irohSock = fmt.Sprintf("/tmp/iroh-%s.sock", sockHash)
 		callbackURL := "http://127.0.0.1" + a.config.ServeHTTPAddr
 		var irohCallbackSrv *http.Server
 		if a.config.ServeHTTPAddr == "" {
@@ -313,6 +317,9 @@ func (a *Agent) Stop() error {
 // IrohEndpointID returns the local iroh endpoint ID, or "" if iroh is not enabled
 // or the sidecar hasn't started yet.
 func (a *Agent) IrohEndpointID() string { return a.irohEndpointID }
+
+// IrohSocketPath returns the Unix socket path for the iroh sidecar, or "" if iroh is not enabled.
+func (a *Agent) IrohSocketPath() string { return a.irohSock }
 
 // SyncNow triggers an immediate sync round. It is non-blocking: if a sync
 // trigger is already pending, the call is a no-op.
