@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/danmestas/go-libfossil/repo"
-	"github.com/danmestas/go-libfossil/sync"
-	"github.com/danmestas/go-libfossil/xfer"
+	libfossil "github.com/danmestas/go-libfossil"
 	"github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -15,8 +13,8 @@ import (
 )
 
 // ServeNATS subscribes to the given subject and dispatches incoming
-// xfer requests to the handler. Blocks until ctx is cancelled.
-func ServeNATS(ctx context.Context, nc *nats.Conn, subject string, r *repo.Repo, h sync.HandleFunc) error {
+// xfer requests to the repo's HandleSync. Blocks until ctx is cancelled.
+func ServeNATS(ctx context.Context, nc *nats.Conn, subject string, r *libfossil.Repo) error {
 	if nc == nil {
 		panic("agent.ServeNATS: nc must not be nil")
 	}
@@ -25,9 +23,6 @@ func ServeNATS(ctx context.Context, nc *nats.Conn, subject string, r *repo.Repo,
 	}
 	if r == nil {
 		panic("agent.ServeNATS: r must not be nil")
-	}
-	if h == nil {
-		panic("agent.ServeNATS: h must not be nil")
 	}
 
 	tracer := otel.Tracer("edgesync-leaf")
@@ -46,26 +41,12 @@ func ServeNATS(ctx context.Context, nc *nats.Conn, subject string, r *repo.Repo,
 		)
 		defer span.End()
 
-		req, err := xfer.Decode(msg.Data)
-		if err != nil {
-			span.RecordError(err)
-			slog.ErrorContext(reqCtx, "serve-nats: decode error", "error", err)
-			return
-		}
-
-		resp, err := h(reqCtx, r, req)
+		respBytes, err := r.HandleSync(reqCtx, msg.Data)
 		if err != nil {
 			span.RecordError(err)
 			slog.ErrorContext(reqCtx, "serve-nats: handler error", "error", err)
-			resp = &xfer.Message{Cards: []xfer.Card{
-				&xfer.ErrorCard{Message: fmt.Sprintf("handler error: %v", err)},
-			}}
-		}
-
-		respBytes, err := resp.Encode()
-		if err != nil {
-			span.RecordError(err)
-			slog.ErrorContext(reqCtx, "serve-nats: encode error", "error", err)
+			// Respond with empty bytes on error so the client doesn't hang.
+			msg.Respond([]byte{})
 			return
 		}
 

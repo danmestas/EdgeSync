@@ -3,22 +3,21 @@ package agent
 import (
 	"testing"
 
-	"github.com/danmestas/go-libfossil/repo"
+	libfossil "github.com/danmestas/go-libfossil"
 	"github.com/danmestas/go-libfossil/simio"
-	"github.com/danmestas/go-libfossil/sync"
 )
 
 func TestPeerRegistryEnsureAndSeed(t *testing.T) {
 	r, projCode, srvCode := openTestRepo(t)
 
-	mt := &sync.MockTransport{}
+	mt := &libfossil.MockTransport{}
 	clock := simio.NewSimClock()
 
 	a := NewFromParts(Config{
-		PeerID:          "test-peer-1",
-		ServeHTTPAddr:   ":8080",
-		SubjectPrefix:   "fossil",
-		Clock:           clock,
+		PeerID:        "test-peer-1",
+		ServeHTTPAddr: ":8080",
+		SubjectPrefix: "fossil",
+		Clock:         clock,
 	}, r, mt, projCode, srvCode)
 
 	// Ensure schema
@@ -32,52 +31,40 @@ func TestPeerRegistryEnsureAndSeed(t *testing.T) {
 	}
 
 	// Verify the row exists
-	pkValues := map[string]any{"peer_id": "test-peer-1"}
-	pkColDefs := []repo.ColumnDef{{Name: "peer_id", Type: "text", PK: true}}
-	pkHash := repo.PKHash(pkColDefs, pkValues)
-
-	row, mtime, err := repo.LookupXRow(r.DB(), "peer_registry", peerRegistryDef, pkHash)
+	var peerID, version, platform, natsSubject, addr string
+	var lastSync int64
+	err := r.DB().QueryRow(
+		"SELECT peer_id, last_sync, version, platform, nats_subject, addr FROM peer_registry WHERE peer_id=?",
+		"test-peer-1",
+	).Scan(&peerID, &lastSync, &version, &platform, &natsSubject, &addr)
 	if err != nil {
-		t.Fatalf("LookupXRow: %v", err)
-	}
-	if row == nil {
-		t.Fatal("expected row to exist, got nil")
+		t.Fatalf("query peer_registry: %v", err)
 	}
 
-	// Check fields
-	if row["peer_id"] != "test-peer-1" {
-		t.Errorf("peer_id = %v, want test-peer-1", row["peer_id"])
+	if peerID != "test-peer-1" {
+		t.Errorf("peer_id = %v, want test-peer-1", peerID)
 	}
-	if row["last_sync"] != clock.Now().Unix() {
-		t.Errorf("last_sync = %v, want %v", row["last_sync"], clock.Now().Unix())
+	if lastSync != clock.Now().Unix() {
+		t.Errorf("last_sync = %v, want %v", lastSync, clock.Now().Unix())
 	}
-	if row["version"] != "dev" {
-		t.Errorf("version = %v, want dev", row["version"])
+	if version != "dev" {
+		t.Errorf("version = %v, want dev", version)
 	}
-	if row["platform"] == "" {
+	if platform == "" {
 		t.Error("platform should not be empty")
 	}
-	if row["nats_subject"] != "fossil" {
-		t.Errorf("nats_subject = %v, want fossil", row["nats_subject"])
+	if natsSubject != "fossil" {
+		t.Errorf("nats_subject = %v, want fossil", natsSubject)
 	}
-	if row["addr"] != ":8080" {
-		t.Errorf("addr = %v, want :8080", row["addr"])
-	}
-	if mtime != clock.Now().Unix() {
-		t.Errorf("mtime = %v, want %v", mtime, clock.Now().Unix())
-	}
-
-	// Check capabilities
-	caps := row["capabilities"].(string)
-	if caps != "serve-http,push,pull" {
-		t.Errorf("capabilities = %q, want serve-http,push,pull", caps)
+	if addr != ":8080" {
+		t.Errorf("addr = %v, want :8080", addr)
 	}
 }
 
 func TestPeerRegistryUpdateAfterSync(t *testing.T) {
 	r, projCode, srvCode := openTestRepo(t)
 
-	mt := &sync.MockTransport{}
+	mt := &libfossil.MockTransport{}
 	clock := simio.NewSimClock()
 
 	a := NewFromParts(Config{
@@ -102,29 +89,22 @@ func TestPeerRegistryUpdateAfterSync(t *testing.T) {
 	}
 
 	// Verify last_sync was updated
-	pkValues := map[string]any{"peer_id": "test-peer-2"}
-	pkColDefs := []repo.ColumnDef{{Name: "peer_id", Type: "text", PK: true}}
-	pkHash := repo.PKHash(pkColDefs, pkValues)
-
-	row, mtime, err := repo.LookupXRow(r.DB(), "peer_registry", peerRegistryDef, pkHash)
+	var lastSync int64
+	err := r.DB().QueryRow(
+		"SELECT last_sync FROM peer_registry WHERE peer_id=?",
+		"test-peer-2",
+	).Scan(&lastSync)
 	if err != nil {
-		t.Fatalf("LookupXRow: %v", err)
+		t.Fatalf("query: %v", err)
 	}
-	if row == nil {
-		t.Fatal("expected row to exist, got nil")
-	}
-
-	if row["last_sync"] != clock.Now().Unix() {
-		t.Errorf("last_sync = %v, want %v (should be updated)", row["last_sync"], clock.Now().Unix())
-	}
-	if mtime != clock.Now().Unix() {
-		t.Errorf("mtime = %v, want %v", mtime, clock.Now().Unix())
+	if lastSync != clock.Now().Unix() {
+		t.Errorf("last_sync = %v, want %v (should be updated)", lastSync, clock.Now().Unix())
 	}
 }
 
 func TestPeerRegistryCapabilities(t *testing.T) {
 	r, projCode, srvCode := openTestRepo(t)
-	mt := &sync.MockTransport{}
+	mt := &libfossil.MockTransport{}
 
 	tests := []struct {
 		name     string

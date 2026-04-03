@@ -3,9 +3,7 @@
 package telemetry
 
 import (
-	"context"
-
-	"github.com/danmestas/go-libfossil/checkout"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // CheckoutOTelObserver is a no-op on WASM builds.
@@ -16,16 +14,11 @@ func NewCheckoutOTelObserver(_ any) *CheckoutOTelObserver {
 	return &CheckoutOTelObserver{}
 }
 
-func (*CheckoutOTelObserver) ExtractStarted(ctx context.Context, _ checkout.ExtractStart) context.Context {
-	return ctx
-}
-func (*CheckoutOTelObserver) ExtractFileCompleted(_ context.Context, _ string, _ checkout.UpdateChange) {
-}
-func (*CheckoutOTelObserver) ExtractCompleted(_ context.Context, _ checkout.ExtractEnd)   {}
-func (*CheckoutOTelObserver) ScanStarted(ctx context.Context) context.Context             { return ctx }
-func (*CheckoutOTelObserver) ScanCompleted(_ context.Context, _ checkout.ScanEnd)         {}
-func (*CheckoutOTelObserver) CommitStarted(ctx context.Context, _ checkout.CommitStart) context.Context {
-	return ctx
-}
-func (*CheckoutOTelObserver) CommitCompleted(_ context.Context, _ checkout.CommitEnd) {}
-func (*CheckoutOTelObserver) Error(_ context.Context, _ error)                        {}
+func (*CheckoutOTelObserver) ExtractStarted(_ libfossil.ExtractStart)            {}
+func (*CheckoutOTelObserver) ExtractFileCompleted(_ string, _ libfossil.UpdateChange) {}
+func (*CheckoutOTelObserver) ExtractCompleted(_ libfossil.ExtractEnd)             {}
+func (*CheckoutOTelObserver) ScanStarted(_ string)                                {}
+func (*CheckoutOTelObserver) ScanCompleted(_ libfossil.ScanEnd)                   {}
+func (*CheckoutOTelObserver) CommitStarted(_ libfossil.CommitStart)               {}
+func (*CheckoutOTelObserver) CommitCompleted(_ libfossil.CommitEnd)               {}
+func (*CheckoutOTelObserver) Error(_ error)                                       {}

@@ -10,11 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	libsync "github.com/danmestas/go-libfossil/sync"
+	libfossil "github.com/danmestas/go-libfossil"
+	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
 	"github.com/dmestas/edgesync/leaf/agent"
 	"github.com/dmestas/edgesync/leaf/telemetry"
-
-	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
 )
 
 // version is set at build time via ldflags.
@@ -79,7 +78,7 @@ func main() {
 	}
 
 	// Create observer (nil-safe: if no endpoint, OTel uses no-op providers)
-	var obs libsync.Observer = telemetry.NewOTelObserver(nil, nil)
+	var obs libfossil.SyncObserver = telemetry.NewOTelObserver(nil, nil)
 	if verboseFlag {
 		obs = telemetry.NewVerboseObserver(os.Stderr, obs)
 	}
@@ -108,8 +107,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Register content cache metrics (no-op if cache is nil).
-	telemetry.RegisterCacheMetrics(nil, a.ContentCache())
+	// Content cache metrics are now handled internally by go-libfossil.
+	telemetry.RegisterCacheMetrics(nil, nil)
 
 	if err := a.Start(); err != nil {
 		slog.Error("agent start failed", "error", err)

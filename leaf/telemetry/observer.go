@@ -3,34 +3,19 @@
 package telemetry
 
 import (
-	"context"
+	"sync"
 	"time"
 
-	libsync "github.com/danmestas/go-libfossil/sync"
+	libfossil "github.com/danmestas/go-libfossil"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
 
 const instrumentationName = "edgesync-leaf"
 
-type operationKey struct{}
-type startTimeKey struct{}
-
-func withOperation(ctx context.Context, op string) context.Context {
-	return context.WithValue(ctx, operationKey{}, op)
-}
-
-func operationFromContext(ctx context.Context) string {
-	if op, ok := ctx.Value(operationKey{}).(string); ok {
-		return op
-	}
-	return "sync"
-}
-
-// OTelObserver implements sync.Observer using OpenTelemetry spans and metrics.
+// OTelObserver implements libfossil.SyncObserver using OpenTelemetry spans and metrics.
 type OTelObserver struct {
 	tracer trace.Tracer
 
@@ -40,10 +25,12 @@ type OTelObserver struct {
 	rounds        metric.Int64Histogram
 	filesSent     metric.Int64Histogram
 	filesRecvd    metric.Int64Histogram
-	uvFilesSent   metric.Int64Histogram
-	uvFilesRecvd  metric.Int64Histogram
 	bytesSent     metric.Int64Histogram
 	bytesRecvd    metric.Int64Histogram
+
+	mu        sync.Mutex
+	startTime time.Time
+	span      trace.Span
 }
 
 // NewOTelObserver creates an OTelObserver. Pass nil for either provider
@@ -73,10 +60,6 @@ func NewOTelObserver(tp trace.TracerProvider, mp metric.MeterProvider) *OTelObse
 		metric.WithDescription("Files sent per session"))
 	obs.filesRecvd, _ = m.Int64Histogram("sync.files.received",
 		metric.WithDescription("Files received per session"))
-	obs.uvFilesSent, _ = m.Int64Histogram("sync.uv.files.sent",
-		metric.WithDescription("UV files sent per session"))
-	obs.uvFilesRecvd, _ = m.Int64Histogram("sync.uv.files.received",
-		metric.WithDescription("UV files received per session"))
 	obs.bytesSent, _ = m.Int64Histogram("sync.bytes.sent",
 		metric.WithDescription("Bytes sent per session"),
 		metric.WithUnit("By"),
@@ -88,140 +71,63 @@ func NewOTelObserver(tp trace.TracerProvider, mp metric.MeterProvider) *OTelObse
 	return obs
 }
 
-func (o *OTelObserver) Started(ctx context.Context, info libsync.SessionStart) context.Context {
-	ctx = withOperation(ctx, info.Operation)
-	ctx = context.WithValue(ctx, startTimeKey{}, time.Now())
-	spanAttrs := []attribute.KeyValue{
-		attribute.String("sync.operation", info.Operation),
-		attribute.Bool("sync.push", info.Push),
-		attribute.Bool("sync.pull", info.Pull),
-		attribute.Bool("sync.uv", info.UV),
-		attribute.String("sync.project_code", info.ProjectCode),
-	}
-	if info.PeerID != "" {
-		spanAttrs = append(spanAttrs, attribute.String("sync.peer_id", info.PeerID))
-	}
-	ctx, _ = o.tracer.Start(ctx, info.Operation+".session",
-		trace.WithAttributes(spanAttrs...),
-	)
-	return ctx
-}
-
-func (o *OTelObserver) RoundStarted(ctx context.Context, round int) context.Context {
-	op := operationFromContext(ctx)
-	ctx, _ = o.tracer.Start(ctx, op+".round",
+func (o *OTelObserver) Started(info libfossil.SessionStart) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.startTime = time.Now()
+	_, o.span = o.tracer.Start(nil, "sync.session",
 		trace.WithAttributes(
-			attribute.Int("sync.round", round),
+			attribute.String("sync.project_code", info.ProjectCode),
+			attribute.Bool("sync.push", info.Push),
+			attribute.Bool("sync.pull", info.Pull),
+			attribute.Bool("sync.uv", info.UV),
 		),
 	)
-	return ctx
 }
 
-func (o *OTelObserver) RoundCompleted(ctx context.Context, round int, stats libsync.RoundStats) {
-	span := trace.SpanFromContext(ctx)
-	span.SetAttributes(
-		attribute.Int("sync.round.files_sent", stats.FilesSent),
-		attribute.Int("sync.round.files_received", stats.FilesReceived),
-		attribute.Int("sync.round.gimmes_sent", stats.GimmesSent),
-		attribute.Int("sync.round.igots_sent", stats.IgotsSent),
-		attribute.Int64("sync.round.bytes_sent", stats.BytesSent),
-		attribute.Int64("sync.round.bytes_received", stats.BytesReceived),
-	)
-	span.End()
-}
+func (o *OTelObserver) RoundStarted(round int) {}
 
-func (o *OTelObserver) Completed(ctx context.Context, info libsync.SessionEnd, err error) {
-	span := trace.SpanFromContext(ctx)
-	span.SetAttributes(
-		attribute.Int("sync.rounds", info.Rounds),
-		attribute.Int("sync.files_sent", info.FilesSent),
-		attribute.Int("sync.files_received", info.FilesRecvd),
-		attribute.Int("sync.uv_files_sent", info.UVFilesSent),
-		attribute.Int("sync.uv_files_received", info.UVFilesRecvd),
-		attribute.Int64("sync.bytes_sent", info.BytesSent),
-		attribute.Int64("sync.bytes_received", info.BytesRecvd),
-		attribute.Int("sync.errors_count", len(info.Errors)),
-	)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-	}
-	for _, errMsg := range info.Errors {
-		span.AddEvent("sync.protocol_error", trace.WithAttributes(
-			attribute.String("error.message", errMsg),
-		))
-	}
-	span.End()
+func (o *OTelObserver) RoundCompleted(round int, stats libfossil.RoundStats) {}
+
+func (o *OTelObserver) Completed(info libfossil.SessionEnd) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
 
 	attrs := metric.WithAttributes(
-		attribute.String("sync.operation", info.Operation),
-		attribute.String("sync.project_code", info.ProjectCode),
+		attribute.String("sync.operation", "sync"),
 	)
-	o.sessionsTotal.Add(ctx, 1, attrs)
-	if err != nil {
-		o.errorsTotal.Add(ctx, 1, attrs)
+	o.sessionsTotal.Add(nil, 1, attrs)
+	if !o.startTime.IsZero() {
+		o.duration.Record(nil, time.Since(o.startTime).Seconds(), attrs)
 	}
-	if startTime, ok := ctx.Value(startTimeKey{}).(time.Time); ok {
-		o.duration.Record(ctx, time.Since(startTime).Seconds(), attrs)
+	o.rounds.Record(nil, int64(info.Rounds), attrs)
+	o.filesSent.Record(nil, int64(info.FilesSent), attrs)
+	o.filesRecvd.Record(nil, int64(info.FilesRecvd), attrs)
+
+	if o.span != nil {
+		o.span.SetAttributes(
+			attribute.Int("sync.rounds", info.Rounds),
+			attribute.Int("sync.files_sent", info.FilesSent),
+			attribute.Int("sync.files_received", info.FilesRecvd),
+		)
+		o.span.End()
+		o.span = nil
 	}
-	o.rounds.Record(ctx, int64(info.Rounds), attrs)
-	o.filesSent.Record(ctx, int64(info.FilesSent), attrs)
-	o.filesRecvd.Record(ctx, int64(info.FilesRecvd), attrs)
-	o.uvFilesSent.Record(ctx, int64(info.UVFilesSent), attrs)
-	o.uvFilesRecvd.Record(ctx, int64(info.UVFilesRecvd), attrs)
-	o.bytesSent.Record(ctx, info.BytesSent, attrs)
-	o.bytesRecvd.Record(ctx, info.BytesRecvd, attrs)
 }
 
-func (o *OTelObserver) Error(ctx context.Context, err error) {
+func (o *OTelObserver) Error(err error) {
 	if err == nil {
 		return
 	}
-	span := trace.SpanFromContext(ctx)
-	span.AddEvent("sync.error", trace.WithAttributes(
-		attribute.String("error.message", err.Error()),
-	))
-}
-
-func (o *OTelObserver) HandleStarted(ctx context.Context, info libsync.HandleStart) context.Context {
-	ctx, _ = o.tracer.Start(ctx, "sync.handle",
-		trace.WithAttributes(
-			attribute.String("sync.operation", info.Operation),
-			attribute.String("sync.project_code", info.ProjectCode),
-			attribute.String("net.peer.addr", info.RemoteAddr),
-		),
-		trace.WithSpanKind(trace.SpanKindServer),
-	)
-	return ctx
-}
-
-func (o *OTelObserver) HandleCompleted(ctx context.Context, info libsync.HandleEnd) {
-	span := trace.SpanFromContext(ctx)
-	span.SetAttributes(
-		attribute.Int("sync.handle.cards_processed", info.CardsProcessed),
-		attribute.Int("sync.handle.files_sent", info.FilesSent),
-		attribute.Int("sync.handle.files_received", info.FilesReceived),
-	)
-	if info.Err != nil {
-		span.RecordError(info.Err)
-		span.SetStatus(codes.Error, info.Err.Error())
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.errorsTotal.Add(nil, 1)
+	if o.span != nil {
+		o.span.RecordError(err)
 	}
-	span.End()
 }
 
-func (o *OTelObserver) TableSyncStarted(ctx context.Context, info libsync.TableSyncStart) {
-	span := trace.SpanFromContext(ctx)
-	span.AddEvent("sync.table_sync.started", trace.WithAttributes(
-		attribute.String("sync.table", info.Table),
-		attribute.Int("sync.table.local_rows", info.LocalRows),
-	))
-}
-
-func (o *OTelObserver) TableSyncCompleted(ctx context.Context, info libsync.TableSyncEnd) {
-	span := trace.SpanFromContext(ctx)
-	span.AddEvent("sync.table_sync.completed", trace.WithAttributes(
-		attribute.String("sync.table", info.Table),
-		attribute.Int("sync.table.rows_sent", info.Sent),
-		attribute.Int("sync.table.rows_received", info.Received),
-	))
-}
+func (o *OTelObserver) HandleStarted(info libfossil.HandleStart)   {}
+func (o *OTelObserver) HandleCompleted(info libfossil.HandleEnd)   {}
+func (o *OTelObserver) TableSyncStarted(info libfossil.TableSyncStart)   {}
+func (o *OTelObserver) TableSyncCompleted(info libfossil.TableSyncEnd)   {}

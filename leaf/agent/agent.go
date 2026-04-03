@@ -6,10 +6,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/danmestas/go-libfossil/content"
-	"github.com/danmestas/go-libfossil/repo"
+	libfossil "github.com/danmestas/go-libfossil"
 	"github.com/danmestas/go-libfossil/simio"
-	"github.com/danmestas/go-libfossil/sync"
 	"github.com/nats-io/nats.go"
 )
 
@@ -34,8 +32,8 @@ const (
 // Action is the result of processing a single event via Tick.
 type Action struct {
 	Type   ActionType
-	Result *sync.SyncResult // non-nil when Type == ActionSynced
-	Err    error            // non-nil on sync failure
+	Result *libfossil.SyncResult // non-nil when Type == ActionSynced
+	Err    error                 // non-nil on sync failure
 }
 
 // Agent manages the lifecycle of a leaf sync daemon: it opens a Fossil repo,
@@ -43,15 +41,14 @@ type Action struct {
 type Agent struct {
 	config      Config
 	clock       simio.Clock
-	repo        *repo.Repo
+	repo        *libfossil.Repo
 	conn        *nats.Conn // nil when created via NewFromParts
-	transport   sync.Transport
+	transport   libfossil.Transport
 	projectCode string
 	serverCode  string
 	cancel       context.CancelFunc
 	done         chan struct{}
 	syncNow      chan struct{} // buffer 1
-	contentCache *content.Cache
 }
 
 // New creates a new Agent from the given configuration.
@@ -63,20 +60,18 @@ func New(cfg Config) (*Agent, error) {
 		return nil, err
 	}
 
-	r, err := repo.Open(cfg.RepoPath)
+	r, err := libfossil.Open(cfg.RepoPath)
 	if err != nil {
 		return nil, fmt.Errorf("agent: open repo: %w", err)
 	}
 
-	var projectCode string
-	err = r.DB().QueryRow("SELECT value FROM config WHERE name=?", "project-code").Scan(&projectCode)
+	projectCode, err := r.Config("project-code")
 	if err != nil {
 		r.Close()
 		return nil, fmt.Errorf("agent: read project-code: %w", err)
 	}
 
-	var serverCode string
-	err = r.DB().QueryRow("SELECT value FROM config WHERE name=?", "server-code").Scan(&serverCode)
+	serverCode, err := r.Config("server-code")
 	if err != nil {
 		r.Close()
 		return nil, fmt.Errorf("agent: read server-code: %w", err)
@@ -124,21 +119,15 @@ func New(cfg Config) (*Agent, error) {
 
 	transport := NewNATSTransport(nc, projectCode, 0, cfg.SubjectPrefix)
 
-	var cc *content.Cache
-	if cfg.ContentCacheSize > 0 {
-		cc = content.NewCache(cfg.ContentCacheSize)
-	}
-
 	a := &Agent{
-		config:       cfg,
-		clock:        cfg.Clock,
-		repo:         r,
-		conn:         nc,
-		transport:    transport,
-		projectCode:  projectCode,
-		serverCode:   serverCode,
-		syncNow:      make(chan struct{}, 1),
-		contentCache: cc,
+		config:      cfg,
+		clock:       cfg.Clock,
+		repo:        r,
+		conn:        nc,
+		transport:   transport,
+		projectCode: projectCode,
+		serverCode:  serverCode,
+		syncNow:     make(chan struct{}, 1),
 	}
 
 	// Initialize peer registry (log warnings, don't fail startup).
@@ -154,21 +143,16 @@ func New(cfg Config) (*Agent, error) {
 
 // NewFromParts creates an Agent from pre-built components without performing
 // any I/O. Used by tests and the deterministic simulation harness.
-func NewFromParts(cfg Config, r *repo.Repo, t sync.Transport, projectCode, serverCode string) *Agent {
+func NewFromParts(cfg Config, r *libfossil.Repo, t libfossil.Transport, projectCode, serverCode string) *Agent {
 	cfg.applyDefaults()
-	var cc *content.Cache
-	if cfg.ContentCacheSize > 0 {
-		cc = content.NewCache(cfg.ContentCacheSize)
-	}
 	return &Agent{
-		config:       cfg,
-		clock:        cfg.Clock,
-		repo:         r,
-		transport:    t,
-		projectCode:  projectCode,
-		serverCode:   serverCode,
-		syncNow:      make(chan struct{}, 1),
-		contentCache: cc,
+		config:      cfg,
+		clock:       cfg.Clock,
+		repo:        r,
+		transport:   t,
+		projectCode: projectCode,
+		serverCode:  serverCode,
+		syncNow:     make(chan struct{}, 1),
 	}
 }
 
@@ -202,13 +186,8 @@ func (a *Agent) logf(format string, args ...any) {
 }
 
 // Repo returns the agent's Fossil repository (for invariant checking in simulation).
-func (a *Agent) Repo() *repo.Repo {
+func (a *Agent) Repo() *libfossil.Repo {
 	return a.repo
-}
-
-// ContentCache returns the agent's content cache (nil if caching is disabled).
-func (a *Agent) ContentCache() *content.Cache {
-	return a.contentCache
 }
 
 // Start launches the background poll loop and any configured server
@@ -231,7 +210,7 @@ func (a *Agent) Start() error {
 	if a.config.ServeNATSEnabled && a.conn != nil {
 		go func() {
 			subject := a.config.SubjectPrefix + "." + a.projectCode + ".sync"
-			if err := ServeNATS(ctx, a.conn, subject, a.repo, sync.HandleSync); err != nil {
+			if err := ServeNATS(ctx, a.conn, subject, a.repo); err != nil {
 				slog.Error("serve-nats stopped", "error", err)
 			}
 		}()
@@ -317,21 +296,20 @@ func (a *Agent) pollLoop(ctx context.Context) {
 }
 
 // runSync performs one sync cycle against the transport.
-func (a *Agent) runSync(ctx context.Context) (*sync.SyncResult, error) {
-	opts := sync.SyncOpts{
-		Push:         a.config.Push,
-		Pull:         a.config.Pull,
-		ProjectCode:  a.projectCode,
-		ServerCode:   a.serverCode,
-		User:         a.config.User,
-		Password:     a.config.Password,
-		PeerID:       a.config.PeerID,
-		Buggify:      a.config.Buggify,
-		UV:           a.config.UV,
-		XTableSync:   a.config.ServeNATSEnabled, // only sync x-tables between EdgeSync peers
-		Private:      a.config.Private,
-		Observer:     a.config.Observer,
-		ContentCache: a.contentCache,
+func (a *Agent) runSync(ctx context.Context) (*libfossil.SyncResult, error) {
+	opts := libfossil.SyncOpts{
+		Push:        a.config.Push,
+		Pull:        a.config.Pull,
+		ProjectCode: a.projectCode,
+		ServerCode:  a.serverCode,
+		User:        a.config.User,
+		Password:    a.config.Password,
+		PeerID:      a.config.PeerID,
+		Buggify:     a.config.Buggify,
+		UV:          a.config.UV,
+		XTableSync:  a.config.ServeNATSEnabled, // only sync x-tables between EdgeSync peers
+		Private:     a.config.Private,
+		Observer:    a.config.Observer,
 	}
-	return sync.Sync(ctx, a.repo, a.transport, opts)
+	return a.repo.Sync(ctx, a.transport, opts)
 }

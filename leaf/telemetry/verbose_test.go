@@ -2,29 +2,27 @@ package telemetry
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"strings"
 	"testing"
 
-	libsync "github.com/danmestas/go-libfossil/sync"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 func TestVerboseObserver(t *testing.T) {
 	var buf bytes.Buffer
 	obs := NewVerboseObserver(&buf, nil)
-	ctx := context.Background()
 
-	ctx = obs.Started(ctx, libsync.SessionStart{
-		Operation: "sync", Push: true, Pull: true, UV: false, ProjectCode: "abc123",
+	obs.Started(libfossil.SessionStart{
+		Push: true, Pull: true, UV: false, ProjectCode: "abc123",
 	})
-	ctx = obs.RoundStarted(ctx, 1)
-	obs.RoundCompleted(ctx, 1, libsync.RoundStats{
-		FilesSent: 3, FilesReceived: 2, GimmesSent: 1, BytesSent: 1024,
+	obs.RoundStarted(1)
+	obs.RoundCompleted(1, libfossil.RoundStats{
+		FilesSent: 3, FilesRecvd: 2, Gimmes: 1, BytesSent: 1024,
 	})
-	obs.Completed(ctx, libsync.SessionEnd{
-		Operation: "sync", Rounds: 1, FilesSent: 3, FilesRecvd: 2,
-	}, nil)
+	obs.Completed(libfossil.SessionEnd{
+		Rounds: 1, FilesSent: 3, FilesRecvd: 2,
+	})
 
 	output := buf.String()
 	for _, want := range []string{
@@ -46,7 +44,7 @@ func TestVerboseObserverError(t *testing.T) {
 	var buf bytes.Buffer
 	obs := NewVerboseObserver(&buf, nil)
 
-	obs.Error(context.Background(), errors.New("test error"))
+	obs.Error(errors.New("test error"))
 	if !strings.Contains(buf.String(), "test error") {
 		t.Errorf("error not logged: %s", buf.String())
 	}
@@ -58,7 +56,7 @@ func TestVerboseObserverDelegatesToInner(t *testing.T) {
 	inner := &mockObserver{onStarted: func() { innerCalled = true }}
 
 	obs := NewVerboseObserver(&buf, inner)
-	obs.Started(context.Background(), libsync.SessionStart{Operation: "sync"})
+	obs.Started(libfossil.SessionStart{})
 
 	if !innerCalled {
 		t.Error("inner observer not called")
@@ -72,19 +70,16 @@ type mockObserver struct {
 	onStarted func()
 }
 
-func (m *mockObserver) Started(ctx context.Context, _ libsync.SessionStart) context.Context {
+func (m *mockObserver) Started(_ libfossil.SessionStart) {
 	if m.onStarted != nil {
 		m.onStarted()
 	}
-	return ctx
 }
-func (m *mockObserver) RoundStarted(ctx context.Context, _ int) context.Context { return ctx }
-func (m *mockObserver) RoundCompleted(_ context.Context, _ int, _ libsync.RoundStats) {}
-func (m *mockObserver) Completed(_ context.Context, _ libsync.SessionEnd, _ error)    {}
-func (m *mockObserver) Error(_ context.Context, _ error)                               {}
-func (m *mockObserver) HandleStarted(ctx context.Context, _ libsync.HandleStart) context.Context {
-	return ctx
-}
-func (m *mockObserver) HandleCompleted(_ context.Context, _ libsync.HandleEnd)    {}
-func (m *mockObserver) TableSyncStarted(_ context.Context, _ libsync.TableSyncStart)  {}
-func (m *mockObserver) TableSyncCompleted(_ context.Context, _ libsync.TableSyncEnd)  {}
+func (m *mockObserver) RoundStarted(_ int)                            {}
+func (m *mockObserver) RoundCompleted(_ int, _ libfossil.RoundStats)  {}
+func (m *mockObserver) Completed(_ libfossil.SessionEnd)              {}
+func (m *mockObserver) Error(_ error)                                 {}
+func (m *mockObserver) HandleStarted(_ libfossil.HandleStart)         {}
+func (m *mockObserver) HandleCompleted(_ libfossil.HandleEnd)         {}
+func (m *mockObserver) TableSyncStarted(_ libfossil.TableSyncStart)   {}
+func (m *mockObserver) TableSyncCompleted(_ libfossil.TableSyncEnd)   {}
