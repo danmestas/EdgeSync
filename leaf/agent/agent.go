@@ -310,6 +310,10 @@ func (a *Agent) Stop() error {
 	return nil
 }
 
+// IrohEndpointID returns the local iroh endpoint ID, or "" if iroh is not enabled
+// or the sidecar hasn't started yet.
+func (a *Agent) IrohEndpointID() string { return a.irohEndpointID }
+
 // SyncNow triggers an immediate sync round. It is non-blocking: if a sync
 // trigger is already pending, the call is a no-op.
 func (a *Agent) SyncNow() {
