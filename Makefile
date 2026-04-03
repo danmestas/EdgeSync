@@ -36,15 +36,19 @@ clean:
 
 test:
 	@pids=""; fail=0; \
-	go test ./leaf/... -short -count=1 & pids="$$pids $$!"; \
-	go test ./bridge/... -short -count=1 & pids="$$pids $$!"; \
+	(cd leaf && go test ./... -short -count=1) & pids="$$pids $$!"; \
+	(cd bridge && go test ./... -short -count=1) & pids="$$pids $$!"; \
 	for pid in $$pids; do wait $$pid || fail=1; done; \
 	if [ $$fail -ne 0 ]; then echo "FAIL: unit tests"; exit 1; fi
-	go test ./dst/ -run 'TestScenario|TestE2E|TestMockFossil|TestSimulator|TestCheck' -count=1
-	go test ./sim/ -run 'TestFaultProxy|TestGenerateSchedule|TestBuggify' -count=1
-	go test ./sim/ -run 'TestServeHTTP|TestLeafToLeaf|TestAgentServe' -count=1 -timeout=120s
-	go test ./sim/ -run 'TestInterop' -count=1 -short -timeout=60s
-	go test ./sim/ -run 'TestSimulation' -sim.seed=1 -count=1 -timeout=120s
+	(cd sim && go test . -run 'TestFaultProxy|TestGenerateSchedule|TestBuggify' -count=1)
+	(cd sim && go test . -run 'TestServeHTTP|TestLeafToLeaf|TestAgentServe' -count=1 -timeout=120s)
+	(cd sim && go test . -run 'TestInterop' -count=1 -short -timeout=60s)
+	(cd sim && go test . -run 'TestSimulation' -sim.seed=1 -count=1 -timeout=120s)
+
+vet:
+	go vet ./...
+	cd leaf && go vet ./...
+	cd bridge && go vet ./...
 
 # --- Setup (first-time onboarding) ---
 
@@ -59,59 +63,12 @@ setup-hooks:
 	@echo "Pre-commit hook installed. Runs ~5s of tests before each commit."
 	@echo "Skip with: git commit --no-verify"
 
-# --- DST (Deterministic Simulation Testing) — run locally ---
-
-# Quick: 8 seeds × normal, ~2s
-dst:
-	@echo "=== DST quick (8 seeds, normal) ==="
-	@for seed in 1 2 3 4 5 6 7 8; do \
-		echo "  seed=$$seed ..."; \
-		go test ./dst/ -run TestDST -seed=$$seed -level=normal -steps=5000 -timeout 30s; \
-	done
-	@echo "=== DST quick passed ==="
-
-# Full: 16 seeds × 3 levels, ~40s
-dst-full:
-	@echo "=== DST full (16 seeds × 3 levels) ==="
-	@fail=0; \
-	for level in normal adversarial hostile; do \
-		for seed in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do \
-			echo "  level=$$level seed=$$seed ..."; \
-			go test ./dst/ -run TestDST -seed=$$seed -level=$$level -steps=10000 -timeout 180s || fail=1; \
-		done; \
-	done; \
-	if [ $$fail -eq 1 ]; then echo "=== DST FAILED ==="; exit 1; fi
-	@echo "=== DST full passed ==="
-
-# Hostile only: 16 seeds
-dst-hostile:
-	@echo "=== DST hostile (16 seeds) ==="
-	@for seed in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do \
-		echo "  seed=$$seed level=hostile ..."; \
-		go test ./dst/ -run TestDST -seed=$$seed -level=hostile -steps=10000 -timeout 180s; \
-	done
-	@echo "=== DST hostile passed ==="
-
-# DST across all 3 SQLite drivers
-dst-drivers:
-	@echo "=== DST driver sweep (4 seeds x hostile x 2 drivers) ==="
-	@fail=0; \
-	for driver in "default:" "ncruces:-tags=test_ncruces"; do \
-		name=$${driver%%:*}; \
-		tags=$${driver#*:}; \
-		for seed in 1 2 3 4; do \
-			echo "  driver=$$name seed=$$seed ..."; \
-			(cd dst && go test $$tags -run TestDST -seed=$$seed -level=hostile -steps=10000 -timeout 180s) || fail=1; \
-		done; \
-	done; \
-	if [ $$fail -eq 1 ]; then echo "=== DST drivers FAILED ==="; exit 1; fi
-	@echo "=== DST driver sweep passed ==="
-
 # --- Sim (Integration Simulation) — run locally, requires fossil ---
+# Note: DST tests now live in go-libfossil (github.com/danmestas/go-libfossil/dst)
 
 # Quick: 1 seed, normal severity
 sim:
-	go test ./sim/ -run TestSimulation -sim.seed=1 -v -timeout=120s
+	cd sim && go test . -run TestSimulation -sim.seed=1 -v -timeout=120s
 
 # Full: 16 seeds × 3 severities
 sim-full:
@@ -119,19 +76,19 @@ sim-full:
 	@for severity in normal adversarial hostile; do \
 		for seed in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do \
 			echo "  seed=$$seed severity=$$severity ..."; \
-			go test ./sim/ -run TestSimulation -sim.seed=$$seed -sim.severity=$$severity -timeout=120s || true; \
+			(cd sim && go test . -run TestSimulation -sim.seed=$$seed -sim.severity=$$severity -timeout=120s) || true; \
 		done; \
 	done
 	@echo "=== Sim full done ==="
 
 # Fossil interop: Tier 1 + Tier 2 (requires fossil binary, Tier 2 samples 5K+2K blobs)
 test-interop:
-	go test -buildvcs=false ./sim/ -run TestInterop -timeout=10m -v
+	cd sim && go test -buildvcs=false . -run TestInterop -timeout=10m -v
 
 # Iroh P2P: build sidecar then run iroh unit + integration tests
 test-iroh: iroh-sidecar
-	go test ./leaf/agent/ -run TestIroh -count=1 -v
-	go test ./sim/ -run TestIroh -count=1 -timeout=120s -v
+	cd leaf && go test ./agent/ -run TestIroh -count=1 -v
+	cd sim && go test . -run TestIroh -count=1 -timeout=120s -v
 
 # --- Dependency update ---
 

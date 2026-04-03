@@ -10,19 +10,19 @@ env:
 
 jobs:
   unit:
-    name: Unit & DST
+    name: Unit Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Configure private module access
+        run: git config --global url."https://${{ secrets.GO_MODULE_TOKEN }}@github.com/".insteadOf "https://github.com/"
       - name: leaf
-        run: go test ./leaf/... -short -count=1
+        run: cd leaf && go test ./... -short -count=1
       - name: bridge
-        run: go test ./bridge/... -short -count=1
-      - name: DST scenarios
-        run: go test ./dst/ -run 'TestScenario|TestE2E|TestMockFossil|TestSimulator|TestCheck' -count=1
+        run: cd bridge && go test ./... -short -count=1
 
   sim:
     name: Sim & Interop
@@ -32,14 +32,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Configure private module access
+        run: git config --global url."https://${{ secrets.GO_MODULE_TOKEN }}@github.com/".insteadOf "https://github.com/"
       - name: Install Fossil
         run: sudo apt-get update && sudo apt-get install -y fossil
       - name: Sim unit tests
-        run: go test ./sim/ -run 'TestFaultProxy|TestGenerateSchedule|TestBuggify' -count=1
+        run: cd sim && go test . -run 'TestFaultProxy|TestGenerateSchedule|TestBuggify' -count=1
       - name: Sim serve tests
-        run: go test ./sim/ -run 'TestServeHTTP|TestLeafToLeaf|TestAgentServe' -count=1 -timeout=120s
+        run: cd sim && go test . -run 'TestServeHTTP|TestLeafToLeaf|TestAgentServe' -count=1 -timeout=120s
       - name: Interop (short)
-        run: go test ./sim/ -run 'TestInterop' -count=1 -short -timeout=60s
+        run: cd sim && go test . -run 'TestInterop' -count=1 -short -timeout=60s
 
   build:
     name: Build
@@ -49,7 +51,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Configure private module access
+        run: git config --global url."https://${{ secrets.GO_MODULE_TOKEN }}@github.com/".insteadOf "https://github.com/"
       - name: Build all binaries
         run: make build
       - name: Vet
-        run: go vet ./...
+        run: make vet
