@@ -11,11 +11,9 @@ import (
 
 	leafagent "github.com/dmestas/edgesync/leaf/agent"
 
-	"github.com/danmestas/go-libfossil/manifest"
-	"github.com/danmestas/go-libfossil/repo"
-	"github.com/danmestas/go-libfossil/simio"
-	"github.com/danmestas/go-libfossil/testutil"
+	libfossil "github.com/danmestas/go-libfossil"
 	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
+	"github.com/danmestas/go-libfossil/testutil"
 )
 
 // startFossilServer starts a fossil server on a free port and returns the URL
@@ -78,13 +76,13 @@ func TestIntegrationLeafBridgeFossil(t *testing.T) {
 
 	// 1. Create a Go-managed local repo with a checkin.
 	localPath := filepath.Join(dir, "local.fossil")
-	r, err := repo.Create(localPath, "testuser", simio.CryptoRand{})
+	r, err := libfossil.Create(localPath, libfossil.CreateOpts{User: "testuser"})
 	if err != nil {
-		t.Fatalf("repo.Create: %v", err)
+		t.Fatalf("Create: %v", err)
 	}
 
-	_, _, err = manifest.Checkin(r, manifest.CheckinOpts{
-		Files: []manifest.File{
+	_, _, err = r.Commit(libfossil.CommitOpts{
+		Files: []libfossil.FileToCommit{
 			{Name: "hello.txt", Content: []byte("hello from leaf+bridge integration test")},
 		},
 		Comment: "initial checkin from leaf+bridge integration test",
@@ -93,7 +91,7 @@ func TestIntegrationLeafBridgeFossil(t *testing.T) {
 	})
 	if err != nil {
 		r.Close()
-		t.Fatalf("Checkin: %v", err)
+		t.Fatalf("Commit: %v", err)
 	}
 	r.Close()
 
@@ -112,12 +110,11 @@ func TestIntegrationLeafBridgeFossil(t *testing.T) {
 	natsURL := startEmbeddedNATS(t)
 
 	// Read project-code from the local repo for the bridge config.
-	localRepo, err := repo.Open(localPath)
+	localRepo, err := libfossil.Open(localPath)
 	if err != nil {
-		t.Fatalf("repo.Open local: %v", err)
+		t.Fatalf("Open local: %v", err)
 	}
-	var projectCode string
-	err = localRepo.DB().QueryRow("SELECT value FROM config WHERE name=?", "project-code").Scan(&projectCode)
+	projectCode, err := localRepo.Config("project-code")
 	if err != nil {
 		localRepo.Close()
 		t.Fatalf("read project-code: %v", err)
@@ -166,13 +163,8 @@ func TestIntegrationLeafBridgeFossil(t *testing.T) {
 		t.Fatalf("leafagent.Stop: %v", err)
 	}
 
-	// Informational logging -- don't hard-fail on fossil HTTP quirks.
-	// Unit tests validate the engine logic; this validates full wiring:
-	// leaf agent -> NATS -> bridge -> fossil server.
 	t.Logf("Integration test completed successfully.")
 	t.Logf("  Fossil server URL: %s", fossilURL)
 	t.Logf("  NATS URL: %s", natsURL)
 	t.Logf("  Project code: %s", projectCode)
-	t.Logf("  Local repo: %s", localPath)
-	t.Logf("  Remote repo: %s", remotePath)
 }

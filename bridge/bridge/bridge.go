@@ -13,17 +13,16 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
-	libsync "github.com/danmestas/go-libfossil/sync"
-	"github.com/danmestas/go-libfossil/xfer"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 const instrumentationName = "edgesync-bridge"
 
 // Bridge subscribes to a NATS subject and proxies sync requests to a Fossil
-// HTTP server via go-libfossil's HTTPTransport.
+// HTTP server via go-libfossil's Transport.
 type Bridge struct {
 	config   Config
-	upstream libsync.Transport
+	upstream libfossil.Transport
 	conn     *nats.Conn // nil when created via NewFromParts
 	sub      *nats.Subscription
 	ctx      context.Context
@@ -48,7 +47,7 @@ func New(cfg Config) (*Bridge, error) {
 
 	upstream := cfg.Upstream
 	if upstream == nil {
-		upstream = &libsync.HTTPTransport{URL: cfg.FossilURL}
+		upstream = libfossil.NewHTTPTransport(cfg.FossilURL)
 	}
 
 	b := &Bridge{config: cfg, upstream: upstream, conn: nc}
@@ -58,7 +57,7 @@ func New(cfg Config) (*Bridge, error) {
 
 // NewFromParts creates a Bridge from pre-built components without performing
 // any I/O. Used by tests and the deterministic simulation harness.
-func NewFromParts(cfg Config, upstream libsync.Transport) *Bridge {
+func NewFromParts(cfg Config, upstream libfossil.Transport) *Bridge {
 	cfg.applyDefaults()
 	b := &Bridge{config: cfg, upstream: upstream}
 	b.initTelemetry()
@@ -79,11 +78,10 @@ func (b *Bridge) initTelemetry() {
 		metric.WithExplicitBucketBoundaries(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10))
 }
 
-// HandleRequest processes a single xfer sync request by forwarding it to
-// the upstream Fossil transport and returning the response. This is the
-// core bridge logic, usable by both the NATS adapter and the simulator.
-func (b *Bridge) HandleRequest(ctx context.Context, req *xfer.Message) (*xfer.Message, error) {
-	return b.upstream.Exchange(ctx, req)
+// HandleRequest processes a single raw sync request by forwarding it to
+// the upstream Transport and returning the raw response bytes.
+func (b *Bridge) HandleRequest(ctx context.Context, payload []byte) ([]byte, error) {
+	return b.upstream.RoundTrip(ctx, payload)
 }
 
 // Start subscribes to the NATS subject and begins proxying messages.
@@ -121,8 +119,8 @@ func (b *Bridge) Stop() error {
 	return nil
 }
 
-// handleMessage is the NATS subscription callback. It decodes the request,
-// calls HandleRequest, encodes the response, and replies.
+// handleMessage is the NATS subscription callback. It forwards the raw
+// payload to the upstream transport and replies with the raw response.
 func (b *Bridge) handleMessage(msg *nats.Msg) {
 	start := time.Now()
 	ctx, span := b.tracer.Start(b.ctx, "bridge.proxy",
@@ -141,46 +139,19 @@ func (b *Bridge) handleMessage(msg *nats.Msg) {
 
 	// BUGGIFY: return an empty reply to simulate a garbled or lost response.
 	if b.config.Buggify != nil && b.config.Buggify.Check("bridge.handleMessage.emptyReply", 0.03) {
-		emptyMsg := &xfer.Message{}
-		data, _ := emptyMsg.Encode()
-		msg.Respond(data)
+		msg.Respond([]byte{})
 		return
 	}
 
-	req, err := xfer.Decode(msg.Data)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		slog.Error("bridge: decode error", "error", err)
-		b.errorsTotal.Add(ctx, 1)
-		b.respondEmpty(msg)
-		return
-	}
-
-	resp, err := b.HandleRequest(ctx, req)
+	resp, err := b.HandleRequest(ctx, msg.Data)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		slog.Error("bridge: upstream error", "error", err)
 		b.errorsTotal.Add(ctx, 1)
-		b.respondEmpty(msg)
+		msg.Respond([]byte{})
 		return
 	}
 
-	data, err := resp.Encode()
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		slog.Error("bridge: encode error", "error", err)
-		b.errorsTotal.Add(ctx, 1)
-		b.respondEmpty(msg)
-		return
-	}
-	msg.Respond(data)
-}
-
-func (b *Bridge) respondEmpty(msg *nats.Msg) {
-	empty := &xfer.Message{}
-	data, _ := empty.Encode()
-	msg.Respond(data)
+	msg.Respond(resp)
 }
