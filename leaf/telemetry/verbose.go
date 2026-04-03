@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
+	libsync "github.com/danmestas/go-libfossil/sync"
 )
 
 // VerboseObserver wraps another Observer and logs human-readable sync

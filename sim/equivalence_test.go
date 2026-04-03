@@ -11,16 +11,16 @@ import (
 	"testing"
 	"time"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/auth"
-	"github.com/dmestas/edgesync/go-libfossil/blob"
-	"github.com/dmestas/edgesync/go-libfossil/content"
-	"github.com/dmestas/edgesync/go-libfossil/manifest"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	"github.com/dmestas/edgesync/go-libfossil/sync"
-	"github.com/dmestas/edgesync/go-libfossil/tag"
-	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/auth"
+	"github.com/danmestas/go-libfossil/blob"
+	"github.com/danmestas/go-libfossil/content"
+	"github.com/danmestas/go-libfossil/manifest"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/sync"
+	"github.com/danmestas/go-libfossil/tag"
+	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
 )
 
 // checkinFiles is a convenience type for test data.

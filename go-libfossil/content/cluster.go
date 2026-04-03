@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/blob"
-	"github.com/dmestas/edgesync/go-libfossil/db"
-	"github.com/dmestas/edgesync/go-libfossil/deck"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/blob"
+	"github.com/danmestas/go-libfossil/db"
+	"github.com/danmestas/go-libfossil/deck"
 )
 
 const (

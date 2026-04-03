@@ -5,11 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/blob"
-	"github.com/dmestas/edgesync/go-libfossil/content"
-	"github.com/dmestas/edgesync/go-libfossil/manifest"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/blob"
+	"github.com/danmestas/go-libfossil/content"
+	"github.com/danmestas/go-libfossil/manifest"
+	"github.com/danmestas/go-libfossil/repo"
 )
 
 // PatternRule maps a glob pattern to a strategy name.

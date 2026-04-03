@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
+	_ "github.com/danmestas/go-libfossil/internal/testdriver"
 )
 
 // setupCheckoutDB creates a minimal .fslckout DB with vvar, vfile, vmerge tables

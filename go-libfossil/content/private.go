@@ -1,7 +1,7 @@
 package content
 
 import (
-	"github.com/dmestas/edgesync/go-libfossil/db"
+	"github.com/danmestas/go-libfossil/db"
 )
 
 // IsPrivate returns true if the blob with the given rid is in the private table.

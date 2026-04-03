@@ -31,6 +31,7 @@ const (
 	CardXIGot                      // 21 — xigot (table sync row announcement)
 	CardXGimme                     // 22 — xgimme (table sync row request)
 	CardXRow                       // 23 — xrow (table sync row payload)
+	CardXDelete                    // 24 — xdelete (table sync row deletion)
 )
 
 // Card is the interface implemented by every xfer card type.

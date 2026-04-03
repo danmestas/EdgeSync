@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
-	"github.com/dmestas/edgesync/go-libfossil/manifest"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
+	_ "github.com/danmestas/go-libfossil/internal/testdriver"
+	"github.com/danmestas/go-libfossil/manifest"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
 )
 
 func setupTestRepo(t *testing.T) *repo.Repo {

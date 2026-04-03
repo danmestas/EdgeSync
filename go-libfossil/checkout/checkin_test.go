@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/simio"
 )
 
 func TestCommitFullCycle(t *testing.T) {

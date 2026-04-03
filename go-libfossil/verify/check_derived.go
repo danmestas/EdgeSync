@@ -4,12 +4,12 @@ import (
 	"database/sql"
 	"fmt"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/blob"
-	"github.com/dmestas/edgesync/go-libfossil/content"
-	"github.com/dmestas/edgesync/go-libfossil/db"
-	"github.com/dmestas/edgesync/go-libfossil/deck"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/blob"
+	"github.com/danmestas/go-libfossil/content"
+	"github.com/danmestas/go-libfossil/db"
+	"github.com/danmestas/go-libfossil/deck"
+	"github.com/danmestas/go-libfossil/repo"
 )
 
 // checkDerived verifies consistency of derived tables: event, mlink, plink, tagxref, filename, leaf.

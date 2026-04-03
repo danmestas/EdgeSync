@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"time"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/manifest"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/manifest"
 )
 
 type RepoCiCmd struct {

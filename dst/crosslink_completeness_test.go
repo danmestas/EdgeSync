@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmestas/edgesync/go-libfossil/manifest"
+	"github.com/danmestas/go-libfossil/manifest"
 )
 
 // TestCrosslinkCompletenessAfterSync verifies that after syncing checkins from

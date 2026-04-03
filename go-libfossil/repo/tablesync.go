@@ -2,14 +2,16 @@ package repo
 
 import (
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
-	"github.com/dmestas/edgesync/go-libfossil/db"
-	"github.com/dmestas/edgesync/go-libfossil/hash"
+	"github.com/danmestas/go-libfossil/db"
+	"github.com/danmestas/go-libfossil/hash"
 )
 
 // ColumnDef defines a column in a synced table.
@@ -162,14 +164,18 @@ func createExtensionTable(d *db.DB, name string, def TableDef) error {
 		default:
 			return fmt.Errorf("createExtensionTable: unsupported column type %q", col.Type)
 		}
-		cols = append(cols, fmt.Sprintf("%s %s NOT NULL", col.Name, sqlType))
+		if col.PK {
+			cols = append(cols, fmt.Sprintf("%s %s NOT NULL", col.Name, sqlType))
+		} else {
+			cols = append(cols, fmt.Sprintf("%s %s", col.Name, sqlType))
+		}
 		if col.PK {
 			pkCols = append(pkCols, col.Name)
 		}
 	}
 	cols = append(cols, "mtime INTEGER NOT NULL")
-	if def.Conflict == "owner-write" {
-		cols = append(cols, "_owner TEXT NOT NULL")
+	if def.Conflict == "owner-write" || def.Conflict == "self-write" {
+		cols = append(cols, "_owner TEXT NOT NULL DEFAULT ''")
 	}
 
 	// Paired assertion — RegisterSyncedTable validates hasPK above, but
@@ -225,18 +231,89 @@ func ListSyncedTables(d *db.DB) ([]TableInfo, error) {
 	return tables, rows.Err()
 }
 
+// normalizeValue converts a value to its canonical string representation
+// based on the declared column type. This ensures PK hashes are identical
+// regardless of how the value arrived (JSON unmarshal, SQLite scan, etc.).
+func normalizeValue(colType string, v any) string {
+	if v == nil {
+		panic(fmt.Sprintf("repo.normalizeValue: value must not be nil for column type %q", colType))
+	}
+	switch colType {
+	case "integer":
+		switch n := v.(type) {
+		case int64:
+			return strconv.FormatInt(n, 10)
+		case float64:
+			return strconv.FormatInt(int64(n), 10)
+		case int:
+			return strconv.FormatInt(int64(n), 10)
+		case json.Number:
+			i, err := n.Int64()
+			if err != nil {
+				panic(fmt.Sprintf("repo.normalizeValue: integer column got non-integer json.Number %q", n))
+			}
+			return strconv.FormatInt(i, 10)
+		default:
+			panic(fmt.Sprintf("repo.normalizeValue: integer column got unexpected type %T", v))
+		}
+	case "real":
+		switch n := v.(type) {
+		case float64:
+			return strconv.FormatFloat(n, 'f', -1, 64)
+		case int64:
+			return strconv.FormatFloat(float64(n), 'f', -1, 64)
+		case json.Number:
+			f, err := n.Float64()
+			if err != nil {
+				panic(fmt.Sprintf("repo.normalizeValue: real column got non-float json.Number %q", n))
+			}
+			return strconv.FormatFloat(f, 'f', -1, 64)
+		default:
+			panic(fmt.Sprintf("repo.normalizeValue: real column got unexpected type %T", v))
+		}
+	case "text":
+		s, ok := v.(string)
+		if !ok {
+			panic(fmt.Sprintf("repo.normalizeValue: text column got unexpected type %T", v))
+		}
+		return s
+	case "blob":
+		b, ok := v.([]byte)
+		if !ok {
+			panic(fmt.Sprintf("repo.normalizeValue: blob column got unexpected type %T", v))
+		}
+		return hex.EncodeToString(b)
+	default:
+		panic(fmt.Sprintf("repo.normalizeValue: unsupported column type %q", colType))
+	}
+}
+
 // PKHash computes a deterministic SHA1 hash of the primary key values.
-// The map keys are sorted to ensure determinism.
-func PKHash(pkValues map[string]any) string {
+// Values are normalized to canonical strings based on declared column types
+// to avoid JSON round-trip coercion issues (e.g., int64 → float64).
+func PKHash(pkCols []ColumnDef, pkValues map[string]any) string {
+	if pkCols == nil {
+		panic("repo.PKHash: pkCols must not be nil")
+	}
 	if pkValues == nil {
 		panic("repo.PKHash: pkValues must not be nil")
 	}
-	// json.Marshal sorts keys, ensuring determinism.
-	data, err := json.Marshal(pkValues)
-	if err != nil {
-		panic(fmt.Sprintf("repo.PKHash: json.Marshal: %v", err))
+
+	// Sort PK columns lexicographically for determinism.
+	sorted := make([]ColumnDef, len(pkCols))
+	copy(sorted, pkCols)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Name < sorted[j].Name
+	})
+
+	// Build canonical representation: name=normalizedValue joined by \x00.
+	var parts []string
+	for _, col := range sorted {
+		v := pkValues[col.Name]
+		parts = append(parts, col.Name+"="+normalizeValue(col.Type, v))
 	}
-	return hash.SHA1(data)
+	canonical := strings.Join(parts, "\x00")
+	return hash.SHA1([]byte(canonical))
 }
 
 // UpsertXRow inserts or replaces a row in the extension table.
@@ -350,36 +427,198 @@ func LookupXRow(d *db.DB, tableName string, def TableDef, pkHash string) (map[st
 		return nil, 0, err
 	}
 
-	// Extract PK columns.
-	var pkCols []string
+	// Extract PK columns (with type info for normalizeValue).
+	var pkColDefs []ColumnDef
 	for _, col := range def.Columns {
 		if col.PK {
-			pkCols = append(pkCols, col.Name)
+			pkColDefs = append(pkColDefs, col)
 		}
 	}
 
 	// Find matching row.
 	for i, row := range rows {
 		pkValues := make(map[string]any)
-		for _, pk := range pkCols {
-			pkValues[pk] = row[pk]
+		for _, col := range pkColDefs {
+			pkValues[col.Name] = row[col.Name]
 		}
-		computed := PKHash(pkValues)
+		computed := PKHash(pkColDefs, pkValues)
 		if computed == pkHash {
 			// Postcondition: re-derive PK hash from the row we're about to
 			// return and verify it matches the requested hash. Guards against
 			// PK column extraction bugs.
 			verifyPK := make(map[string]any)
-			for _, pk := range pkCols {
-				verifyPK[pk] = row[pk]
+			for _, col := range pkColDefs {
+				verifyPK[col.Name] = row[col.Name]
 			}
-			if PKHash(verifyPK) != pkHash {
+			if PKHash(pkColDefs, verifyPK) != pkHash {
 				panic(fmt.Sprintf("repo.LookupXRow: postcondition violated: re-derived PK hash != %q", pkHash))
 			}
 			return row, mtimes[i], nil
 		}
 	}
 	return nil, 0, nil
+}
+
+// LookupXRowOwner returns the _owner field for the row identified by pkHash,
+// or "" if the row doesn't exist or the table has no owner column.
+func LookupXRowOwner(d *db.DB, tableName string, def TableDef, pkHash string) (string, error) {
+	if d == nil {
+		panic("repo.LookupXRowOwner: d must not be nil")
+	}
+	if tableName == "" {
+		panic("repo.LookupXRowOwner: tableName must not be empty")
+	}
+	if pkHash == "" {
+		panic("repo.LookupXRowOwner: pkHash must not be empty")
+	}
+
+	// Only tables with self-write/owner-write conflict have an _owner column.
+	hasOwner := def.Conflict == "self-write" || def.Conflict == "owner-write"
+	if !hasOwner {
+		return "", nil
+	}
+
+	// Scan all rows to find the one matching pkHash (same strategy as LookupXRow).
+	sql := fmt.Sprintf("SELECT * FROM x_%s", tableName)
+	rows, err := d.Query(sql)
+	if err != nil {
+		return "", fmt.Errorf("repo.LookupXRowOwner: %w", err)
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return "", fmt.Errorf("repo.LookupXRowOwner: columns: %w", err)
+	}
+
+	var pkColDefs []ColumnDef
+	for _, col := range def.Columns {
+		if col.PK {
+			pkColDefs = append(pkColDefs, col)
+		}
+	}
+
+	for rows.Next() {
+		values := make([]any, len(columns))
+		valuePtrs := make([]any, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return "", err
+		}
+
+		rowMap := make(map[string]any)
+		var owner string
+		for i, col := range columns {
+			if col == "_owner" {
+				if v, ok := values[i].(string); ok {
+					owner = v
+				}
+			} else if col != "mtime" {
+				rowMap[col] = values[i]
+			}
+		}
+
+		pkValues := make(map[string]any)
+		for _, col := range pkColDefs {
+			pkValues[col.Name] = rowMap[col.Name]
+		}
+		if PKHash(pkColDefs, pkValues) == pkHash {
+			return owner, nil
+		}
+	}
+	return "", rows.Err()
+}
+
+// IsTombstone returns true if all non-PK value columns in the row are nil.
+// A tombstone represents a deleted row (UV-style convention).
+// Returns false for tables with only PK columns (no value columns to NULL).
+func IsTombstone(def TableDef, row map[string]any) bool {
+	if row == nil {
+		panic("repo.IsTombstone: row must not be nil")
+	}
+	if len(def.Columns) == 0 {
+		panic("repo.IsTombstone: def.Columns must not be empty")
+	}
+	hasValueCol := false
+	for _, col := range def.Columns {
+		if col.PK {
+			continue
+		}
+		hasValueCol = true
+		if row[col.Name] != nil {
+			return false
+		}
+	}
+	return hasValueCol
+}
+
+// DeleteXRowByPKHash tombstones a row identified by PK hash. Sets all non-PK
+// value columns to NULL and updates mtime. Returns true if applied, false if
+// row doesn't exist or has a newer mtime.
+func DeleteXRowByPKHash(d *db.DB, tableName string, def TableDef, pkHash string, mtime int64) (bool, error) {
+	if d == nil {
+		panic("repo.DeleteXRowByPKHash: d must not be nil")
+	}
+	if tableName == "" {
+		panic("repo.DeleteXRowByPKHash: tableName must not be empty")
+	}
+	if pkHash == "" {
+		panic("repo.DeleteXRowByPKHash: pkHash must not be empty")
+	}
+	if len(def.Columns) == 0 {
+		panic("repo.DeleteXRowByPKHash: def.Columns must not be empty")
+	}
+
+	row, currentMtime, err := LookupXRow(d, tableName, def, pkHash)
+	if err != nil {
+		return false, err
+	}
+	if row == nil {
+		return false, nil
+	}
+	if currentMtime > mtime {
+		return false, nil
+	}
+
+	var pkCols []string
+	var pkValues []any
+	for _, col := range def.Columns {
+		if col.PK {
+			pkCols = append(pkCols, col.Name)
+			pkValues = append(pkValues, row[col.Name])
+		}
+	}
+
+	var setClauses []string
+	for _, col := range def.Columns {
+		if col.PK {
+			continue
+		}
+		setClauses = append(setClauses, fmt.Sprintf("%s = NULL", col.Name))
+	}
+	setClauses = append(setClauses, "mtime = ?")
+
+	var whereClauses []string
+	for _, pk := range pkCols {
+		whereClauses = append(whereClauses, fmt.Sprintf("%s = ?", pk))
+	}
+
+	args := []any{mtime}
+	args = append(args, pkValues...)
+
+	sqlStr := fmt.Sprintf(
+		"UPDATE x_%s SET %s WHERE %s",
+		tableName,
+		strings.Join(setClauses, ", "),
+		strings.Join(whereClauses, " AND "),
+	)
+	_, err = d.Exec(sqlStr, args...)
+	if err != nil {
+		return false, fmt.Errorf("repo.DeleteXRowByPKHash: update: %w", err)
+	}
+	return true, nil
 }
 
 // CatalogHash computes the SHA1 hash of all rows in the extension table.
@@ -397,11 +636,11 @@ func CatalogHash(d *db.DB, tableName string, def TableDef) (string, error) {
 		return "", err
 	}
 
-	// Extract PK columns.
-	var pkCols []string
+	// Extract PK columns (with type info for normalizeValue).
+	var pkColDefs []ColumnDef
 	for _, col := range def.Columns {
 		if col.PK {
-			pkCols = append(pkCols, col.Name)
+			pkColDefs = append(pkColDefs, col)
 		}
 	}
 
@@ -412,12 +651,16 @@ func CatalogHash(d *db.DB, tableName string, def TableDef) (string, error) {
 	}
 	var entries []entry
 	for i, row := range rows {
+		// Exclude tombstones from catalog hash (UV convention).
+		if IsTombstone(def, row) {
+			continue
+		}
 		pkValues := make(map[string]any)
-		for _, pk := range pkCols {
-			pkValues[pk] = row[pk]
+		for _, col := range pkColDefs {
+			pkValues[col.Name] = row[col.Name]
 		}
 		entries = append(entries, entry{
-			pkHash: PKHash(pkValues),
+			pkHash: PKHash(pkColDefs, pkValues),
 			mtime:  mtimes[i],
 		})
 	}

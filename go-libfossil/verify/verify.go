@@ -4,8 +4,8 @@ package verify
 import (
 	"time"
 
-	"github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/repo"
 )
 
 // IssueKind categorizes the type of verification issue found.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/simio"
 )
 
 func TestLoadVFile(t *testing.T) {

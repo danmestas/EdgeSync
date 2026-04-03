@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
+	libfossil "github.com/danmestas/go-libfossil"
+	_ "github.com/danmestas/go-libfossil/internal/testdriver"
 )
 
 // setupBisectDB creates an in-memory SQLite DB with vvar, plink, blob, and

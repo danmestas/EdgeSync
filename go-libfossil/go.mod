@@ -1,11 +1,11 @@
-module github.com/dmestas/edgesync/go-libfossil
+module github.com/danmestas/go-libfossil
 
 go 1.26.0
 
 require (
-	github.com/dmestas/edgesync/go-libfossil/db/driver/mattn v0.0.0-00010101000000-000000000000
-	github.com/dmestas/edgesync/go-libfossil/db/driver/modernc v0.0.0-00010101000000-000000000000
-	github.com/dmestas/edgesync/go-libfossil/db/driver/ncruces v0.0.0-00010101000000-000000000000
+	github.com/danmestas/go-libfossil/db/driver/mattn v0.0.0-00010101000000-000000000000
+	github.com/danmestas/go-libfossil/db/driver/modernc v0.0.0-00010101000000-000000000000
+	github.com/danmestas/go-libfossil/db/driver/ncruces v0.0.0-00010101000000-000000000000
 	golang.org/x/crypto v0.49.0
 )
 
@@ -31,7 +31,7 @@ require (
 )
 
 replace (
-	github.com/dmestas/edgesync/go-libfossil/db/driver/mattn => ./db/driver/mattn
-	github.com/dmestas/edgesync/go-libfossil/db/driver/modernc => ./db/driver/modernc
-	github.com/dmestas/edgesync/go-libfossil/db/driver/ncruces => ./db/driver/ncruces
+	github.com/danmestas/go-libfossil/db/driver/mattn => ./db/driver/mattn
+	github.com/danmestas/go-libfossil/db/driver/modernc => ./db/driver/modernc
+	github.com/danmestas/go-libfossil/db/driver/ncruces => ./db/driver/ncruces
 )

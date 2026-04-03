@@ -7,8 +7,8 @@ import (
 
 	"github.com/nats-io/nats.go"
 
-	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
+	libsync "github.com/danmestas/go-libfossil/sync"
+	"github.com/danmestas/go-libfossil/xfer"
 )
 
 // Bridge subscribes to a NATS subject and proxies sync requests to a Fossil

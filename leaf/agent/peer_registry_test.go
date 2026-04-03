@@ -3,9 +3,9 @@ package agent
 import (
 	"testing"
 
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	"github.com/dmestas/edgesync/go-libfossil/sync"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/sync"
 )
 
 func TestPeerRegistryEnsureAndSeed(t *testing.T) {
@@ -33,7 +33,8 @@ func TestPeerRegistryEnsureAndSeed(t *testing.T) {
 
 	// Verify the row exists
 	pkValues := map[string]any{"peer_id": "test-peer-1"}
-	pkHash := repo.PKHash(pkValues)
+	pkColDefs := []repo.ColumnDef{{Name: "peer_id", Type: "text", PK: true}}
+	pkHash := repo.PKHash(pkColDefs, pkValues)
 
 	row, mtime, err := repo.LookupXRow(r.DB(), "peer_registry", peerRegistryDef, pkHash)
 	if err != nil {
@@ -102,7 +103,8 @@ func TestPeerRegistryUpdateAfterSync(t *testing.T) {
 
 	// Verify last_sync was updated
 	pkValues := map[string]any{"peer_id": "test-peer-2"}
-	pkHash := repo.PKHash(pkValues)
+	pkColDefs := []repo.ColumnDef{{Name: "peer_id", Type: "text", PK: true}}
+	pkHash := repo.PKHash(pkColDefs, pkValues)
 
 	row, mtime, err := repo.LookupXRow(r.DB(), "peer_registry", peerRegistryDef, pkHash)
 	if err != nil {

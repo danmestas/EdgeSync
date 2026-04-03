@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dmestas/edgesync/go-libfossil/db"
-	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/db"
+	_ "github.com/danmestas/go-libfossil/internal/testdriver"
+	"github.com/danmestas/go-libfossil/simio"
 )
 
 func setupTestDB(t *testing.T) *db.DB {

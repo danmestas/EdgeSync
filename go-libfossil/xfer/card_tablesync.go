@@ -41,3 +41,14 @@ type XRowCard struct {
 }
 
 func (c *XRowCard) Type() CardType { return CardXRow }
+
+// XDeleteCard marks a table sync row as deleted (tombstone).
+// Wire: xdelete TABLE PK_HASH MTIME SIZE\nJSON_PK_DATA
+type XDeleteCard struct {
+	Table  string
+	PKHash string
+	MTime  int64
+	PKData []byte // JSON-encoded PK column values
+}
+
+func (c *XDeleteCard) Type() CardType { return CardXDelete }

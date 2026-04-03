@@ -3,12 +3,12 @@ package content
 import (
 	"fmt"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/blob"
-	"github.com/dmestas/edgesync/go-libfossil/db"
-	"github.com/dmestas/edgesync/go-libfossil/delta"
-	"github.com/dmestas/edgesync/go-libfossil/hash"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/blob"
+	"github.com/danmestas/go-libfossil/db"
+	"github.com/danmestas/go-libfossil/delta"
+	"github.com/danmestas/go-libfossil/hash"
+	"github.com/danmestas/go-libfossil/simio"
 )
 
 func Expand(q db.Querier, rid libfossil.FslID) (result []byte, err error) {

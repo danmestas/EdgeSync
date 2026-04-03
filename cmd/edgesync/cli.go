@@ -7,8 +7,8 @@ import (
 	"os/user"
 	"path/filepath"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/repo"
 )
 
 type CLI struct {

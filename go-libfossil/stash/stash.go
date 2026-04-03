@@ -12,10 +12,10 @@ import (
 	"path/filepath"
 	"strconv"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/blob"
-	"github.com/dmestas/edgesync/go-libfossil/content"
-	"github.com/dmestas/edgesync/go-libfossil/delta"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/blob"
+	"github.com/danmestas/go-libfossil/content"
+	"github.com/danmestas/go-libfossil/delta"
 )
 
 // Entry represents a single stash entry.

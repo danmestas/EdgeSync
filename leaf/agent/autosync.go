@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/checkout"
-	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/checkout"
+	libsync "github.com/danmestas/go-libfossil/sync"
 )
 
 // AutosyncMode controls the autosync behavior around commit.

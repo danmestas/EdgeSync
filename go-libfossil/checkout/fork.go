@@ -3,8 +3,8 @@ package checkout
 import (
 	"fmt"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/repo"
 )
 
 // BranchLeaves returns the leaf RIDs for a named branch.

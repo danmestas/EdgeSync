@@ -4,8 +4,8 @@ import (
 	"database/sql"
 	"testing"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
+	libfossil "github.com/danmestas/go-libfossil"
+	_ "github.com/danmestas/go-libfossil/internal/testdriver"
 )
 
 // buildPlink creates an in-memory SQLite DB with plink table and populates it.

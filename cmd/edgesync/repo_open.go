@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/dmestas/edgesync/go-libfossil/manifest"
+	"github.com/danmestas/go-libfossil/manifest"
 
-	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
+	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
 )
 
 type RepoOpenCmd struct {

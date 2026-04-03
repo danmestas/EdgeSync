@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
+	"github.com/danmestas/go-libfossil/xfer"
 )
 
 // buildLoginCard constructs a LoginCard matching Fossil's protocol.

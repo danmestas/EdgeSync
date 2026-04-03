@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/path"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/path"
 )
 
 // ErrBisectComplete is returned by Next when the search has converged.

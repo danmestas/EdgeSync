@@ -4,7 +4,7 @@ import (
 	"flag"
 	"time"
 
-	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
+	libsync "github.com/danmestas/go-libfossil/sync"
 )
 
 // Level controls fault injection severity.

@@ -11,14 +11,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmestas/edgesync/go-libfossil/manifest"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
-	"github.com/dmestas/edgesync/go-libfossil/testutil"
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
+	"github.com/danmestas/go-libfossil/manifest"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
+	libsync "github.com/danmestas/go-libfossil/sync"
+	"github.com/danmestas/go-libfossil/testutil"
+	"github.com/danmestas/go-libfossil/xfer"
 	"github.com/nats-io/nats.go"
-	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
+	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
 )
 
 // startFossilServer starts a fossil server on a free port and returns the URL

@@ -5,10 +5,10 @@ import (
 	"sort"
 	"testing"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/blob"
-	"github.com/dmestas/edgesync/go-libfossil/deck"
-	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/blob"
+	"github.com/danmestas/go-libfossil/deck"
+	_ "github.com/danmestas/go-libfossil/internal/testdriver"
 )
 
 func TestGenerateClusters_BelowThreshold(t *testing.T) {

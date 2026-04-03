@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
-	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/xfer"
+	_ "github.com/danmestas/go-libfossil/internal/testdriver"
 )
 
 func newCkinLockTestRepo(t *testing.T) *repo.Repo {

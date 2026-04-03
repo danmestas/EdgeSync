@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dmestas/edgesync/go-libfossil/blob"
-	"github.com/dmestas/edgesync/go-libfossil/hash"
-	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
+	"github.com/danmestas/go-libfossil/blob"
+	"github.com/danmestas/go-libfossil/hash"
+	_ "github.com/danmestas/go-libfossil/internal/testdriver"
 )
 
 // testEnv sets up a repo DB with one blob ("hello" in a.txt), a checkout DB

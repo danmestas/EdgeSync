@@ -7,14 +7,14 @@ import (
 	"testing"
 	"time"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/blob"
-	"github.com/dmestas/edgesync/go-libfossil/deck"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	"github.com/dmestas/edgesync/go-libfossil/tag"
-	"github.com/dmestas/edgesync/go-libfossil/testutil"
-	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/blob"
+	"github.com/danmestas/go-libfossil/deck"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/tag"
+	"github.com/danmestas/go-libfossil/testutil"
+	_ "github.com/danmestas/go-libfossil/internal/testdriver"
 )
 
 func setupTestRepo(t *testing.T) *repo.Repo {

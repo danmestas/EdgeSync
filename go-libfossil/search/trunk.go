@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strconv"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/db"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/db"
 )
 
 // trunkTip returns the RID of the latest checkin on trunk.

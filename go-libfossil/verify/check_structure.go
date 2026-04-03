@@ -3,8 +3,8 @@ package verify
 import (
 	"fmt"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/repo"
 )
 
 // checkDeltaChains verifies delta relationships are valid.

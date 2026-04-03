@@ -3,10 +3,10 @@ package verify
 import (
 	"fmt"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/content"
-	"github.com/dmestas/edgesync/go-libfossil/hash"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/content"
+	"github.com/danmestas/go-libfossil/hash"
+	"github.com/danmestas/go-libfossil/repo"
 )
 
 // checkBlobs verifies blob integrity: content hashing and delta application.

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
+	libsync "github.com/danmestas/go-libfossil/sync"
 	"github.com/dmestas/edgesync/leaf/telemetry"
 )
 

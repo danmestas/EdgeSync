@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dmestas/edgesync/go-libfossil/db"
+	"github.com/danmestas/go-libfossil/db"
 	_ "github.com/danmestas/go-sqlite3-opfs"
 	_ "github.com/ncruces/go-sqlite3/driver"
 )

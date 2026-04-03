@@ -3,8 +3,8 @@ package checkout
 import (
 	"time"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/simio"
 )
 
 // VFileChange — vfile.chnged column values (matches Fossil's vfile states)

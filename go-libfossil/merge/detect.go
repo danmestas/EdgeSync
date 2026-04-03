@@ -1,8 +1,8 @@
 package merge
 
 import (
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/repo"
 )
 
 // DetectForks finds divergent branches by querying the leaf table

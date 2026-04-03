@@ -3,8 +3,8 @@ package content
 import (
 	"testing"
 
-	"github.com/dmestas/edgesync/go-libfossil/blob"
-	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
+	"github.com/danmestas/go-libfossil/blob"
+	_ "github.com/danmestas/go-libfossil/internal/testdriver"
 )
 
 func TestIsPrivate_NotPrivate(t *testing.T) {

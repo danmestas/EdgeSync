@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"testing"
 
-	_ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
-	"github.com/dmestas/edgesync/go-libfossil/manifest"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	"github.com/dmestas/edgesync/go-libfossil/verify"
+	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
+	"github.com/danmestas/go-libfossil/manifest"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/verify"
 )
 
 func newTestRepo(t *testing.T) *repo.Repo {

@@ -5,7 +5,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/dmestas/edgesync/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/repo"
 )
 
 var peerRegistryDef = repo.TableDef{

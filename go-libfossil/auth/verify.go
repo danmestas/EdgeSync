@@ -8,8 +8,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/dmestas/edgesync/go-libfossil/db"
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
+	"github.com/danmestas/go-libfossil/db"
+	"github.com/danmestas/go-libfossil/xfer"
 )
 
 var ErrAuthFailed = errors.New("authentication failed")

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dmestas/edgesync/go-libfossil/diff"
-	"github.com/dmestas/edgesync/go-libfossil/testutil"
+	"github.com/danmestas/go-libfossil/diff"
+	"github.com/danmestas/go-libfossil/testutil"
 )
 
 // extractHunkContent strips diff headers and returns only the @@ and +/-/space lines.

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/dmestas/edgesync/go-libfossil/content"
+	"github.com/danmestas/go-libfossil/content"
 )
 
 // FileContent reads a file from the checkout working directory via Storage.

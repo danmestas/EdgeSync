@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
+	"github.com/danmestas/go-libfossil/xfer"
 	"github.com/nats-io/nats.go"
 )
 

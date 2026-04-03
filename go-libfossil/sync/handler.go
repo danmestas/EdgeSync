@@ -6,13 +6,13 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/dmestas/edgesync/go-libfossil/auth"
-	"github.com/dmestas/edgesync/go-libfossil/blob"
-	"github.com/dmestas/edgesync/go-libfossil/content"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
+	"github.com/danmestas/go-libfossil/auth"
+	"github.com/danmestas/go-libfossil/blob"
+	"github.com/danmestas/go-libfossil/content"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/xfer"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // DefaultCloneBatchSize is the number of blobs sent per clone round.
@@ -323,6 +323,8 @@ func (h *handler) handleDataCard(card xfer.Card) error {
 		return h.handleXGimme(c)
 	case *xfer.XRowCard:
 		return h.handleXRow(c)
+	case *xfer.XDeleteCard:
+		return h.handleXDelete(c)
 	}
 	return nil
 }

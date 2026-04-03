@@ -3,10 +3,10 @@ package manifest
 import (
 	"fmt"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/content"
-	"github.com/dmestas/edgesync/go-libfossil/deck"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/content"
+	"github.com/danmestas/go-libfossil/deck"
+	"github.com/danmestas/go-libfossil/repo"
 )
 
 // AfterDephantomize crosslinks a formerly-phantom blob and any dependents.

@@ -3,7 +3,7 @@ package checkout
 import (
 	"context"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // ExtractStart describes the beginning of an extract or update operation.

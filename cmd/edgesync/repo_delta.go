@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dmestas/edgesync/go-libfossil/delta"
+	"github.com/danmestas/go-libfossil/delta"
 )
 
 type RepoDeltaCmd struct {

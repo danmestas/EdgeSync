@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dmestas/edgesync/go-libfossil/db"
+	"github.com/danmestas/go-libfossil/db"
 	_ "modernc.org/sqlite"
 )
 

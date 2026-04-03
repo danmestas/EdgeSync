@@ -8,16 +8,16 @@ import (
 	"testing"
 	"time"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/annotate"
-	"github.com/dmestas/edgesync/go-libfossil/bisect"
-	"github.com/dmestas/edgesync/go-libfossil/manifest"
-	"github.com/dmestas/edgesync/go-libfossil/path"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	"github.com/dmestas/edgesync/go-libfossil/stash"
-	"github.com/dmestas/edgesync/go-libfossil/undo"
-	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/annotate"
+	"github.com/danmestas/go-libfossil/bisect"
+	"github.com/danmestas/go-libfossil/manifest"
+	"github.com/danmestas/go-libfossil/path"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/stash"
+	"github.com/danmestas/go-libfossil/undo"
+	_ "github.com/danmestas/go-libfossil/internal/testdriver"
 )
 
 // setupCheckoutDB creates a .fslckout database with vvar, vfile, and vmerge tables.

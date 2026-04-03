@@ -5,7 +5,7 @@ package telemetry
 import (
 	"context"
 
-	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
+	libsync "github.com/danmestas/go-libfossil/sync"
 )
 
 // TelemetryConfig is a stub for WASM builds.

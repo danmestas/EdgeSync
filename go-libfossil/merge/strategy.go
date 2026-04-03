@@ -1,6 +1,6 @@
 package merge
 
-import libfossil "github.com/dmestas/edgesync/go-libfossil"
+import libfossil "github.com/danmestas/go-libfossil"
 
 // Strategy merges three versions of content.
 type Strategy interface {

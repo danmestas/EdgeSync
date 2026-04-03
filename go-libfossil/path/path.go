@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // PathNode represents a single node in a path through the plink DAG.

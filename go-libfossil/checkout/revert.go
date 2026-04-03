@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/content"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/content"
 )
 
 // Revert restores files to their checkout version state.

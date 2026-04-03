@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
 )
 
 type RepoNewCmd struct {

@@ -3,10 +3,10 @@ package sync
 import (
 	"fmt"
 
-	"github.com/dmestas/edgesync/go-libfossil/auth"
-	"github.com/dmestas/edgesync/go-libfossil/hash"
-	"github.com/dmestas/edgesync/go-libfossil/uv"
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
+	"github.com/danmestas/go-libfossil/auth"
+	"github.com/danmestas/go-libfossil/hash"
+	"github.com/danmestas/go-libfossil/uv"
+	"github.com/danmestas/go-libfossil/xfer"
 )
 
 func (h *handler) handlePragmaUVHash(clientHash string) error {

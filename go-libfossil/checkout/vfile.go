@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/blob"
-	"github.com/dmestas/edgesync/go-libfossil/hash"
-	"github.com/dmestas/edgesync/go-libfossil/manifest"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/blob"
+	"github.com/danmestas/go-libfossil/hash"
+	"github.com/danmestas/go-libfossil/manifest"
 )
 
 // LoadVFile populates vfile table with entries from the specified checkin manifest.

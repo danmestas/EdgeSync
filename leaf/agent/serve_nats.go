@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/sync"
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/sync"
+	"github.com/danmestas/go-libfossil/xfer"
 	"github.com/nats-io/nats.go"
 )
 

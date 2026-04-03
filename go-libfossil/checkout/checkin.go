@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strconv"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/content"
-	"github.com/dmestas/edgesync/go-libfossil/deck"
-	"github.com/dmestas/edgesync/go-libfossil/manifest"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/content"
+	"github.com/danmestas/go-libfossil/deck"
+	"github.com/danmestas/go-libfossil/manifest"
 )
 
 // Enqueue adds files to the commit staging queue. If the queue is empty (nil),

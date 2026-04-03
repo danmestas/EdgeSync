@@ -3,8 +3,8 @@ package checkout
 import (
 	"testing"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/simio"
 )
 
 func TestManageNewFile(t *testing.T) {

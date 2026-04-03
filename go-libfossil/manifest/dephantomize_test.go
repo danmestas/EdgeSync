@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmestas/edgesync/go-libfossil/blob"
-	"github.com/dmestas/edgesync/go-libfossil/deck"
-	_ "github.com/dmestas/edgesync/go-libfossil/internal/testdriver"
+	"github.com/danmestas/go-libfossil/blob"
+	"github.com/danmestas/go-libfossil/deck"
+	_ "github.com/danmestas/go-libfossil/internal/testdriver"
 )
 
 func TestAfterDephantomizeCheckin(t *testing.T) {

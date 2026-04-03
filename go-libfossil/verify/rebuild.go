@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dmestas/edgesync/go-libfossil/db"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/db"
+	"github.com/danmestas/go-libfossil/repo"
 )
 
 // rebuildTableList is the set of derived tables dropped and reconstructed

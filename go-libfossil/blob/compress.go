@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/dmestas/edgesync/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/simio"
 )
 
 // Compress produces Fossil-compatible compressed blob content:

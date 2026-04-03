@@ -1,9 +1,9 @@
-module github.com/dmestas/edgesync/go-libfossil/db/driver/modernc
+module github.com/danmestas/go-libfossil/db/driver/modernc
 
 go 1.26.0
 
 require (
-	github.com/dmestas/edgesync/go-libfossil v0.0.0
+	github.com/danmestas/go-libfossil v0.0.0
 	modernc.org/sqlite v1.46.1
 )
 
@@ -22,7 +22,7 @@ require (
 )
 
 replace (
-	github.com/dmestas/edgesync/go-libfossil => ../../../
-	github.com/dmestas/edgesync/go-libfossil/db/driver/mattn => ../mattn
-	github.com/dmestas/edgesync/go-libfossil/db/driver/ncruces => ../ncruces
+	github.com/danmestas/go-libfossil => ../../../
+	github.com/danmestas/go-libfossil/db/driver/mattn => ../mattn
+	github.com/danmestas/go-libfossil/db/driver/ncruces => ../ncruces
 )

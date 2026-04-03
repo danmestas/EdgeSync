@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/uv"
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/uv"
+	"github.com/danmestas/go-libfossil/xfer"
 )
 
 func handleReq(t *testing.T, r *repo.Repo, cards ...xfer.Card) *xfer.Message {

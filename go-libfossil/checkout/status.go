@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // HasChanges returns true if the checkout has any modified, deleted, or renamed files.

@@ -7,7 +7,7 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/dmestas/edgesync/go-libfossil/sync"
+	"github.com/danmestas/go-libfossil/sync"
 )
 
 // serveHTTP starts an HTTP server with the xfer handler and operational

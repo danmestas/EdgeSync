@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	libsync "github.com/dmestas/edgesync/go-libfossil/sync"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
+	libsync "github.com/danmestas/go-libfossil/sync"
 	"github.com/dmestas/edgesync/leaf/agent"
 )
 

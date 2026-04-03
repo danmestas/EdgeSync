@@ -1,10 +1,10 @@
-module github.com/dmestas/edgesync/go-libfossil/db/driver/ncruces
+module github.com/danmestas/go-libfossil/db/driver/ncruces
 
 go 1.26.0
 
 require (
 	github.com/danmestas/go-sqlite3-opfs v0.2.0
-	github.com/dmestas/edgesync/go-libfossil v0.0.0
+	github.com/danmestas/go-libfossil v0.0.0
 	github.com/ncruces/go-sqlite3 v0.33.0
 )
 
@@ -15,7 +15,7 @@ require (
 )
 
 replace (
-	github.com/dmestas/edgesync/go-libfossil => ../../../
-	github.com/dmestas/edgesync/go-libfossil/db/driver/mattn => ../mattn
-	github.com/dmestas/edgesync/go-libfossil/db/driver/modernc => ../modernc
+	github.com/danmestas/go-libfossil => ../../../
+	github.com/danmestas/go-libfossil/db/driver/mattn => ../mattn
+	github.com/danmestas/go-libfossil/db/driver/modernc => ../modernc
 )

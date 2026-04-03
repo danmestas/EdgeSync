@@ -24,7 +24,7 @@ func OpenWith(path string, cfg OpenConfig) (*DB, error) {
 		panic("db.OpenWith: path must not be empty")
 	}
 	if registered == nil {
-		panic("db.OpenWith: no driver registered — import a driver package (e.g., _ \"github.com/dmestas/edgesync/go-libfossil/db/driver/modernc\")")
+		panic("db.OpenWith: no driver registered — import a driver package (e.g., _ \"github.com/danmestas/go-libfossil/db/driver/modernc\")")
 	}
 	driver := cfg.Driver
 	if driver == "" {

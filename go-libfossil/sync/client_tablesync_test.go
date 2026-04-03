@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/simio"
+	"github.com/danmestas/go-libfossil/xfer"
 )
 
 // newTableSyncRepoPair creates server and client repos with sync schema initialized.
@@ -75,7 +75,7 @@ func TestTableSyncEndToEnd(t *testing.T) {
 	}}
 
 	_, err := Sync(context.Background(), clientRepo, transport, SyncOpts{
-		Pull: true, Push: true,
+		Pull: true, Push: true, XTableSync: true,
 		ProjectCode: "p", ServerCode: "s",
 	})
 	if err != nil {
@@ -122,6 +122,75 @@ func TestTableSyncEndToEnd(t *testing.T) {
 	}
 }
 
+func TestTableSyncDeletion(t *testing.T) {
+	serverRepo, clientRepo := newTableSyncRepoPair(t)
+
+	def := repo.TableDef{
+		Columns: []repo.ColumnDef{
+			{Name: "id", Type: "text", PK: true},
+			{Name: "value", Type: "text"},
+		},
+		Conflict: "mtime-wins",
+	}
+	if err := repo.RegisterSyncedTable(serverRepo.DB(), "tasks", def, 100); err != nil {
+		t.Fatalf("register server: %v", err)
+	}
+	if err := repo.RegisterSyncedTable(clientRepo.DB(), "tasks", def, 100); err != nil {
+		t.Fatalf("register client: %v", err)
+	}
+
+	// Seed same row on both sides at mtime 1000.
+	row := map[string]any{"id": "row-1", "value": "hello"}
+	if err := repo.UpsertXRow(serverRepo.DB(), "tasks", row, 1000); err != nil {
+		t.Fatalf("upsert server row: %v", err)
+	}
+	if err := repo.UpsertXRow(clientRepo.DB(), "tasks", row, 1000); err != nil {
+		t.Fatalf("upsert client row: %v", err)
+	}
+
+	// Delete on server at mtime 2000.
+	pkColDefs := []repo.ColumnDef{{Name: "id", Type: "text", PK: true}}
+	pkHash := repo.PKHash(pkColDefs, map[string]any{"id": "row-1"})
+	deleted, err := repo.DeleteXRowByPKHash(serverRepo.DB(), "tasks", def, pkHash, 2000)
+	if err != nil {
+		t.Fatalf("DeleteXRowByPKHash: %v", err)
+	}
+	if !deleted {
+		t.Fatal("expected row to be deleted on server")
+	}
+
+	transport := &MockTransport{Handler: func(req *xfer.Message) *xfer.Message {
+		resp, err := HandleSync(context.Background(), serverRepo, req)
+		if err != nil {
+			t.Fatalf("HandleSync: %v", err)
+		}
+		return resp
+	}}
+
+	_, err = Sync(context.Background(), clientRepo, transport, SyncOpts{
+		Pull: true, Push: true, XTableSync: true,
+		ProjectCode: "p", ServerCode: "s",
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	// Verify client's row is now a tombstone with mtime 2000.
+	clientRow, clientMtime, err := repo.LookupXRow(clientRepo.DB(), "tasks", def, pkHash)
+	if err != nil {
+		t.Fatalf("LookupXRow client: %v", err)
+	}
+	if clientRow == nil {
+		t.Fatal("client row not found after sync")
+	}
+	if !repo.IsTombstone(def, clientRow) {
+		t.Errorf("client row is not a tombstone: %v", clientRow)
+	}
+	if clientMtime != 2000 {
+		t.Errorf("client mtime = %d, want 2000", clientMtime)
+	}
+}
+
 func TestTableSyncSchemaDeployment(t *testing.T) {
 	serverRepo, clientRepo := newTableSyncRepoPair(t)
 
@@ -153,7 +222,7 @@ func TestTableSyncSchemaDeployment(t *testing.T) {
 	}}
 
 	_, err := Sync(context.Background(), clientRepo, transport, SyncOpts{
-		Pull: true, Push: true,
+		Pull: true, Push: true, XTableSync: true,
 		ProjectCode: "p", ServerCode: "s",
 	})
 	if err != nil {

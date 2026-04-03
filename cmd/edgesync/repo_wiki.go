@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/content"
-	"github.com/dmestas/edgesync/go-libfossil/deck"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/content"
+	"github.com/danmestas/go-libfossil/deck"
 )
 
 type RepoWikiCmd struct {

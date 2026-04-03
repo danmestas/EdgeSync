@@ -4,8 +4,8 @@ import (
 	"container/list"
 	"sync"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/db"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/db"
 )
 
 // Cache is a concurrency-safe LRU cache for expanded blob content.

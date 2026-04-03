@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/simio"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/simio"
 )
 
 // TestObserverFullLifecycle exercises the complete observer lifecycle:

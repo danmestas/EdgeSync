@@ -8,7 +8,7 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
+	"github.com/danmestas/go-libfossil/xfer"
 )
 
 // IrohTransport implements sync.Transport over the iroh sidecar's HTTP API.

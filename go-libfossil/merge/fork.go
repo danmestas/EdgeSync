@@ -1,6 +1,6 @@
 package merge
 
-import "github.com/dmestas/edgesync/go-libfossil/repo"
+import "github.com/danmestas/go-libfossil/repo"
 
 func init() { Register(&ConflictFork{}) }
 

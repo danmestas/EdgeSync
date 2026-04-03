@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmestas/edgesync/go-libfossil/hash"
-	"github.com/dmestas/edgesync/go-libfossil/repo"
-	"github.com/dmestas/edgesync/go-libfossil/xfer"
+	"github.com/danmestas/go-libfossil/hash"
+	"github.com/danmestas/go-libfossil/repo"
+	"github.com/danmestas/go-libfossil/xfer"
 )
 
 func freePort(t *testing.T) string {

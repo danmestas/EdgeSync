@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 
-	libfossil "github.com/dmestas/edgesync/go-libfossil"
-	"github.com/dmestas/edgesync/go-libfossil/db"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/db"
 )
 
 // propagate walks the plink DAG from a target artifact to all descendants,

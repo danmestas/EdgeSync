@@ -3,7 +3,7 @@ package hash_test
 import (
 	"fmt"
 
-	"github.com/dmestas/edgesync/go-libfossil/hash"
+	"github.com/danmestas/go-libfossil/hash"
 )
 
 func ExampleSHA1() {

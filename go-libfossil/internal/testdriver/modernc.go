@@ -2,4 +2,4 @@
 
 package testdriver
 
-import _ "github.com/dmestas/edgesync/go-libfossil/db/driver/modernc"
+import _ "github.com/danmestas/go-libfossil/db/driver/modernc"
