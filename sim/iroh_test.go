@@ -9,9 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danmestas/go-libfossil/repo"
+	libfossil "github.com/danmestas/go-libfossil"
 	"github.com/danmestas/go-libfossil/simio"
-	libsync "github.com/danmestas/go-libfossil/sync"
 	"github.com/dmestas/edgesync/leaf/agent"
 )
 
@@ -31,17 +30,17 @@ func TestIrohPeerSync(t *testing.T) {
 	var leafPaths [2]string
 	for i := range 2 {
 		path := filepath.Join(dir, fmt.Sprintf("leaf-%d.fossil", i))
-		r, err := repo.Create(path, "testuser", simio.CryptoRand{})
+		r, err := libfossil.Create(path, libfossil.CreateOpts{User: "testuser", Rand: simio.CryptoRand{}})
 		if err != nil {
-			t.Fatalf("repo.Create leaf-%d: %v", i, err)
+			t.Fatalf("Create leaf-%d: %v", i, err)
 		}
-		r.DB().Exec("UPDATE config SET value=? WHERE name='project-code'", projCode)
+		r.SetConfig("project-code", projCode)
 		r.Close()
 		leafPaths[i] = path
 	}
 
 	// 2. Seed blobs into leaf-0.
-	r0, err := repo.Open(leafPaths[0])
+	r0, err := libfossil.Open(leafPaths[0])
 	if err != nil {
 		t.Fatalf("open leaf-0: %v", err)
 	}
@@ -55,17 +54,14 @@ func TestIrohPeerSync(t *testing.T) {
 	t.Logf("Seeded %d blobs into leaf-0", len(seededUUIDs))
 
 	// 3. Build leaf-0 via NewFromParts to avoid eager NATS connection.
-	// The iroh sidecar only needs the repo and an HTTP callback listener —
-	// no NATS transport is required for this lifecycle test.
-	r0, err = repo.Open(leafPaths[0])
+	r0, err = libfossil.Open(leafPaths[0])
 	if err != nil {
 		t.Fatalf("reopen leaf-0: %v", err)
 	}
 
-	var serverCode string
-	r0.DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&serverCode)
+	serverCode, _ := r0.Config("server-code")
 
-	transport := &libsync.MockTransport{}
+	transport := &libfossil.MockTransport{}
 
 	leaf0 := agent.NewFromParts(agent.Config{
 		RepoPath:     leafPaths[0],
