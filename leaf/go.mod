@@ -3,9 +3,9 @@ module github.com/dmestas/edgesync/leaf
 go 1.26.0
 
 require (
-	github.com/danmestas/go-libfossil v0.2.1
-	github.com/danmestas/go-libfossil/db/driver/modernc v0.2.0
-	github.com/danmestas/go-libfossil/db/driver/ncruces v0.2.0
+	github.com/danmestas/go-libfossil v0.2.4
+	github.com/danmestas/go-libfossil/db/driver/modernc v0.2.4
+	github.com/danmestas/go-libfossil/db/driver/ncruces v0.2.4
 	github.com/nats-io/nats-server/v2 v2.12.6
 	github.com/nats-io/nats.go v1.49.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.17.0

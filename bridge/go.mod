@@ -3,14 +3,14 @@ module github.com/dmestas/edgesync/bridge
 go 1.26.0
 
 require (
-	github.com/danmestas/go-libfossil v0.2.1
-	github.com/danmestas/go-libfossil/db/driver/modernc v0.2.0
+	github.com/danmestas/go-libfossil v0.2.4
+	github.com/danmestas/go-libfossil/db/driver/modernc v0.2.4
 	github.com/dmestas/edgesync/leaf v0.0.0
 	github.com/nats-io/nats-server/v2 v2.12.6
 	github.com/nats-io/nats.go v1.49.0
-	go.opentelemetry.io/otel v1.42.0
-	go.opentelemetry.io/otel/metric v1.42.0
-	go.opentelemetry.io/otel/trace v1.42.0
+	go.opentelemetry.io/otel v1.43.0
+	go.opentelemetry.io/otel/metric v1.43.0
+	go.opentelemetry.io/otel/trace v1.43.0
 )
 
 replace github.com/dmestas/edgesync/leaf => ../leaf

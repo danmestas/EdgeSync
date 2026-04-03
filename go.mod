@@ -4,8 +4,8 @@ go 1.26.0
 
 require (
 	github.com/alecthomas/kong v1.15.0
-	github.com/danmestas/go-libfossil v0.2.1
-	github.com/danmestas/go-libfossil/db/driver/modernc v0.2.0
+	github.com/danmestas/go-libfossil v0.2.4
+	github.com/danmestas/go-libfossil/db/driver/modernc v0.2.4
 	github.com/dmestas/edgesync/bridge v0.0.0-00010101000000-000000000000
 	github.com/dmestas/edgesync/leaf v0.0.0
 	github.com/nats-io/nats-server/v2 v2.12.6
@@ -32,9 +32,9 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.67.0 // indirect
-	go.opentelemetry.io/otel v1.42.0 // indirect
-	go.opentelemetry.io/otel/metric v1.42.0 // indirect
-	go.opentelemetry.io/otel/trace v1.42.0 // indirect
+	go.opentelemetry.io/otel v1.43.0 // indirect
+	go.opentelemetry.io/otel/metric v1.43.0 // indirect
+	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	golang.org/x/crypto v0.49.0 // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
 	golang.org/x/sys v0.42.0 // indirect
