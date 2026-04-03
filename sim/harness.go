@@ -14,7 +14,7 @@ import (
 	natsserver "github.com/nats-io/nats-server/v2/server"
 
 	"github.com/dmestas/edgesync/bridge/bridge"
-	"github.com/danmestas/go-libfossil/repo"
+	libfossil "github.com/danmestas/go-libfossil"
 	"github.com/danmestas/go-libfossil/simio"
 	"github.com/dmestas/edgesync/leaf/agent"
 )
@@ -58,7 +58,7 @@ func RunSimulation(cfg SimConfig) (*SimReport, error) {
 	// Seed blobs into leaf repos.
 	rng := rand.New(rand.NewSource(cfg.Seed))
 	for i, path := range h.LeafPaths() {
-		r, err := repo.Open(path)
+		r, err := libfossil.Open(path)
 		if err != nil {
 			return nil, fmt.Errorf("open leaf-%d for seeding: %w", i, err)
 		}
@@ -112,10 +112,10 @@ func RunSimulation(cfg SimConfig) (*SimReport, error) {
 	h.bridge.Stop()
 
 	// Check invariants.
-	var repos []*repo.Repo
+	var repos []*libfossil.Repo
 	var labels []string
 
-	sr, err := repo.Open(h.FossilRepoPath())
+	sr, err := libfossil.Open(h.FossilRepoPath())
 	if err != nil {
 		return nil, fmt.Errorf("open server repo: %w", err)
 	}
@@ -124,7 +124,7 @@ func RunSimulation(cfg SimConfig) (*SimReport, error) {
 	labels = append(labels, "server")
 
 	for i, path := range h.LeafPaths() {
-		r, err := repo.Open(path)
+		r, err := libfossil.Open(path)
 		if err != nil {
 			return nil, fmt.Errorf("reopen leaf-%d: %w", i, err)
 		}
@@ -225,12 +225,12 @@ func (h *Harness) SetupInfra() error {
 	rng := simio.NewSeededRand(h.Config.Seed)
 	for i := range h.Config.NumLeaves {
 		repoPath := filepath.Join(h.tmpDir, fmt.Sprintf("leaf-%d.fossil", i))
-		r, err := repo.Create(repoPath, "anonymous", rng)
+		r, err := libfossil.Create(repoPath, libfossil.CreateOpts{User: "anonymous", Rand: rng})
 		if err != nil {
 			return fmt.Errorf("sim: repo create leaf-%d: %w", i, err)
 		}
 		// Set project-code so NATS subjects match the bridge.
-		if _, err := r.DB().Exec("UPDATE config SET value=? WHERE name='project-code'", h.projectCode); err != nil {
+		if err := r.SetConfig("project-code", h.projectCode); err != nil {
 			r.Close()
 			return fmt.Errorf("sim: set project-code leaf-%d: %w", i, err)
 		}

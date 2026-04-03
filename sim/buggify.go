@@ -4,10 +4,10 @@ import (
 	"math/rand"
 	"sync"
 
-	libsync "github.com/danmestas/go-libfossil/sync"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
-var _ libsync.BuggifyChecker = (*Buggify)(nil)
+var _ libfossil.BuggifyChecker = (*Buggify)(nil)
 
 // AllSites lists all BUGGIFY site names for enablement decisions.
 var AllSites = []string{
