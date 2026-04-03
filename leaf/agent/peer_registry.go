@@ -4,54 +4,48 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
-
-	"github.com/danmestas/go-libfossil/repo"
 )
-
-var peerRegistryDef = repo.TableDef{
-	Columns: []repo.ColumnDef{
-		{Name: "peer_id", Type: "text", PK: true},
-		{Name: "last_sync", Type: "integer"},
-		{Name: "repo_hash", Type: "text"},
-		{Name: "version", Type: "text"},
-		{Name: "platform", Type: "text"},
-		{Name: "capabilities", Type: "text"},
-		{Name: "nats_subject", Type: "text"},
-		{Name: "addr", Type: "text"},
-	},
-	Conflict: "self-write",
-}
 
 var buildVersion = "dev"
 
+// ensurePeerRegistry creates the peer_registry table if it doesn't exist.
 func (a *Agent) ensurePeerRegistry() error {
-	if err := repo.EnsureSyncSchema(a.repo.DB()); err != nil {
+	_, err := a.repo.DB().Exec(`CREATE TABLE IF NOT EXISTS peer_registry (
+		peer_id TEXT PRIMARY KEY,
+		last_sync INTEGER,
+		repo_hash TEXT,
+		version TEXT,
+		platform TEXT,
+		capabilities TEXT,
+		nats_subject TEXT,
+		addr TEXT,
+		mtime INTEGER DEFAULT 0
+	)`)
+	if err != nil {
 		return fmt.Errorf("ensurePeerRegistry: %w", err)
 	}
-	return repo.RegisterSyncedTable(a.repo.DB(), "peer_registry", peerRegistryDef, a.clock.Now().Unix())
+	return nil
 }
 
 func (a *Agent) seedPeerRegistry() error {
-	row := a.buildPeerRegistryRow()
-	return repo.UpsertXRow(a.repo.DB(), "peer_registry", row, a.clock.Now().Unix())
+	return a.upsertPeerRow()
 }
 
 func (a *Agent) updatePeerRegistryAfterSync() error {
-	row := a.buildPeerRegistryRow()
-	return repo.UpsertXRow(a.repo.DB(), "peer_registry", row, a.clock.Now().Unix())
+	return a.upsertPeerRow()
 }
 
-func (a *Agent) buildPeerRegistryRow() map[string]any {
-	return map[string]any{
-		"peer_id":      a.config.PeerID,
-		"last_sync":    a.clock.Now().Unix(),
-		"repo_hash":    "", // TODO: compute actual repo hash
-		"version":      buildVersion,
-		"platform":     runtime.GOOS + "/" + runtime.GOARCH,
-		"capabilities": strings.Join(a.capabilities(), ","),
-		"nats_subject": a.config.SubjectPrefix,
-		"addr":         a.config.ServeHTTPAddr,
-	}
+func (a *Agent) upsertPeerRow() error {
+	now := a.clock.Now().Unix()
+	_, err := a.repo.DB().Exec(`INSERT OR REPLACE INTO peer_registry
+		(peer_id, last_sync, repo_hash, version, platform, capabilities, nats_subject, addr, mtime)
+		VALUES (?, ?, '', ?, ?, ?, ?, ?, ?)`,
+		a.config.PeerID, now, buildVersion,
+		runtime.GOOS+"/"+runtime.GOARCH,
+		strings.Join(a.capabilities(), ","),
+		a.config.SubjectPrefix, a.config.ServeHTTPAddr, now,
+	)
+	return err
 }
 
 func (a *Agent) capabilities() []string {

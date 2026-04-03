@@ -11,14 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danmestas/go-libfossil/manifest"
-	"github.com/danmestas/go-libfossil/repo"
-	"github.com/danmestas/go-libfossil/simio"
-	libsync "github.com/danmestas/go-libfossil/sync"
-	"github.com/danmestas/go-libfossil/testutil"
-	"github.com/danmestas/go-libfossil/xfer"
-	"github.com/nats-io/nats.go"
+	libfossil "github.com/danmestas/go-libfossil"
 	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
+	"github.com/danmestas/go-libfossil/testutil"
+	"github.com/nats-io/nats.go"
 )
 
 // startFossilServer starts a fossil server on a free port and returns the URL
@@ -72,39 +68,25 @@ ready:
 }
 
 // startTestBridge subscribes to NATS subject fossil.<projectCode>.sync and
-// proxies each message to the fossil server via sync.HTTPTransport. This is
-// the minimal bridge that Phase F will extract into a standalone binary.
+// proxies each raw byte payload to the fossil server via HTTP.
 func startTestBridge(t *testing.T, nc *nats.Conn, projectCode, fossilURL string) {
 	t.Helper()
 
-	// Log only the first error of each kind to reduce noise; the fossil
-	// server may return non-zlib responses which is expected in tests.
-	var exchangeErrLogged atomic.Bool
+	var errLogged atomic.Bool
 
 	subject := fmt.Sprintf("fossil.%s.sync", projectCode)
 	_, err := nc.Subscribe(subject, func(msg *nats.Msg) {
-		req, err := xfer.Decode(msg.Data)
+		ht := libfossil.NewHTTPTransport(fossilURL)
+		resp, err := ht.RoundTrip(context.Background(), msg.Data)
 		if err != nil {
-			if !exchangeErrLogged.Load() {
-				t.Logf("bridge: decode error (further occurrences suppressed): %v", err)
-				exchangeErrLogged.Store(true)
-			}
-			return
-		}
-		ht := &libsync.HTTPTransport{URL: fossilURL}
-		resp, err := ht.Exchange(context.Background(), req)
-		if err != nil {
-			if !exchangeErrLogged.Load() {
+			if !errLogged.Load() {
 				t.Logf("bridge: exchange error (further occurrences suppressed): %v", err)
-				exchangeErrLogged.Store(true)
+				errLogged.Store(true)
 			}
-			empty := &xfer.Message{}
-			data, _ := empty.Encode()
-			msg.Respond(data)
+			msg.Respond([]byte{})
 			return
 		}
-		data, _ := resp.Encode()
-		msg.Respond(data)
+		msg.Respond(resp)
 	})
 	if err != nil {
 		t.Fatalf("bridge subscribe: %v", err)
@@ -122,13 +104,13 @@ func TestIntegrationLeafPush(t *testing.T) {
 
 	// 1. Create a Go-managed local repo with a checkin.
 	localPath := filepath.Join(dir, "local.fossil")
-	r, err := repo.Create(localPath, "testuser", simio.CryptoRand{})
+	r, err := libfossil.Create(localPath, libfossil.CreateOpts{User: "testuser"})
 	if err != nil {
-		t.Fatalf("repo.Create: %v", err)
+		t.Fatalf("Create: %v", err)
 	}
 
-	_, _, err = manifest.Checkin(r, manifest.CheckinOpts{
-		Files: []manifest.File{
+	_, _, err = r.Commit(libfossil.CommitOpts{
+		Files: []libfossil.FileToCommit{
 			{Name: "hello.txt", Content: []byte("hello from leaf agent integration test")},
 		},
 		Comment: "initial checkin from leaf integration test",
@@ -137,7 +119,7 @@ func TestIntegrationLeafPush(t *testing.T) {
 	})
 	if err != nil {
 		r.Close()
-		t.Fatalf("Checkin: %v", err)
+		t.Fatalf("Commit: %v", err)
 	}
 	r.Close()
 
@@ -162,13 +144,12 @@ func TestIntegrationLeafPush(t *testing.T) {
 	}
 	defer bridgeConn.Close()
 
-	// Read project-code from the local repo to match the NATS subject.
-	localRepo, err := repo.Open(localPath)
+	// Read project-code from the local repo.
+	localRepo, err := libfossil.Open(localPath)
 	if err != nil {
-		t.Fatalf("repo.Open local: %v", err)
+		t.Fatalf("Open local: %v", err)
 	}
-	var projectCode string
-	err = localRepo.DB().QueryRow("SELECT value FROM config WHERE name=?", "project-code").Scan(&projectCode)
+	projectCode, err := localRepo.Config("project-code")
 	if err != nil {
 		localRepo.Close()
 		t.Fatalf("read project-code: %v", err)
@@ -204,13 +185,8 @@ func TestIntegrationLeafPush(t *testing.T) {
 		t.Fatalf("agent.Stop: %v", err)
 	}
 
-	// Log results. Don't hard-fail on protocol quirks — unit tests validate
-	// the engine logic; this test validates the full wiring (agent -> NATS ->
-	// bridge -> fossil server).
 	t.Logf("Integration test completed successfully.")
 	t.Logf("  Fossil server URL: %s", fossilURL)
 	t.Logf("  NATS URL: %s", natsURL)
 	t.Logf("  Project code: %s", projectCode)
-	t.Logf("  Local repo: %s", localPath)
-	t.Logf("  Remote repo: %s", remotePath)
 }

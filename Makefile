@@ -1,14 +1,16 @@
-.PHONY: build test clean leaf bridge edgesync iroh-sidecar wasm-wasi wasm-browser wasm dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks setup drivers test-interop test-iroh
+.PHONY: build test clean leaf bridge edgesync iroh-sidecar wasm-wasi wasm-browser wasm dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks setup test-interop test-iroh update-libfossil
 
 # --- Build ---
 
 build: edgesync leaf bridge iroh-sidecar
 
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
 edgesync:
 	go build -buildvcs=false -o bin/edgesync ./cmd/edgesync
 
 leaf:
-	cd leaf && go build -buildvcs=false -o ../bin/leaf ./cmd/leaf
+	cd leaf && go build -buildvcs=false -ldflags "-X main.version=$(VERSION)" -o ../bin/leaf ./cmd/leaf
 
 bridge:
 	cd bridge && go build -buildvcs=false -o ../bin/bridge ./cmd/bridge
@@ -34,7 +36,6 @@ clean:
 
 test:
 	@pids=""; fail=0; \
-	go test ./go-libfossil/... -short -count=1 & pids="$$pids $$!"; \
 	go test ./leaf/... -short -count=1 & pids="$$pids $$!"; \
 	go test ./bridge/... -short -count=1 & pids="$$pids $$!"; \
 	for pid in $$pids; do wait $$pid || fail=1; done; \
@@ -43,6 +44,7 @@ test:
 	go test ./sim/ -run 'TestFaultProxy|TestGenerateSchedule|TestBuggify' -count=1
 	go test ./sim/ -run 'TestServeHTTP|TestLeafToLeaf|TestAgentServe' -count=1 -timeout=120s
 	go test ./sim/ -run 'TestInterop' -count=1 -short -timeout=60s
+	go test ./sim/ -run 'TestSimulation' -sim.seed=1 -count=1 -timeout=120s
 
 # --- Setup (first-time onboarding) ---
 
@@ -92,16 +94,14 @@ dst-hostile:
 
 # DST across all 3 SQLite drivers
 dst-drivers:
-	@echo "=== DST driver sweep (4 seeds x hostile x 3 drivers) ==="
+	@echo "=== DST driver sweep (4 seeds x hostile x 2 drivers) ==="
 	@fail=0; \
-	for driver in "default:" "ncruces:-tags=test_ncruces" "mattn:-tags=test_mattn"; do \
+	for driver in "default:" "ncruces:-tags=test_ncruces"; do \
 		name=$${driver%%:*}; \
 		tags=$${driver#*:}; \
-		cgo=0; \
-		if [ "$$name" = "mattn" ]; then cgo=1; fi; \
 		for seed in 1 2 3 4; do \
 			echo "  driver=$$name seed=$$seed ..."; \
-			(cd dst && CGO_ENABLED=$$cgo go test $$tags -run TestDST -seed=$$seed -level=hostile -steps=10000 -timeout 180s) || fail=1; \
+			(cd dst && go test $$tags -run TestDST -seed=$$seed -level=hostile -steps=10000 -timeout 180s) || fail=1; \
 		done; \
 	done; \
 	if [ $$fail -eq 1 ]; then echo "=== DST drivers FAILED ==="; exit 1; fi
@@ -133,13 +133,10 @@ test-iroh: iroh-sidecar
 	go test ./leaf/agent/ -run TestIroh -count=1 -v
 	go test ./sim/ -run TestIroh -count=1 -timeout=120s -v
 
-# --- Driver matrix — run locally ---
+# --- Dependency update ---
 
-drivers:
-	@echo "=== modernc (default) ==="
-	go test -buildvcs=false ./go-libfossil/... -count=1
-	@echo "=== ncruces ==="
-	go test -buildvcs=false -tags test_ncruces ./go-libfossil/... -count=1
-	@echo "=== mattn ==="
-	CGO_ENABLED=1 go test -buildvcs=false -tags test_mattn ./go-libfossil/... -count=1
-	@echo "=== all drivers passed ==="
+update-libfossil:
+	GOPRIVATE=github.com/danmestas/go-libfossil go get github.com/danmestas/go-libfossil@latest
+	GOPRIVATE=github.com/danmestas/go-libfossil go get github.com/danmestas/go-libfossil/db/driver/modernc@latest
+	GOPRIVATE=github.com/danmestas/go-libfossil go get github.com/danmestas/go-libfossil/db/driver/ncruces@latest
+	go mod tidy

@@ -4,15 +4,22 @@ package telemetry
 
 import (
 	"context"
+	"time"
 
-	libsync "github.com/danmestas/go-libfossil/sync"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // TelemetryConfig is a stub for WASM builds.
 type TelemetryConfig struct {
-	ServiceName string
-	Endpoint    string
-	Headers     map[string]string
+	ServiceName    string
+	Endpoint       string
+	Insecure       bool
+	Environment    string
+	Version        string
+	InstanceID     string
+	RepoPath       string
+	SampleRatio    float64
+	MetricInterval time.Duration
 }
 
 // Setup is a no-op on WASM — returns a no-op shutdown function.
@@ -28,26 +35,12 @@ func NewOTelObserver(_ any, _ any) *OTelObserver {
 	return &OTelObserver{}
 }
 
-func (*OTelObserver) Started(ctx context.Context, _ libsync.SessionStart) context.Context {
-	return ctx
-}
-
-func (*OTelObserver) RoundStarted(ctx context.Context, _ int) context.Context {
-	return ctx
-}
-
-func (*OTelObserver) RoundCompleted(_ context.Context, _ int, _ libsync.RoundStats) {}
-
-func (*OTelObserver) Completed(_ context.Context, _ libsync.SessionEnd, _ error) {}
-
-func (*OTelObserver) Error(_ context.Context, _ error) {}
-
-func (*OTelObserver) HandleStarted(ctx context.Context, _ libsync.HandleStart) context.Context {
-	return ctx
-}
-
-func (*OTelObserver) HandleCompleted(_ context.Context, _ libsync.HandleEnd) {}
-
-func (*OTelObserver) TableSyncStarted(_ context.Context, _ libsync.TableSyncStart) {}
-
-func (*OTelObserver) TableSyncCompleted(_ context.Context, _ libsync.TableSyncEnd) {}
+func (*OTelObserver) Started(_ libfossil.SessionStart)              {}
+func (*OTelObserver) RoundStarted(_ int)                            {}
+func (*OTelObserver) RoundCompleted(_ int, _ libfossil.RoundStats)  {}
+func (*OTelObserver) Completed(_ libfossil.SessionEnd)              {}
+func (*OTelObserver) Error(_ error)                                 {}
+func (*OTelObserver) HandleStarted(_ libfossil.HandleStart)         {}
+func (*OTelObserver) HandleCompleted(_ libfossil.HandleEnd)         {}
+func (*OTelObserver) TableSyncStarted(_ libfossil.TableSyncStart)   {}
+func (*OTelObserver) TableSyncCompleted(_ libfossil.TableSyncEnd)   {}

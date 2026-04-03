@@ -7,11 +7,11 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/danmestas/go-libfossil/sync"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // serveHTTP starts an HTTP server with the xfer handler and operational
-// endpoints (/healthz, /iroh/status). Blocks until ctx is cancelled.
+// endpoints (/healthz). Blocks until ctx is cancelled.
 func (a *Agent) serveHTTP(ctx context.Context) error {
 	if a.config.ServeHTTPAddr == "" {
 		panic("agent.serveHTTP: ServeHTTPAddr must not be empty")
@@ -22,9 +22,10 @@ func (a *Agent) serveHTTP(ctx context.Context) error {
 	if a.config.IrohEnabled {
 		mux.HandleFunc("/iroh/status", a.irohStatusHandler)
 	}
-	mux.Handle("/", sync.XferHandler(a.repo, sync.HandleSync))
+	mux.Handle("/", a.repo.XferHandler())
 
-	srv := &http.Server{Handler: mux}
+	handler := otelhttp.NewMiddleware("edgesync-leaf-http")(mux)
+	srv := &http.Server{Handler: handler}
 
 	ln, err := net.Listen("tcp", a.config.ServeHTTPAddr)
 	if err != nil {

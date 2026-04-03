@@ -11,12 +11,14 @@ import (
 	"syscall"
 	"time"
 
-	libsync "github.com/danmestas/go-libfossil/sync"
+	libfossil "github.com/danmestas/go-libfossil"
+	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
 	"github.com/dmestas/edgesync/leaf/agent"
 	"github.com/dmestas/edgesync/leaf/telemetry"
-
-	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
 )
+
+// version is set at build time via ldflags.
+var version = "dev"
 
 func main() {
 	repoPath := flag.String("repo", envOrDefault("LEAF_REPO", ""), "path to Fossil repository file (required)")
@@ -49,7 +51,7 @@ func main() {
 	overrideLock := flag.Bool("override-lock", false, "ignore lock conflicts (implies allow-fork)")
 
 	// OTel flags (fall back to standard OTEL_* env vars)
-	otelEndpoint := flag.String("otel-endpoint", envOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""), "OTel OTLP endpoint")
+	otelEndpoint := flag.String("otel-endpoint", envOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""), "OTel OTLP endpoint (e.g. api.honeycomb.io)")
 	otelHeaders := flag.String("otel-headers", envOrDefault("OTEL_EXPORTER_OTLP_HEADERS", ""), "OTel OTLP headers (key=value,key=value)")
 	otelServiceName := flag.String("otel-service-name", envOrDefault("OTEL_SERVICE_NAME", "edgesync-leaf"), "OTel service name")
 
@@ -81,7 +83,7 @@ func main() {
 	}
 
 	// Create observer (nil-safe: if no endpoint, OTel uses no-op providers)
-	var obs libsync.Observer = telemetry.NewOTelObserver(nil, nil)
+	var obs libfossil.SyncObserver = telemetry.NewOTelObserver(nil, nil)
 	if verboseFlag {
 		obs = telemetry.NewVerboseObserver(os.Stderr, obs)
 	}
@@ -104,6 +106,7 @@ func main() {
 		Autosync:         parseAutosyncMode(*autosyncFlag),
 		AllowFork:        *allowFork,
 		OverrideLock:     *overrideLock,
+		Logger:           func(msg string) { slog.Info(msg) },
 	}
 
 	a, err := agent.New(cfg)
@@ -112,12 +115,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Content cache metrics are now handled internally by go-libfossil.
+	telemetry.RegisterCacheMetrics(nil, nil)
+
 	if err := a.Start(); err != nil {
 		slog.Error("agent start failed", "error", err)
 		os.Exit(1)
 	}
 
-	logAttrs := []any{"repo", *repoPath, "nats", *natsURL, "poll", *poll}
+	logAttrs := []any{"repo", *repoPath, "nats", *natsURL, "poll", *poll, "version", version}
 	if *iroh {
 		logAttrs = append(logAttrs, "iroh", true, "iroh_peers", len(irohPeers))
 	}
@@ -167,7 +173,7 @@ func parseHeaders(s string) map[string]string {
 
 // parseAutosyncMode converts a CLI string to an AutosyncMode value.
 func parseAutosyncMode(s string) agent.AutosyncMode {
-	switch strings.ToLower(s) {
+	switch s {
 	case "on":
 		return agent.AutosyncOn
 	case "pullonly":

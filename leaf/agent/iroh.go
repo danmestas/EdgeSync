@@ -7,18 +7,17 @@ import (
 	"io"
 	"net"
 	"net/http"
-
-	"github.com/danmestas/go-libfossil/xfer"
 )
 
-// IrohTransport implements sync.Transport over the iroh sidecar's HTTP API.
+// IrohTransport implements libfossil.Transport over the iroh sidecar's HTTP API.
+// It uses the byte-level RoundTrip interface (v0.2.x).
 type IrohTransport struct {
 	socketPath string
 	endpointID string
 	client     *http.Client
 }
 
-// NewIrohTransport creates a transport that exchanges xfer messages via the
+// NewIrohTransport creates a transport that exchanges raw xfer payloads via the
 // iroh sidecar HTTP API on the given Unix socket.
 func NewIrohTransport(socketPath, endpointID string) *IrohTransport {
 	return &IrohTransport{
@@ -34,26 +33,17 @@ func NewIrohTransport(socketPath, endpointID string) *IrohTransport {
 	}
 }
 
-// Exchange encodes the xfer request, sends it to the sidecar which forwards it
-// to the remote peer via iroh, and decodes the response.
-func (t *IrohTransport) Exchange(ctx context.Context, req *xfer.Message) (*xfer.Message, error) {
-	if req == nil {
-		panic("agent.IrohTransport.Exchange: req must not be nil")
-	}
-
-	body, err := req.Encode()
-	if err != nil {
-		return nil, fmt.Errorf("iroh: encode request: %w", err)
-	}
-
+// RoundTrip sends the raw xfer payload to the sidecar which forwards it
+// to the remote peer via iroh, and returns the raw response bytes.
+func (t *IrohTransport) RoundTrip(ctx context.Context, payload []byte) ([]byte, error) {
 	url := "http://iroh-sidecar/exchange/" + t.endpointID
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("iroh: create request: %w", err)
 	}
-	httpReq.Header.Set("Content-Type", "application/x-fossil")
+	req.Header.Set("Content-Type", "application/x-fossil")
 
-	resp, err := t.client.Do(httpReq)
+	resp, err := t.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("iroh: sidecar request: %w", err)
 	}
@@ -63,10 +53,5 @@ func (t *IrohTransport) Exchange(ctx context.Context, req *xfer.Message) (*xfer.
 		return nil, fmt.Errorf("iroh: sidecar returned %d", resp.StatusCode)
 	}
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("iroh: read response: %w", err)
-	}
-
-	return xfer.Decode(respBody)
+	return io.ReadAll(resp.Body)
 }

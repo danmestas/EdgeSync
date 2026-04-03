@@ -24,7 +24,6 @@ run_test() {
 }
 
 echo "=== pre-commit: unit tests ==="
-run_test "go-libfossil (incl handler)" go test ./go-libfossil/... -short -count=1 -timeout=30s
 run_test "leaf/agent" go test ./leaf/agent/ -short -count=1 -timeout=30s
 run_test "bridge/bridge" go test ./bridge/bridge/ -short -count=1 -timeout=30s
 

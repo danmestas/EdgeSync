@@ -12,6 +12,7 @@ libfossil/
 /soak
 /edgesync
 .worktrees/
+iroh-sidecar/target/
 
 # Merge test artifacts
 *.LOCAL
@@ -32,3 +33,8 @@ skills-lock.json
 .DS_Store
 .gitnexus
 .claude/worktrees/
+go.work
+go.work.sum
+
+# Temporary clones for development
+.tmp-go-libfossil/

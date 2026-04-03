@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"testing"
-
-	"github.com/danmestas/go-libfossil/xfer"
 )
 
 func TestIrohTransportRoundTrip(t *testing.T) {
@@ -22,27 +20,19 @@ func TestIrohTransportRoundTrip(t *testing.T) {
 	}
 	defer listener.Close()
 
-	// Mock sidecar: accept any POST to /exchange/*, echo back a canned igot response.
-	cannedResp := &xfer.Message{
-		Cards: []xfer.Card{
-			&xfer.IGotCard{UUID: "iroh-test-uuid-1234"},
-		},
-	}
-	cannedBytes, err := cannedResp.Encode()
-	if err != nil {
-		t.Fatalf("encode canned: %v", err)
-	}
+	// Mock sidecar: accept any POST to /exchange/*, echo back a canned response.
+	cannedResp := []byte("mock-xfer-response-payload")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/exchange/", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		if _, err := xfer.Decode(body); err != nil {
-			t.Errorf("mock sidecar: decode request: %v", err)
+		if len(body) == 0 {
+			t.Errorf("mock sidecar: empty request body")
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write(cannedBytes)
+		w.Write(cannedResp)
 	})
 	srv := &http.Server{Handler: mux}
 	go srv.Serve(listener)
@@ -50,40 +40,25 @@ func TestIrohTransportRoundTrip(t *testing.T) {
 
 	transport := NewIrohTransport(sock, "fake-endpoint-id-abc123")
 
-	req := &xfer.Message{
-		Cards: []xfer.Card{
-			&xfer.PullCard{ServerCode: "srvX", ProjectCode: "testproj"},
-		},
-	}
+	reqPayload := []byte("mock-xfer-request-payload")
 
 	ctx := context.Background()
-	resp, err := transport.Exchange(ctx, req)
+	resp, err := transport.RoundTrip(ctx, reqPayload)
 	if err != nil {
-		t.Fatalf("Exchange: %v", err)
+		t.Fatalf("RoundTrip: %v", err)
 	}
-	if len(resp.Cards) != 1 {
-		t.Fatalf("expected 1 card, got %d", len(resp.Cards))
-	}
-	igot, ok := resp.Cards[0].(*xfer.IGotCard)
-	if !ok {
-		t.Fatalf("expected *IGotCard, got %T", resp.Cards[0])
-	}
-	if igot.UUID != "iroh-test-uuid-1234" {
-		t.Errorf("UUID = %q, want %q", igot.UUID, "iroh-test-uuid-1234")
+	if string(resp) != string(cannedResp) {
+		t.Errorf("response = %q, want %q", resp, cannedResp)
 	}
 }
 
 func TestIrohTransportSidecarDown(t *testing.T) {
 	transport := NewIrohTransport("/tmp/iroh-nonexistent.sock", "fake-id")
 
-	req := &xfer.Message{
-		Cards: []xfer.Card{
-			&xfer.PullCard{ServerCode: "srvX", ProjectCode: "testproj"},
-		},
-	}
+	reqPayload := []byte("mock-xfer-request-payload")
 
 	ctx := context.Background()
-	_, err := transport.Exchange(ctx, req)
+	_, err := transport.RoundTrip(ctx, reqPayload)
 	if err == nil {
 		t.Fatal("expected error when sidecar is down, got nil")
 	}

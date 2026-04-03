@@ -4,7 +4,7 @@ import (
 	"flag"
 	"time"
 
-	libsync "github.com/danmestas/go-libfossil/sync"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // Level controls fault injection severity.
@@ -49,7 +49,7 @@ type SimConfig struct {
 	QuiesceTimeout time.Duration
 	Severity       Level
 	KeepOnFailure  bool
-	Observer       libsync.Observer
+	Observer       libfossil.SyncObserver
 }
 
 func (c *SimConfig) applyDefaults() {

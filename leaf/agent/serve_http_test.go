@@ -9,10 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danmestas/go-libfossil/repo"
-	"github.com/danmestas/go-libfossil/simio"
-	"github.com/danmestas/go-libfossil/xfer"
+	libfossil "github.com/danmestas/go-libfossil"
 	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
+	"github.com/danmestas/go-libfossil/simio"
 )
 
 func TestServeHTTPHealthz(t *testing.T) {
@@ -61,10 +60,10 @@ func freeAddr(t *testing.T) string {
 	return addr
 }
 
-func newTestRepo(t *testing.T) *repo.Repo {
+func newTestRepo(t *testing.T) *libfossil.Repo {
 	t.Helper()
 	path := t.TempDir() + "/test.fossil"
-	r, err := repo.Create(path, "test", simio.CryptoRand{})
+	r, err := libfossil.Create(path, libfossil.CreateOpts{User: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,6 +73,6 @@ func newTestRepo(t *testing.T) *repo.Repo {
 
 type mockTransport struct{}
 
-func (m *mockTransport) Exchange(_ context.Context, _ *xfer.Message) (*xfer.Message, error) {
-	return &xfer.Message{}, nil
+func (m *mockTransport) RoundTrip(_ context.Context, _ []byte) ([]byte, error) {
+	return []byte{}, nil
 }

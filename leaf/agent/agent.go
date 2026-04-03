@@ -11,10 +11,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/danmestas/go-libfossil/content"
-	"github.com/danmestas/go-libfossil/repo"
+	libfossil "github.com/danmestas/go-libfossil"
 	"github.com/danmestas/go-libfossil/simio"
-	"github.com/danmestas/go-libfossil/sync"
 	"github.com/nats-io/nats.go"
 )
 
@@ -39,24 +37,23 @@ const (
 // Action is the result of processing a single event via Tick.
 type Action struct {
 	Type   ActionType
-	Result *sync.SyncResult // non-nil when Type == ActionSynced
-	Err    error            // non-nil on sync failure
+	Result *libfossil.SyncResult // non-nil when Type == ActionSynced
+	Err    error                 // non-nil on sync failure
 }
 
 // Agent manages the lifecycle of a leaf sync daemon: it opens a Fossil repo,
 // connects to NATS, and periodically syncs via the xfer protocol.
 type Agent struct {
-	config         Config
-	clock          simio.Clock
-	repo           *repo.Repo
-	conn           *nats.Conn // nil when created via NewFromParts
-	transport      sync.Transport
-	projectCode    string
-	serverCode     string
+	config      Config
+	clock       simio.Clock
+	repo        *libfossil.Repo
+	conn        *nats.Conn // nil when created via NewFromParts
+	transport   libfossil.Transport
+	projectCode string
+	serverCode  string
 	cancel         context.CancelFunc
 	done           chan struct{}
 	syncNow        chan struct{} // buffer 1
-	contentCache   *content.Cache
 	irohSidecar    *sidecar     // nil when iroh is disabled
 	irohSock       string       // Unix socket path for iroh sidecar
 	irohEndpointID string       // local iroh endpoint ID (set after sidecar ready)
@@ -71,20 +68,18 @@ func New(cfg Config) (*Agent, error) {
 		return nil, err
 	}
 
-	r, err := repo.Open(cfg.RepoPath)
+	r, err := libfossil.Open(cfg.RepoPath)
 	if err != nil {
 		return nil, fmt.Errorf("agent: open repo: %w", err)
 	}
 
-	var projectCode string
-	err = r.DB().QueryRow("SELECT value FROM config WHERE name=?", "project-code").Scan(&projectCode)
+	projectCode, err := r.Config("project-code")
 	if err != nil {
 		r.Close()
 		return nil, fmt.Errorf("agent: read project-code: %w", err)
 	}
 
-	var serverCode string
-	err = r.DB().QueryRow("SELECT value FROM config WHERE name=?", "server-code").Scan(&serverCode)
+	serverCode, err := r.Config("server-code")
 	if err != nil {
 		r.Close()
 		return nil, fmt.Errorf("agent: read server-code: %w", err)
@@ -132,21 +127,15 @@ func New(cfg Config) (*Agent, error) {
 
 	transport := NewNATSTransport(nc, projectCode, 0, cfg.SubjectPrefix)
 
-	var cc *content.Cache
-	if cfg.ContentCacheSize > 0 {
-		cc = content.NewCache(cfg.ContentCacheSize)
-	}
-
 	a := &Agent{
-		config:       cfg,
-		clock:        cfg.Clock,
-		repo:         r,
-		conn:         nc,
-		transport:    transport,
-		projectCode:  projectCode,
-		serverCode:   serverCode,
-		syncNow:      make(chan struct{}, 1),
-		contentCache: cc,
+		config:      cfg,
+		clock:       cfg.Clock,
+		repo:        r,
+		conn:        nc,
+		transport:   transport,
+		projectCode: projectCode,
+		serverCode:  serverCode,
+		syncNow:     make(chan struct{}, 1),
 	}
 
 	// Initialize peer registry (log warnings, don't fail startup).
@@ -162,21 +151,16 @@ func New(cfg Config) (*Agent, error) {
 
 // NewFromParts creates an Agent from pre-built components without performing
 // any I/O. Used by tests and the deterministic simulation harness.
-func NewFromParts(cfg Config, r *repo.Repo, t sync.Transport, projectCode, serverCode string) *Agent {
+func NewFromParts(cfg Config, r *libfossil.Repo, t libfossil.Transport, projectCode, serverCode string) *Agent {
 	cfg.applyDefaults()
-	var cc *content.Cache
-	if cfg.ContentCacheSize > 0 {
-		cc = content.NewCache(cfg.ContentCacheSize)
-	}
 	return &Agent{
-		config:       cfg,
-		clock:        cfg.Clock,
-		repo:         r,
-		transport:    t,
-		projectCode:  projectCode,
-		serverCode:   serverCode,
-		syncNow:      make(chan struct{}, 1),
-		contentCache: cc,
+		config:      cfg,
+		clock:       cfg.Clock,
+		repo:        r,
+		transport:   t,
+		projectCode: projectCode,
+		serverCode:  serverCode,
+		syncNow:     make(chan struct{}, 1),
 	}
 }
 
@@ -210,7 +194,7 @@ func (a *Agent) logf(format string, args ...any) {
 }
 
 // Repo returns the agent's Fossil repository (for invariant checking in simulation).
-func (a *Agent) Repo() *repo.Repo {
+func (a *Agent) Repo() *libfossil.Repo {
 	return a.repo
 }
 
@@ -234,7 +218,7 @@ func (a *Agent) Start() error {
 	if a.config.ServeNATSEnabled && a.conn != nil {
 		go func() {
 			subject := a.config.SubjectPrefix + "." + a.projectCode + ".sync"
-			if err := ServeNATS(ctx, a.conn, subject, a.repo, sync.HandleSync); err != nil {
+			if err := ServeNATS(ctx, a.conn, subject, a.repo); err != nil {
 				slog.Error("serve-nats stopped", "error", err)
 			}
 		}()
@@ -259,7 +243,7 @@ func (a *Agent) Start() error {
 			callbackURL = "http://" + ln.Addr().String()
 			mux := http.NewServeMux()
 			mux.HandleFunc("/healthz", healthzHandler)
-			mux.Handle("/", sync.XferHandler(a.repo, sync.HandleSync))
+			mux.Handle("/", a.repo.XferHandler())
 			irohCallbackSrv = &http.Server{Handler: mux}
 			go func() {
 				<-ctx.Done()
@@ -356,15 +340,22 @@ func (a *Agent) pollLoop(ctx context.Context) {
 		act := a.Tick(ctx, ev)
 		if act.Err != nil {
 			a.logf("sync error: %v", act.Err)
-			slog.ErrorContext(ctx, "sync error", "error", act.Err)
 			continue
 		}
 		if act.Result != nil {
 			a.logf("sync done: ↑%d ↓%d rounds=%d", act.Result.FilesSent, act.Result.FilesRecvd, act.Result.Rounds)
-			slog.InfoContext(ctx, "sync done", "rounds", act.Result.Rounds, "sent", act.Result.FilesSent, "recv", act.Result.FilesRecvd, "errors", len(act.Result.Errors))
+			slog.DebugContext(ctx, "sync details",
+				"rounds", act.Result.Rounds,
+				"files_sent", act.Result.FilesSent,
+				"files_recv", act.Result.FilesRecvd,
+				"bytes_sent", act.Result.BytesSent,
+				"bytes_recv", act.Result.BytesRecvd,
+				"uv_sent", act.Result.UVFilesSent,
+				"uv_recv", act.Result.UVFilesRecvd,
+				"errors", len(act.Result.Errors),
+			)
 			for _, e := range act.Result.Errors {
 				a.logf("sync warning: %s", e)
-				slog.WarnContext(ctx, "sync protocol error", "detail", e)
 			}
 			if a.config.PostSyncHook != nil {
 				a.config.PostSyncHook(act.Result)
@@ -379,7 +370,7 @@ func (a *Agent) pollLoop(ctx context.Context) {
 		if a.config.IrohEnabled && a.irohSock != "" {
 			for _, peerID := range a.config.IrohPeers {
 				transport := NewIrohTransport(a.irohSock, peerID)
-				result, err := sync.Sync(ctx, a.repo, transport, a.buildSyncOpts())
+				result, err := a.repo.Sync(ctx, transport, a.buildSyncOpts())
 				if err != nil {
 					a.logf("iroh sync with %s: %v", peerID, err)
 					slog.ErrorContext(ctx, "iroh sync error", "peer", peerID, "error", err)
@@ -392,6 +383,29 @@ func (a *Agent) pollLoop(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// buildSyncOpts constructs SyncOpts from the agent's config.
+func (a *Agent) buildSyncOpts() libfossil.SyncOpts {
+	return libfossil.SyncOpts{
+		Push:        a.config.Push,
+		Pull:        a.config.Pull,
+		ProjectCode: a.projectCode,
+		ServerCode:  a.serverCode,
+		User:        a.config.User,
+		Password:    a.config.Password,
+		PeerID:      a.config.PeerID,
+		Buggify:     a.config.Buggify,
+		UV:          a.config.UV,
+		XTableSync:  a.config.ServeNATSEnabled,
+		Private:     a.config.Private,
+		Observer:    a.config.Observer,
+	}
+}
+
+// runSync performs one sync cycle against the transport.
+func (a *Agent) runSync(ctx context.Context) (*libfossil.SyncResult, error) {
+	return a.repo.Sync(ctx, a.transport, a.buildSyncOpts())
 }
 
 // monitorSidecar watches the sidecar process and logs if it exits unexpectedly.
@@ -430,26 +444,4 @@ func (a *Agent) findIrohBinary() (string, error) {
 		return "", fmt.Errorf("iroh-sidecar binary not found (not next to leaf binary, not in PATH)")
 	}
 	return path, nil
-}
-
-// buildSyncOpts constructs SyncOpts from the agent's config.
-func (a *Agent) buildSyncOpts() sync.SyncOpts {
-	return sync.SyncOpts{
-		Push:         a.config.Push,
-		Pull:         a.config.Pull,
-		ProjectCode:  a.projectCode,
-		ServerCode:   a.serverCode,
-		User:         a.config.User,
-		Password:     a.config.Password,
-		Buggify:      a.config.Buggify,
-		UV:           a.config.UV,
-		Private:      a.config.Private,
-		Observer:     a.config.Observer,
-		ContentCache: a.contentCache,
-	}
-}
-
-// runSync performs one sync cycle against the transport.
-func (a *Agent) runSync(ctx context.Context) (*sync.SyncResult, error) {
-	return sync.Sync(ctx, a.repo, a.transport, a.buildSyncOpts())
 }

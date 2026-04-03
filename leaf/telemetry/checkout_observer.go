@@ -3,9 +3,7 @@
 package telemetry
 
 import (
-	"strconv"
-
-	"github.com/danmestas/go-libfossil/checkout"
+	libfossil "github.com/danmestas/go-libfossil"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -28,25 +26,25 @@ func NewCheckoutOTelObserver(tp trace.TracerProvider) *CheckoutOTelObserver {
 	}
 }
 
-func (o *CheckoutOTelObserver) ExtractStarted(e checkout.ExtractStart) {
+func (o *CheckoutOTelObserver) ExtractStarted(e libfossil.ExtractStart) {
 	_, o.span = o.tracer.Start(nil, "checkout.extract",
 		trace.WithAttributes(
-			attribute.Int64("checkout.target_rid", int64(e.TargetRID)),
-			attribute.String("checkout.operation", e.Operation),
+			attribute.Int64("checkout.target_rid", e.RID),
+			attribute.String("checkout.dir", e.Dir),
 		),
 	)
 }
 
-func (o *CheckoutOTelObserver) ExtractFileCompleted(name string, change checkout.UpdateChange) {
+func (o *CheckoutOTelObserver) ExtractFileCompleted(name string, change libfossil.UpdateChange) {
 	if o.span != nil {
 		o.span.AddEvent("checkout.file", trace.WithAttributes(
 			attribute.String("checkout.file.name", name),
-			attribute.String("checkout.file.change", strconv.Itoa(int(change))),
+			attribute.String("checkout.file.change", string(change)),
 		))
 	}
 }
 
-func (o *CheckoutOTelObserver) ExtractCompleted(e checkout.ExtractEnd) {
+func (o *CheckoutOTelObserver) ExtractCompleted(e libfossil.ExtractEnd) {
 	if o.span != nil {
 		o.span.SetAttributes(
 			attribute.Int("checkout.files_written", e.FilesWritten),
@@ -60,7 +58,7 @@ func (o *CheckoutOTelObserver) ScanStarted(dir string) {
 	_, o.span = o.tracer.Start(nil, "checkout.scan")
 }
 
-func (o *CheckoutOTelObserver) ScanCompleted(e checkout.ScanEnd) {
+func (o *CheckoutOTelObserver) ScanCompleted(e libfossil.ScanEnd) {
 	if o.span != nil {
 		o.span.SetAttributes(
 			attribute.Int("checkout.scan.files_scanned", e.FilesScanned),
@@ -70,20 +68,20 @@ func (o *CheckoutOTelObserver) ScanCompleted(e checkout.ScanEnd) {
 	}
 }
 
-func (o *CheckoutOTelObserver) CommitStarted(e checkout.CommitStart) {
+func (o *CheckoutOTelObserver) CommitStarted(e libfossil.CommitStart) {
 	_, o.span = o.tracer.Start(nil, "checkout.commit",
 		trace.WithAttributes(
-			attribute.Int("checkout.commit.files", e.FilesEnqueued),
+			attribute.Int("checkout.commit.files", e.Files),
 			attribute.String("checkout.commit.user", e.User),
 		),
 	)
 }
 
-func (o *CheckoutOTelObserver) CommitCompleted(e checkout.CommitEnd) {
+func (o *CheckoutOTelObserver) CommitCompleted(e libfossil.CommitEnd) {
 	if o.span != nil {
 		o.span.SetAttributes(
 			attribute.String("checkout.commit.uuid", e.UUID),
-			attribute.Int64("checkout.commit.rid", int64(e.RID)),
+			attribute.Int64("checkout.commit.rid", e.RID),
 		)
 		o.span.End()
 		o.span = nil

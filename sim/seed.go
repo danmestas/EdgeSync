@@ -4,9 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 
-	"github.com/danmestas/go-libfossil/blob"
-	"github.com/danmestas/go-libfossil/db"
-	"github.com/danmestas/go-libfossil/repo"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // SeedResult records what was seeded into a leaf repo.
@@ -15,30 +13,28 @@ type SeedResult struct {
 	UUIDs     []string
 }
 
-// SeedLeaf inserts random blobs into a leaf repo, marking them in
-// unclustered and unsent so the sync protocol will push them.
-func SeedLeaf(r *repo.Repo, rng *rand.Rand, count, maxSize int) ([]string, error) {
+// SeedLeaf inserts random checkins into a leaf repo so the sync protocol
+// has content to push. Returns the UUIDs of the created artifacts.
+func SeedLeaf(r *libfossil.Repo, rng *rand.Rand, count, maxSize int) ([]string, error) {
 	var uuids []string
 
-	err := r.WithTx(func(tx *db.Tx) error {
-		for range count {
-			size := rng.Intn(maxSize) + 1
-			data := make([]byte, size)
-			rng.Read(data)
+	for i := range count {
+		size := rng.Intn(maxSize) + 1
+		data := make([]byte, size)
+		rng.Read(data)
 
-			rid, uuid, err := blob.Store(tx, data)
-			if err != nil {
-				return fmt.Errorf("blob.Store: %w", err)
-			}
-
-			if _, err := tx.Exec("INSERT OR IGNORE INTO unsent(rid) VALUES(?)", rid); err != nil {
-				return fmt.Errorf("insert unsent: %w", err)
-			}
-
-			uuids = append(uuids, uuid)
+		_, uuid, err := r.Commit(libfossil.CommitOpts{
+			Files: []libfossil.FileToCommit{
+				{Name: fmt.Sprintf("seed-%d.bin", i), Content: data},
+			},
+			Comment: fmt.Sprintf("seed blob %d", i),
+			User:    "sim",
+		})
+		if err != nil {
+			return uuids, fmt.Errorf("seed commit %d: %w", i, err)
 		}
-		return nil
-	})
+		uuids = append(uuids, uuid)
+	}
 
-	return uuids, err
+	return uuids, nil
 }

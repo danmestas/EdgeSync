@@ -6,11 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danmestas/go-libfossil/repo"
-	"github.com/danmestas/go-libfossil/simio"
-	"github.com/danmestas/go-libfossil/sync"
-	"github.com/danmestas/go-libfossil/xfer"
+	libfossil "github.com/danmestas/go-libfossil"
 	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
+	"github.com/danmestas/go-libfossil/simio"
 )
 
 func TestConfigDefaults(t *testing.T) {
@@ -95,27 +93,32 @@ func TestConfigValidateOK(t *testing.T) {
 func createTestRepo(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "test.fossil")
-	r, err := repo.Create(path, "testuser", simio.CryptoRand{})
+	r, err := libfossil.Create(path, libfossil.CreateOpts{User: "testuser"})
 	if err != nil {
-		t.Fatalf("repo.Create: %v", err)
+		t.Fatalf("libfossil.Create: %v", err)
 	}
 	r.Close()
 	return path
 }
 
 // openTestRepo creates and opens a temporary Fossil repo for state machine tests.
-func openTestRepo(t *testing.T) (*repo.Repo, string, string) {
+func openTestRepo(t *testing.T) (*libfossil.Repo, string, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "test.fossil")
-	r, err := repo.Create(path, "testuser", simio.CryptoRand{})
+	r, err := libfossil.Create(path, libfossil.CreateOpts{User: "testuser"})
 	if err != nil {
-		t.Fatalf("repo.Create: %v", err)
+		t.Fatalf("libfossil.Create: %v", err)
 	}
 	t.Cleanup(func() { r.Close() })
 
-	var projCode, srvCode string
-	r.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projCode)
-	r.DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&srvCode)
+	projCode, err := r.Config("project-code")
+	if err != nil {
+		t.Fatalf("read project-code: %v", err)
+	}
+	srvCode, err := r.Config("server-code")
+	if err != nil {
+		t.Fatalf("read server-code: %v", err)
+	}
 	return r, projCode, srvCode
 }
 
@@ -218,9 +221,9 @@ func TestAgentSyncNowNonBlocking(t *testing.T) {
 func TestTickSyncNowConverges(t *testing.T) {
 	r, projCode, srvCode := openTestRepo(t)
 
-	mt := &sync.MockTransport{
-		Handler: func(req *xfer.Message) *xfer.Message {
-			return &xfer.Message{} // empty = converge immediately
+	mt := &libfossil.MockTransport{
+		Handler: func(req []byte) []byte {
+			return []byte{} // empty = converge immediately
 		},
 	}
 
@@ -247,10 +250,10 @@ func TestTickTimerEvent(t *testing.T) {
 	r, projCode, srvCode := openTestRepo(t)
 
 	exchangeCount := 0
-	mt := &sync.MockTransport{
-		Handler: func(req *xfer.Message) *xfer.Message {
+	mt := &libfossil.MockTransport{
+		Handler: func(req []byte) []byte {
 			exchangeCount++
-			return &xfer.Message{}
+			return []byte{}
 		},
 	}
 
@@ -270,7 +273,7 @@ func TestTickTimerEvent(t *testing.T) {
 
 func TestTickStopEvent(t *testing.T) {
 	r, projCode, srvCode := openTestRepo(t)
-	mt := &sync.MockTransport{}
+	mt := &libfossil.MockTransport{}
 
 	a := NewFromParts(Config{
 		Clock: simio.NewSimClock(),
@@ -288,13 +291,13 @@ func TestTickStopEvent(t *testing.T) {
 func TestTickSyncError(t *testing.T) {
 	r, projCode, srvCode := openTestRepo(t)
 
-	// Cancel context before Tick so sync.Sync returns immediately
+	// Cancel context before Tick so Sync returns immediately
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	mt := &sync.MockTransport{
-		Handler: func(req *xfer.Message) *xfer.Message {
-			return &xfer.Message{}
+	mt := &libfossil.MockTransport{
+		Handler: func(req []byte) []byte {
+			return []byte{}
 		},
 	}
 
@@ -313,7 +316,7 @@ func TestTickSyncError(t *testing.T) {
 
 func TestNewFromPartsRepo(t *testing.T) {
 	r, projCode, srvCode := openTestRepo(t)
-	mt := &sync.MockTransport{}
+	mt := &libfossil.MockTransport{}
 
 	a := NewFromParts(Config{}, r, mt, projCode, srvCode)
 
