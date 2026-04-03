@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/danmestas/go-libfossil/sync"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
@@ -19,7 +18,7 @@ func (a *Agent) serveHTTP(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthzHandler)
-	mux.Handle("/", sync.XferHandler(a.repo, sync.HandleSync))
+	mux.Handle("/", a.repo.XferHandler())
 
 	handler := otelhttp.NewMiddleware("edgesync-leaf-http")(mux)
 	srv := &http.Server{Handler: handler}

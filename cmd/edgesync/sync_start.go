@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/danmestas/go-libfossil/cli"
 	"github.com/dmestas/edgesync/leaf/agent"
 )
 
@@ -19,7 +20,7 @@ type SyncStartCmd struct {
 	UV           bool          `help:"Sync unversioned files" default:"false"`
 }
 
-func (c *SyncStartCmd) Run(g *Globals) error {
+func (c *SyncStartCmd) Run(g *cli.Globals) error {
 	if g.Repo == "" {
 		return fmt.Errorf("repository required (use -R <path>)")
 	}

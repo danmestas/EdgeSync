@@ -37,53 +37,54 @@ Four modules in a workspace:
 - `leaf/` — leaf agent module
 - `bridge/` — bridge module
 - `dst/` — deterministic simulation tests
-- External dependency: `github.com/danmestas/go-libfossil` v0.x (standalone repo)
+- External dependency: `github.com/danmestas/go-libfossil` v0.2.x (standalone repo)
 
 For local go-libfossil development, copy `go.work.example` to `go.work` and clone go-libfossil at `../go-libfossil`.
+
+**Important:** go-libfossil v0.2.0+ hides all implementation packages under `internal/`. EdgeSync imports only the root package handle API (`libfossil.Repo`, `libfossil.Transport`, etc.), plus `db/`, `simio/`, and `testutil/` which remain public.
 
 ## Project Structure
 
 ### Entry Points
-- `cmd/edgesync/` — Unified CLI binary (50 subcommands via kong)
+- `cmd/edgesync/` — Unified CLI binary (embeds go-libfossil's `cli.RepoCmd` + EdgeSync-specific commands)
 - `leaf/cmd/leaf/` — Standalone leaf agent daemon
 - `bridge/cmd/bridge/` — Standalone bridge daemon
 - `sim/cmd/soak/` — Continuous soak test runner
 
-### Core Library: go-libfossil (external: github.com/danmestas/go-libfossil)
+### Core Library: go-libfossil (external: github.com/danmestas/go-libfossil v0.2.x)
 
-| Package | Purpose | Key Types |
-|---------|---------|-----------|
-| `annotate/` | Line-level blame/annotate | `Annotate()` |
-| `bisect/` | Binary search for regressions | `Session`, `Step()` |
-| `blob/` | Blob compression (4-byte BE size prefix + zlib) | `Compress()`, `Decompress()`, `Load()` |
-| `content/` | Artifact storage, delta chain expansion | `Store()`, `Expand()` |
-| `db/` | SQLite adapter (2 drivers: modernc, ncruces) | `Open()`, `OpenWith()`, `DB` |
-| `deck/` | Manifest/control-artifact parsing | `Parse()`, `Deck` |
-| `delta/` | Fossil delta codec (port of delta.c) | `Create()`, `Apply()` |
-| `hash/` | SHA1/SHA3-256 content addressing | `SHA1()`, `SHA3()` |
-| `manifest/` | Checkin, file listing, timeline | `Checkin()`, `ListFiles()`, `Log()` |
-| `merge/` | 3-way merge with swappable strategies | `Strategy`, `ThreeWayText`, `FindCommonAncestor()` |
-| `path/` | Checkout path resolution | `Resolve()` |
-| `repo/` | Fossil repo DB operations | `Create()`, `Open()`, `Verify()` |
-| `simio/` | Simulation I/O (Clock, Rand, Env) | `SimClock`, `RealEnv()`, `CryptoRand{}` |
-| `stash/` | Working-tree stash | `Save()`, `Pop()`, `List()` |
-| `sync/` | Sync engine — client + server | `Sync()`, `Clone()`, `HandleSync()`, `ServeHTTP()` |
-| `tag/` | Tag read/write on artifacts | `Add()`, `List()` |
-| `testutil/` | Shared test helpers | `NewTestRepo()` |
-| `undo/` | Undo/redo state tracking | `Save()`, `Undo()`, `Redo()` |
-| `uv/` | Unversioned file sync (wiki, forum, attachments) | `Status()`, `Write()`, `Read()`, `ContentHash()` |
-| `xfer/` | Xfer card protocol encoder/decoder | `Encode()`, `Decode()`, `Message` |
+go-libfossil exposes an opaque `Repo` handle — all operations are methods on it. Implementation packages (blob, content, manifest, sync, xfer, etc.) are under `internal/` and not importable.
 
-### sync/ Package (key types)
-- **Client**: `Sync()`, `Clone()`, `SyncOpts{UV: true}`, `CloneOpts`, `Transport` interface
-- **Server**: `HandleSync()`, `HandleSyncWithOpts()`, `HandleFunc`, `HandleOpts`, `ServeHTTP()`, `XferHandler()`
-- **UV Cards**: `handler_uv.go` (server-side uvfile/uvigot/uvgimme dispatch), client UV in `client.go`
-- **Shared**: `storeReceivedFile()`, `resolveFileContent()`, `BuggifyChecker`
-- **Transports**: `HTTPTransport`, `MockTransport` (in sync/); `NATSTransport` (in leaf/agent/)
+**Public API surface:**
+
+| Symbol | Purpose |
+|--------|---------|
+| `libfossil.Create()`, `Open()`, `Clone()` | Repo constructors |
+| `r.Commit()`, `r.Timeline()`, `r.ListFiles()` | Checkout operations |
+| `r.Sync()`, `r.HandleSync()`, `r.XferHandler()` | Client + server sync |
+| `r.CreateCheckout()`, `r.OpenCheckout()` | Working directory management |
+| `r.Tag()`, `r.UVWrite/Read/List()` | Tags, unversioned files |
+| `r.CreateUser()`, `r.ListUsers()`, `r.Config()` | Admin |
+| `libfossil.Transport` | Interface — `RoundTrip(ctx, []byte) ([]byte, error)` |
+| `libfossil.SyncObserver`, `CheckoutObserver` | Telemetry hooks |
+| `libfossil.NewHTTPTransport()` | Built-in HTTP transport |
+| `libfossil.NopSyncObserver()`, `StdoutSyncObserver()` | Built-in observers |
+
+**Public packages (still importable):**
+- `db/` — SQLite adapter, `db/driver/modernc`, `db/driver/ncruces`
+- `simio/` — Clock, Rand, Env for deterministic testing
+- `testutil/` — Test helpers
+- `cli/` — Embeddable kong CLI commands (38 Fossil-compatible subcommands)
+- `observer/otel/` — Optional OTel observer (separate go.mod)
+
+**EdgeSync-specific commands (not in go-libfossil):**
+- `sync start` / `sync now` — NATS agent daemon
+- `bridge serve` — NATS-to-HTTP bridge
+- `doctor` — Environment health check
 
 ### Agent/Bridge
 - `leaf/agent/` — `Config` (config.go), `New()`, `Start()`, `Stop()`, `SyncNow()`
-  - `serve_http.go` — composes mux with `/healthz` + `sync.XferHandler()` (operational endpoints live here, not in go-libfossil)
+  - `serve_http.go` — composes mux with `/healthz` + `r.XferHandler()` (operational endpoints live here, not in go-libfossil)
   - `serve_nats.go` — NATS request/reply listener for leaf-to-leaf sync
   - `serve_p2p.go` — libp2p stub
   - Config fields: `ServeHTTPAddr` (":8080" to serve HTTP), `ServeNATSEnabled` (leaf-to-leaf)
@@ -120,7 +121,7 @@ make test                                  # CI tests never need Doppler
 
 ### Observer Pattern
 
-`sync.Observer` interface in `go-libfossil/sync/observer.go` — lifecycle hooks for session, round, error, and server-side handle events. `leaf/telemetry/observer.go` implements it with OTel spans and metrics. `go-libfossil/` has **no OTel dependency** — all instrumentation flows through the Observer interface.
+`libfossil.SyncObserver` and `libfossil.CheckoutObserver` interfaces — lifecycle hooks for sync sessions, rounds, errors, server-side handling, and checkout operations. `leaf/telemetry/observer.go` implements them with OTel spans and metrics. go-libfossil's root package has **no OTel dependency** — the optional `observer/otel/` sub-module provides an OTel implementation with its own go.mod.
 
 ### Honeycomb Dashboard
 
@@ -159,7 +160,7 @@ cd ~/EdgeSync && git pull && cd deploy && sudo docker compose up -d --build
 - **Auth**: Empty `User` = no login card = unauthenticated "nobody" sync
 - **simio.CryptoRand{}**: Use for production callsites of `repo.Create` and `db.SeedConfig`
 - **Pre-commit hook**: `make setup-hooks` installs ~8s test gate
-- **HandleSync vs HandleSyncWithOpts**: Use `HandleSync` in production, `HandleSyncWithOpts` with `HandleOpts{Buggify}` for DST
+- **HandleSync vs HandleSyncWithOpts**: Use `r.HandleSync()` in production, `r.HandleSyncWithOpts(ctx, req, HandleOpts{Buggify})` for DST
 - **go-libfossil is transport-agnostic**: No operational endpoints (healthz, metrics) in go-libfossil. Use `XferHandler()` to compose custom muxes. Operational concerns live in `leaf/agent/serve_http.go`.
 
 ## Fossil Sync Protocol

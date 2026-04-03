@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/danmestas/go-libfossil/repo"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // ensureClientID returns the persistent edgesync-client-id for this repo,
 // generating and storing a new UUIDv4 if none exists.
-func ensureClientID(r *repo.Repo, rng io.Reader) (string, error) {
+func ensureClientID(r *libfossil.Repo, rng io.Reader) (string, error) {
 	var id string
 	err := r.DB().QueryRow("SELECT value FROM config WHERE name='edgesync-client-id'").Scan(&id)
 	if err == nil && id != "" {

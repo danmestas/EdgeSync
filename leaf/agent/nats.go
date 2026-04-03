@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/danmestas/go-libfossil/xfer"
 	"github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -14,7 +13,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// NATSTransport implements sync.Transport over NATS request/reply.
+// NATSTransport implements libfossil.Transport over NATS request/reply.
 // The subject follows the pattern "fossil.<project-code>.sync".
 type NATSTransport struct {
 	conn    *nats.Conn
@@ -23,7 +22,7 @@ type NATSTransport struct {
 	tracer  trace.Tracer
 }
 
-// NewNATSTransport creates a transport that exchanges xfer messages over
+// NewNATSTransport creates a transport that exchanges raw sync payloads over
 // the given NATS connection. The prefix defaults to "fossil" if empty.
 // If timeout is zero, 30 seconds is used.
 func NewNATSTransport(conn *nats.Conn, projectCode string, timeout time.Duration, prefix string) *NATSTransport {
@@ -41,9 +40,8 @@ func NewNATSTransport(conn *nats.Conn, projectCode string, timeout time.Duration
 	}
 }
 
-// Exchange encodes the request as zlib-compressed xfer bytes, sends it as
-// a NATS request, and decodes the zlib-compressed reply.
-func (t *NATSTransport) Exchange(ctx context.Context, req *xfer.Message) (*xfer.Message, error) {
+// RoundTrip sends a raw xfer payload as a NATS request and returns the raw reply.
+func (t *NATSTransport) RoundTrip(ctx context.Context, payload []byte) ([]byte, error) {
 	ctx, span := t.tracer.Start(ctx, "nats.request",
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(
@@ -53,12 +51,7 @@ func (t *NATSTransport) Exchange(ctx context.Context, req *xfer.Message) (*xfer.
 	)
 	defer span.End()
 
-	data, err := req.Encode()
-	if err != nil {
-		span.RecordError(err)
-		return nil, fmt.Errorf("nats: encode request: %w", err)
-	}
-	span.SetAttributes(attribute.Int("messaging.message.body.size", len(data)))
+	span.SetAttributes(attribute.Int("messaging.message.body.size", len(payload)))
 
 	// Use a child context with the transport timeout if the parent has no
 	// earlier deadline.
@@ -71,7 +64,7 @@ func (t *NATSTransport) Exchange(ctx context.Context, req *xfer.Message) (*xfer.
 
 	// Build NATS message with trace context in headers.
 	msg := nats.NewMsg(t.subject)
-	msg.Data = data
+	msg.Data = payload
 	injectTraceContext(ctx, msg)
 
 	reply, err := t.conn.RequestMsgWithContext(ctx, msg)
@@ -80,12 +73,7 @@ func (t *NATSTransport) Exchange(ctx context.Context, req *xfer.Message) (*xfer.
 		return nil, fmt.Errorf("nats: request on %s: %w", t.subject, err)
 	}
 
-	resp, err := xfer.Decode(reply.Data)
-	if err != nil {
-		span.RecordError(err)
-		return nil, fmt.Errorf("nats: decode reply: %w", err)
-	}
-	return resp, nil
+	return reply.Data, nil
 }
 
 // injectTraceContext propagates W3C trace context into NATS message headers.

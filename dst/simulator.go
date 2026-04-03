@@ -9,14 +9,12 @@ import (
 	"time"
 
 	"github.com/dmestas/edgesync/bridge/bridge"
-	"github.com/danmestas/go-libfossil/repo"
+	libfossil "github.com/danmestas/go-libfossil"
 	"github.com/danmestas/go-libfossil/simio"
-	"github.com/danmestas/go-libfossil/sync"
-	"github.com/danmestas/go-libfossil/uv"
 	"github.com/dmestas/edgesync/leaf/agent"
 )
 
-// SeededBuggify implements sync.BuggifyChecker with a deterministic PRNG.
+// SeededBuggify implements libfossil.BuggifyChecker with a deterministic PRNG.
 type SeededBuggify struct {
 	rng *rand.Rand
 }
@@ -36,7 +34,7 @@ type Simulator struct {
 	events     EventQueue
 	leaves     map[NodeID]*agent.Agent
 	bridge     *bridge.Bridge
-	masterRepo *repo.Repo // optional: set via SetMasterRepo for UV events targeting "master"
+	masterRepo *libfossil.Repo // optional: set via SetMasterRepo for UV events targeting "master"
 
 	// Config
 	pollInterval        time.Duration
@@ -58,17 +56,15 @@ type SimConfig struct {
 	Seed                int64
 	NumLeaves           int
 	PollInterval        time.Duration
-	TmpDir              string         // directory for repo files
-	Upstream            sync.Transport // mock Fossil master
-	Buggify             bool           // enable BUGGIFY fault injection
-	UV                  bool           // sync unversioned files
-	Private             bool           // sync private artifacts
-	SafetyCheckInterval int            // run CheckSafety() every N steps; 0 = disabled
+	TmpDir              string              // directory for repo files
+	Upstream            libfossil.Transport  // mock Fossil master
+	Buggify             bool                 // enable BUGGIFY fault injection
+	UV                  bool                 // sync unversioned files
+	Private             bool                 // sync private artifacts
+	SafetyCheckInterval int                  // run CheckSafety() every N steps; 0 = disabled
 }
 
-// New creates a Simulator with the given configuration. It creates
-// leaf repos, agents, a bridge, and the simulated network. All I/O is
-// local SQLite — no NATS or HTTP connections are made.
+// New creates a Simulator with the given configuration.
 func New(cfg SimConfig) (*Simulator, error) {
 	if cfg.PollInterval == 0 {
 		cfg.PollInterval = 5 * time.Second
@@ -116,14 +112,16 @@ func New(cfg SimConfig) (*Simulator, error) {
 		id := NodeID(fmt.Sprintf("leaf-%d", i))
 
 		repoPath := filepath.Join(cfg.TmpDir, fmt.Sprintf("%s.fossil", id))
-		r, err := repo.Create(repoPath, "simuser", simRand)
+		r, err := libfossil.Create(repoPath, libfossil.CreateOpts{
+			User: "simuser",
+			Rand: simRand,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("dst: create repo for %s: %w", id, err)
 		}
 
-		var projCode, srvCode string
-		r.DB().QueryRow("SELECT value FROM config WHERE name='project-code'").Scan(&projCode)
-		r.DB().QueryRow("SELECT value FROM config WHERE name='server-code'").Scan(&srvCode)
+		projCode, _ := r.Config("project-code")
+		srvCode, _ := r.Config("server-code")
 
 		transport := network.Transport(id)
 
@@ -170,7 +168,7 @@ func (s *Simulator) LeafIDs() []NodeID {
 }
 
 // SetMasterRepo registers the master repo for UV events targeting "master".
-func (s *Simulator) SetMasterRepo(r *repo.Repo) {
+func (s *Simulator) SetMasterRepo(r *libfossil.Repo) {
 	s.masterRepo = r
 }
 
@@ -274,7 +272,7 @@ func (s *Simulator) Step() (bool, error) {
 	return true, nil
 }
 
-func (s *Simulator) resolveNodeRepo(id NodeID) (*repo.Repo, error) {
+func (s *Simulator) resolveNodeRepo(id NodeID) (*libfossil.Repo, error) {
 	if id == "master" {
 		if s.masterRepo == nil {
 			return nil, fmt.Errorf("dst: master repo not set (call SetMasterRepo)")
@@ -293,8 +291,7 @@ func (s *Simulator) handleUVWrite(ev *Event) (bool, error) {
 	if err != nil {
 		return true, fmt.Errorf("UV write %q: %w", ev.UVName, err)
 	}
-	uv.EnsureSchema(r.DB())
-	if err := uv.Write(r.DB(), ev.UVName, ev.UVData, ev.UVMTime); err != nil {
+	if err := r.UVWrite(ev.UVName, ev.UVData, time.Unix(ev.UVMTime, 0)); err != nil {
 		return false, fmt.Errorf("dst: UV write %q on %s: %w", ev.UVName, ev.NodeID, err)
 	}
 	return true, nil
@@ -305,8 +302,7 @@ func (s *Simulator) handleUVDelete(ev *Event) (bool, error) {
 	if err != nil {
 		return true, fmt.Errorf("UV delete %q: %w", ev.UVName, err)
 	}
-	uv.EnsureSchema(r.DB())
-	if err := uv.Delete(r.DB(), ev.UVName, ev.UVMTime); err != nil {
+	if err := r.UVWrite(ev.UVName, nil, time.Unix(ev.UVMTime, 0)); err != nil {
 		return false, fmt.Errorf("dst: UV delete %q on %s: %w", ev.UVName, ev.NodeID, err)
 	}
 	return true, nil
@@ -345,7 +341,6 @@ func (s *Simulator) RunUntil(deadline time.Time) error {
 }
 
 // Close cleans up all leaf agent repos and disables buggify.
-// Iterates leafIDs (not map) for deterministic error reporting.
 func (s *Simulator) Close() error {
 	if s.buggify {
 		simio.DisableBuggify()

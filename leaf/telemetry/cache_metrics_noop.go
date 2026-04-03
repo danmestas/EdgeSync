@@ -2,7 +2,5 @@
 
 package telemetry
 
-import "github.com/danmestas/go-libfossil/content"
-
 // RegisterCacheMetrics is a no-op on WASM builds.
-func RegisterCacheMetrics(_ any, _ *content.Cache) {}
+func RegisterCacheMetrics(_ any, _ any) {}

@@ -2,14 +2,10 @@ package bridge
 
 import (
 	"context"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
-	libsync "github.com/danmestas/go-libfossil/sync"
-	"github.com/danmestas/go-libfossil/xfer"
+	libfossil "github.com/danmestas/go-libfossil"
 	"github.com/nats-io/nats.go"
 	natsserver "github.com/nats-io/nats-server/v2/server"
 )
@@ -29,35 +25,6 @@ func startEmbeddedNATS(t *testing.T) string {
 	}
 	t.Cleanup(func() { ns.Shutdown() })
 	return ns.ClientURL()
-}
-
-// startMockFossil creates an httptest server that accepts POST /xfer,
-// reads the zlib-compressed xfer request, and responds with a canned
-// xfer response containing an igot card.
-func startMockFossil(t *testing.T) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Fossil routes to /xfer by Content-Type, not URL path — accept any path.
-		io.ReadAll(r.Body)
-		r.Body.Close()
-
-		// Build a canned response with an igot card.
-		resp := &xfer.Message{
-			Cards: []xfer.Card{
-				&xfer.IGotCard{UUID: "mock-fossil-uuid"},
-			},
-		}
-		data, err := resp.Encode()
-		if err != nil {
-			t.Errorf("mock fossil encode: %v", err)
-			http.Error(w, "encode error", 500)
-			return
-		}
-		w.Header().Set("Content-Type", "application/x-fossil")
-		w.Write(data)
-	}))
-	t.Cleanup(func() { srv.Close() })
-	return srv
 }
 
 // --- Config tests ---
@@ -139,12 +106,19 @@ func TestBridgeNewAndStop(t *testing.T) {
 
 func TestBridgeProxiesNATSMessage(t *testing.T) {
 	natsURL := startEmbeddedNATS(t)
-	fossilSrv := startMockFossil(t)
+
+	// Use a mock transport that returns a canned response.
+	mt := &libfossil.MockTransport{
+		Handler: func(req []byte) []byte {
+			return []byte("canned-response")
+		},
+	}
 
 	b, err := New(Config{
 		NATSUrl:     natsURL,
-		FossilURL:   fossilSrv.URL,
+		FossilURL:   "http://unused",
 		ProjectCode: "proj1",
+		Upstream:    mt,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -154,52 +128,35 @@ func TestBridgeProxiesNATSMessage(t *testing.T) {
 	}
 	defer b.Stop()
 
-	// Connect a client and send a request via NATS.
 	nc, err := nats.Connect(natsURL)
 	if err != nil {
 		t.Fatalf("client connect: %v", err)
 	}
 	defer nc.Close()
 
-	req := &xfer.Message{
-		Cards: []xfer.Card{
-			&xfer.PullCard{ServerCode: "srv1", ProjectCode: "proj1"},
-		},
-	}
-	reqData, err := req.Encode()
-	if err != nil {
-		t.Fatalf("encode request: %v", err)
-	}
-
-	msg, err := nc.Request("fossil.proj1.sync", reqData, 5*time.Second)
+	msg, err := nc.Request("fossil.proj1.sync", []byte("test-request"), 5*time.Second)
 	if err != nil {
 		t.Fatalf("NATS request: %v", err)
 	}
-
-	resp, err := xfer.Decode(msg.Data)
-	if err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if len(resp.Cards) != 1 {
-		t.Fatalf("expected 1 card, got %d", len(resp.Cards))
-	}
-	igot, ok := resp.Cards[0].(*xfer.IGotCard)
-	if !ok {
-		t.Fatalf("expected *IGotCard, got %T", resp.Cards[0])
-	}
-	if igot.UUID != "mock-fossil-uuid" {
-		t.Errorf("UUID = %q, want %q", igot.UUID, "mock-fossil-uuid")
+	if string(msg.Data) != "canned-response" {
+		t.Errorf("response = %q, want %q", msg.Data, "canned-response")
 	}
 }
 
 func TestBridgeHandlesBadPayload(t *testing.T) {
 	natsURL := startEmbeddedNATS(t)
-	fossilSrv := startMockFossil(t)
+
+	mt := &libfossil.MockTransport{
+		Handler: func(req []byte) []byte {
+			return []byte("response")
+		},
+	}
 
 	b, err := New(Config{
 		NATSUrl:     natsURL,
-		FossilURL:   fossilSrv.URL,
+		FossilURL:   "http://unused",
 		ProjectCode: "proj2",
+		Upstream:    mt,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -216,9 +173,6 @@ func TestBridgeHandlesBadPayload(t *testing.T) {
 	defer nc.Close()
 
 	// Send garbage data -- bridge should respond gracefully, not crash.
-	// The bridge may forward garbage to the Fossil server and return
-	// whatever the server sends back, or return an error/empty response.
-	// The key invariant: the bridge does NOT crash or hang.
 	msg, err := nc.Request("fossil.proj2.sync", []byte("not valid zlib"), 5*time.Second)
 	if err != nil {
 		t.Fatalf("NATS request: %v", err)
@@ -228,13 +182,19 @@ func TestBridgeHandlesBadPayload(t *testing.T) {
 
 func TestBridgeCustomSubjectPrefix(t *testing.T) {
 	natsURL := startEmbeddedNATS(t)
-	fossilSrv := startMockFossil(t)
+
+	mt := &libfossil.MockTransport{
+		Handler: func(req []byte) []byte {
+			return []byte("custom-prefix-response")
+		},
+	}
 
 	b, err := New(Config{
 		NATSUrl:       natsURL,
-		FossilURL:     fossilSrv.URL,
+		FossilURL:     "http://unused",
 		ProjectCode:   "proj3",
 		SubjectPrefix: "edgesync",
+		Upstream:      mt,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -250,32 +210,17 @@ func TestBridgeCustomSubjectPrefix(t *testing.T) {
 	}
 	defer nc.Close()
 
-	req := &xfer.Message{
-		Cards: []xfer.Card{
-			&xfer.PullCard{ServerCode: "srv1", ProjectCode: "proj3"},
-		},
-	}
-	reqData, err := req.Encode()
-	if err != nil {
-		t.Fatalf("encode request: %v", err)
-	}
-
 	// Use the custom prefix subject.
-	msg, err := nc.Request("edgesync.proj3.sync", reqData, 5*time.Second)
+	msg, err := nc.Request("edgesync.proj3.sync", []byte("test"), 5*time.Second)
 	if err != nil {
 		t.Fatalf("NATS request with custom prefix: %v", err)
 	}
-
-	resp, err := xfer.Decode(msg.Data)
-	if err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if len(resp.Cards) != 1 {
-		t.Fatalf("expected 1 card, got %d", len(resp.Cards))
+	if string(msg.Data) != "custom-prefix-response" {
+		t.Errorf("response = %q, want %q", msg.Data, "custom-prefix-response")
 	}
 
 	// Default prefix should NOT work.
-	_, err = nc.Request("fossil.proj3.sync", reqData, 500*time.Millisecond)
+	_, err = nc.Request("fossil.proj3.sync", []byte("test"), 500*time.Millisecond)
 	if err == nil {
 		t.Error("expected timeout on default prefix, but got a response")
 	}
@@ -284,52 +229,39 @@ func TestBridgeCustomSubjectPrefix(t *testing.T) {
 // --- HandleRequest (state machine) tests ---
 
 func TestHandleRequestForwards(t *testing.T) {
-	mt := &libsync.MockTransport{
-		Handler: func(req *xfer.Message) *xfer.Message {
-			return &xfer.Message{Cards: []xfer.Card{
-				&xfer.IGotCard{UUID: "from-upstream"},
-			}}
+	mt := &libfossil.MockTransport{
+		Handler: func(req []byte) []byte {
+			return []byte("from-upstream")
 		},
 	}
 
 	b := NewFromParts(Config{ProjectCode: "test"}, mt)
 
-	req := &xfer.Message{Cards: []xfer.Card{
-		&xfer.PullCard{ServerCode: "srv1", ProjectCode: "test"},
-	}}
-
-	resp, err := b.HandleRequest(context.Background(), req)
+	resp, err := b.HandleRequest(context.Background(), []byte("test-request"))
 	if err != nil {
 		t.Fatalf("HandleRequest: %v", err)
 	}
-	if len(resp.Cards) != 1 {
-		t.Fatalf("expected 1 card, got %d", len(resp.Cards))
-	}
-	igot, ok := resp.Cards[0].(*xfer.IGotCard)
-	if !ok {
-		t.Fatalf("expected *IGotCard, got %T", resp.Cards[0])
-	}
-	if igot.UUID != "from-upstream" {
-		t.Errorf("UUID = %q, want %q", igot.UUID, "from-upstream")
+	if string(resp) != "from-upstream" {
+		t.Errorf("response = %q, want %q", resp, "from-upstream")
 	}
 }
 
 func TestHandleRequestEmptyResponse(t *testing.T) {
-	mt := &libsync.MockTransport{} // nil handler returns empty message
+	mt := &libfossil.MockTransport{} // nil handler returns empty bytes
 
 	b := NewFromParts(Config{ProjectCode: "test"}, mt)
 
-	resp, err := b.HandleRequest(context.Background(), &xfer.Message{})
+	resp, err := b.HandleRequest(context.Background(), []byte{})
 	if err != nil {
 		t.Fatalf("HandleRequest: %v", err)
 	}
-	if len(resp.Cards) != 0 {
-		t.Fatalf("expected 0 cards, got %d", len(resp.Cards))
+	if len(resp) != 0 {
+		t.Fatalf("expected 0 bytes, got %d", len(resp))
 	}
 }
 
 func TestNewFromPartsNoNATS(t *testing.T) {
-	mt := &libsync.MockTransport{}
+	mt := &libfossil.MockTransport{}
 	b := NewFromParts(Config{ProjectCode: "test"}, mt)
 
 	// conn should be nil — Stop should not panic.
@@ -345,7 +277,7 @@ func TestConfigValidateUpstreamOverridesFossilURL(t *testing.T) {
 	// With Upstream set, FossilURL is not required.
 	c := Config{
 		ProjectCode: "test",
-		Upstream:    &libsync.MockTransport{},
+		Upstream:    &libfossil.MockTransport{},
 	}
 	if err := c.validate(); err != nil {
 		t.Fatalf("expected no error with Upstream set, got: %v", err)

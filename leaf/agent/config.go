@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
+	libfossil "github.com/danmestas/go-libfossil"
 	"github.com/danmestas/go-libfossil/simio"
-	libsync "github.com/danmestas/go-libfossil/sync"
 	"github.com/nats-io/nats.go"
 )
 
@@ -54,11 +54,11 @@ type Config struct {
 	Clock simio.Clock
 
 	// Buggify is an optional fault injection checker. Nil in production.
-	Buggify libsync.BuggifyChecker
+	Buggify libfossil.BuggifyChecker
 
 	// Observer receives telemetry callbacks during sync operations.
 	// Nil defaults to no-op (no telemetry).
-	Observer libsync.Observer
+	Observer libfossil.SyncObserver
 
 	// ServeHTTPAddr is the HTTP listen address (e.g. ":8080").
 	// Empty means do not serve HTTP. When set, the leaf acts as a
@@ -79,11 +79,10 @@ type Config struct {
 
 	// PostSyncHook is called after each successful sync with the result.
 	// Use for crosslinking received manifests or refreshing UI state.
-	PostSyncHook func(result *libsync.SyncResult)
+	PostSyncHook func(result *libfossil.SyncResult)
 
-	// ContentCacheSize is the maximum bytes of expanded blob content to cache
-	// in memory (LRU). Eliminates redundant delta-chain walks during sync.
-	// 0 defaults to 32 MiB. Negative disables caching.
+	// ContentCacheSize is kept for config compatibility but is no longer
+	// used directly — content caching is handled internally by go-libfossil.
 	ContentCacheSize int64
 
 	// Autosync controls automatic sync around commit (default: AutosyncOff).

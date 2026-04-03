@@ -3,7 +3,7 @@ package bridge
 import (
 	"fmt"
 
-	libsync "github.com/danmestas/go-libfossil/sync"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // Config holds the settings for a Bridge instance.
@@ -15,10 +15,10 @@ type Config struct {
 
 	// Upstream is the transport to the Fossil server. Nil defaults to
 	// HTTPTransport using FossilURL. Set for simulation or testing.
-	Upstream libsync.Transport
+	Upstream libfossil.Transport
 
 	// Buggify is an optional fault injection checker. Nil in production.
-	Buggify libsync.BuggifyChecker
+	Buggify libfossil.BuggifyChecker
 }
 
 func (c *Config) applyDefaults() {

@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danmestas/go-libfossil/xfer"
 	"github.com/nats-io/nats.go"
 	natsserver "github.com/nats-io/nats-server/v2/server"
 )
@@ -39,25 +38,15 @@ func TestNATSTransportRoundTrip(t *testing.T) {
 
 	subject := "fossil.testproj.sync"
 
-	// Build a canned response: a message with an igot card.
-	cannedResp := &xfer.Message{
-		Cards: []xfer.Card{
-			&xfer.IGotCard{UUID: "abc123def456"},
-		},
-	}
-	cannedBytes, err := cannedResp.Encode()
-	if err != nil {
-		t.Fatalf("encode canned response: %v", err)
-	}
+	// Build a canned response (just some bytes).
+	cannedResp := []byte("canned-response-data")
 
 	sub, err := subConn.Subscribe(subject, func(msg *nats.Msg) {
-		// Verify we received valid zlib-compressed xfer data.
-		_, decErr := xfer.Decode(msg.Data)
-		if decErr != nil {
-			t.Errorf("subscriber decode request: %v", decErr)
+		if len(msg.Data) == 0 {
+			t.Error("subscriber received empty request")
 			return
 		}
-		if err := msg.Respond(cannedBytes); err != nil {
+		if err := msg.Respond(cannedResp); err != nil {
 			t.Errorf("subscriber respond: %v", err)
 		}
 	})
@@ -76,26 +65,13 @@ func TestNATSTransportRoundTrip(t *testing.T) {
 
 	transport := NewNATSTransport(clientConn, "testproj", 5*time.Second, "")
 
-	req := &xfer.Message{
-		Cards: []xfer.Card{
-			&xfer.PullCard{ServerCode: "srvX", ProjectCode: "testproj"},
-		},
-	}
-
 	ctx := context.Background()
-	resp, err := transport.Exchange(ctx, req)
+	resp, err := transport.RoundTrip(ctx, []byte("test-request"))
 	if err != nil {
-		t.Fatalf("Exchange: %v", err)
+		t.Fatalf("RoundTrip: %v", err)
 	}
-	if len(resp.Cards) != 1 {
-		t.Fatalf("expected 1 card, got %d", len(resp.Cards))
-	}
-	igot, ok := resp.Cards[0].(*xfer.IGotCard)
-	if !ok {
-		t.Fatalf("expected *IGotCard, got %T", resp.Cards[0])
-	}
-	if igot.UUID != "abc123def456" {
-		t.Errorf("UUID = %q, want %q", igot.UUID, "abc123def456")
+	if string(resp) != "canned-response-data" {
+		t.Errorf("response = %q, want %q", resp, "canned-response-data")
 	}
 }
 
@@ -110,15 +86,9 @@ func TestNATSTransportNoSubscriberTimeout(t *testing.T) {
 
 	transport := NewNATSTransport(conn, "nobody", 500*time.Millisecond, "")
 
-	req := &xfer.Message{
-		Cards: []xfer.Card{
-			&xfer.PullCard{ServerCode: "srvX", ProjectCode: "nobody"},
-		},
-	}
-
 	ctx := context.Background()
 	start := time.Now()
-	_, err = transport.Exchange(ctx, req)
+	_, err = transport.RoundTrip(ctx, []byte("test-request"))
 	elapsed := time.Since(start)
 
 	if err == nil {
