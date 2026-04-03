@@ -10,13 +10,15 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/danmestas/go-libfossil/cli"
 )
 
 type DoctorCmd struct {
 	NATSUrl string `help:"NATS server URL to check connectivity" default:"nats://localhost:4222"`
 }
 
-func (c *DoctorCmd) Run(g *Globals) error {
+func (c *DoctorCmd) Run(g *cli.Globals) error {
 	passed, warned, failed := 0, 0, 0
 
 	check := func(name string, fn func() (string, error)) {
@@ -69,11 +71,12 @@ func (c *DoctorCmd) Run(g *Globals) error {
 			}
 			return g.Repo, nil
 		}
-		found, err := findRepo()
+		r, err := g.OpenRepo()
 		if err != nil {
 			return "WARN:" + "no .fossil file found in cwd or parents (use -R <path>)", nil
 		}
-		return found + " (auto-detected)", nil
+		r.Close()
+		return "auto-detected", nil
 	})
 
 	// NATS connectivity

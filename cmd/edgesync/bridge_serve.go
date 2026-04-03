@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/danmestas/go-libfossil/cli"
 	"github.com/dmestas/edgesync/bridge/bridge"
 )
 
@@ -16,7 +17,7 @@ type BridgeServeCmd struct {
 	Project   string `required:"" help:"Project code for NATS subject"`
 }
 
-func (c *BridgeServeCmd) Run(g *Globals) error {
+func (c *BridgeServeCmd) Run(g *cli.Globals) error {
 	b, err := bridge.New(bridge.Config{
 		NATSUrl:     c.NATSUrl,
 		FossilURL:   c.FossilURL,
