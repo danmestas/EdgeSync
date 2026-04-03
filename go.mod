@@ -3,9 +3,9 @@ module github.com/dmestas/edgesync
 go 1.26.0
 
 require (
-	github.com/alecthomas/kong v1.14.0
-	github.com/danmestas/go-libfossil v0.1.0
-	github.com/danmestas/go-libfossil/db/driver/modernc v0.1.0
+	github.com/alecthomas/kong v1.15.0
+	github.com/danmestas/go-libfossil v0.2.0
+	github.com/danmestas/go-libfossil/db/driver/modernc v0.2.0
 	github.com/dmestas/edgesync/bridge v0.0.0-00010101000000-000000000000
 	github.com/dmestas/edgesync/leaf v0.0.0
 	github.com/hexops/gotextdiff v1.0.3

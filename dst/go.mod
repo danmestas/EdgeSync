@@ -3,8 +3,8 @@ module github.com/dmestas/edgesync/dst
 go 1.26.0
 
 require (
-	github.com/danmestas/go-libfossil v0.1.0
-	github.com/danmestas/go-libfossil/db/driver/modernc v0.1.0
+	github.com/danmestas/go-libfossil v0.2.0
+	github.com/danmestas/go-libfossil/db/driver/modernc v0.2.0
 	github.com/dmestas/edgesync/bridge v0.0.0
 	github.com/dmestas/edgesync/leaf v0.0.0
 )
