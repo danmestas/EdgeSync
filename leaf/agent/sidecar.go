@@ -30,6 +30,20 @@ type sidecarStatus struct {
 	RelayURL   *string `json:"relay_url"`
 }
 
+// Start spawns the sidecar process and blocks until it's ready.
+// Returns the sidecar status (including EndpointID) or error.
+func (s *sidecar) Start(timeout time.Duration) (*sidecarStatus, error) {
+	if err := s.spawn(); err != nil {
+		return nil, err
+	}
+	status, err := s.waitReady(timeout)
+	if err != nil {
+		s.kill()
+		return nil, err
+	}
+	return status, nil
+}
+
 // spawn starts the sidecar process.
 func (s *sidecar) spawn() error {
 	if _, err := os.Stat(s.binPath); err != nil {

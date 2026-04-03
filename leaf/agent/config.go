@@ -91,6 +91,10 @@ type Config struct {
 	// Defaults to "<repo-dir>.iroh-key" (adjacent to the repo file).
 	IrohKeyPath string
 
+	// IrohBinaryPath is the path to the iroh-sidecar binary.
+	// Empty means auto-discover (next to leaf binary, then PATH).
+	IrohBinaryPath string
+
 	// ContentCacheSize is kept for config compatibility but is no longer
 	// used directly — content caching is handled internally by go-libfossil.
 	ContentCacheSize int64

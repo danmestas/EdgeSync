@@ -17,6 +17,15 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
+// irohALPN is the ALPN protocol identifier for EdgeSync xfer over iroh.
+const irohALPN = "/edgesync/xfer/1"
+
+// syncTarget represents a single sync destination (NATS, iroh peer, etc.).
+type syncTarget struct {
+	transport libfossil.Transport
+	label     string // "nats", "iroh:<endpoint>", etc.
+}
+
 // Event represents an input to the agent state machine.
 type Event int
 
@@ -50,6 +59,7 @@ type Agent struct {
 	repo        *libfossil.Repo
 	conn        *nats.Conn // nil when created via NewFromParts
 	transport   libfossil.Transport
+	syncTargets []syncTarget // unified list of sync destinations
 	projectCode string
 	serverCode  string
 	cancel         context.CancelFunc
@@ -167,8 +177,8 @@ func NewFromParts(cfg Config, r *libfossil.Repo, t libfossil.Transport, projectC
 
 // Tick processes a single event and returns the resulting action.
 // This is the core state machine entry point. In simulation, the caller
-// drives events directly. In production, pollLoop converts channel
-// selects into Tick calls.
+// drives events directly via the primary transport. In production,
+// pollLoop iterates all syncTargets.
 func (a *Agent) Tick(ctx context.Context, ev Event) Action {
 	switch ev {
 	case EventTimer:
@@ -205,17 +215,35 @@ func (a *Agent) Start() error {
 	a.logf("starting agent...")
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
+
+	if err := a.startNATS(ctx); err != nil {
+		cancel()
+		return err
+	}
+	if err := a.startHTTPServer(ctx); err != nil {
+		cancel()
+		return err
+	}
+	if err := a.startIrohSidecar(ctx); err != nil {
+		cancel()
+		return err
+	}
+
 	a.done = make(chan struct{})
 	go a.pollLoop(ctx)
+	return nil
+}
 
-	// Server listeners
-	if a.config.ServeHTTPAddr != "" {
-		go func() {
-			if err := a.serveHTTP(ctx); err != nil {
-				slog.Error("serve-http stopped", "error", err)
-			}
-		}()
+// startNATS launches the NATS serve listener if configured.
+func (a *Agent) startNATS(ctx context.Context) error {
+	// Add NATS as the primary sync target (always present when agent is built via New).
+	if a.transport != nil {
+		a.syncTargets = append(a.syncTargets, syncTarget{
+			transport: a.transport,
+			label:     "nats",
+		})
 	}
+
 	if a.config.ServeNATSEnabled && a.conn != nil {
 		go func() {
 			subject := a.config.SubjectPrefix + "." + a.projectCode + ".sync"
@@ -224,72 +252,86 @@ func (a *Agent) Start() error {
 			}
 		}()
 	}
+	return nil
+}
 
-	// Iroh sidecar
-	if a.config.IrohEnabled {
-		binPath, err := a.findIrohBinary()
-		if err != nil {
-			return fmt.Errorf("agent: iroh: %w", err)
+// startHTTPServer launches the public HTTP server if ServeHTTPAddr is set.
+func (a *Agent) startHTTPServer(ctx context.Context) error {
+	if a.config.ServeHTTPAddr == "" {
+		return nil
+	}
+	go func() {
+		if err := a.serveHTTP(ctx); err != nil {
+			slog.Error("serve-http stopped", "error", err)
 		}
+	}()
+	return nil
+}
 
-		// Use a hash of the repo path to make the socket unique per agent instance,
-		// so multiple agents in the same process (tests) don't collide.
-		sockHash := fmt.Sprintf("%x", sha256.Sum256([]byte(a.config.RepoPath)))[:12]
-		a.irohSock = fmt.Sprintf("/tmp/iroh-%s.sock", sockHash)
-		callbackURL := "http://127.0.0.1" + a.config.ServeHTTPAddr
-		var irohCallbackSrv *http.Server
-		if a.config.ServeHTTPAddr == "" {
-			// Need an HTTP listener for iroh callbacks.
-			ln, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				return fmt.Errorf("agent: iroh callback listener: %w", err)
-			}
-			callbackURL = "http://" + ln.Addr().String()
-			mux := http.NewServeMux()
-			mux.HandleFunc("/healthz", healthzHandler)
-			mux.Handle("/", a.repo.XferHandler())
-			irohCallbackSrv = &http.Server{Handler: mux}
-			go func() {
-				<-ctx.Done()
-				irohCallbackSrv.Close()
-			}()
-			go func() {
-				if err := irohCallbackSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
-					slog.Error("iroh callback server stopped", "error", err)
-				}
-			}()
-		}
-
-		a.irohSidecar = &sidecar{
-			binPath:     binPath,
-			socketPath:  a.irohSock,
-			keyPath:     a.config.IrohKeyPath,
-			callbackURL: callbackURL,
-			alpn:        "/edgesync/xfer/1",
-		}
-
-		if err := a.irohSidecar.spawn(); err != nil {
-			if irohCallbackSrv != nil {
-				irohCallbackSrv.Close()
-			}
-			return fmt.Errorf("agent: iroh sidecar: %w", err)
-		}
-
-		status, err := a.irohSidecar.waitReady(10 * time.Second)
-		if err != nil {
-			a.irohSidecar.kill()
-			if irohCallbackSrv != nil {
-				irohCallbackSrv.Close()
-			}
-			return fmt.Errorf("agent: iroh sidecar: %w", err)
-		}
-		a.irohEndpointID = status.EndpointID
-		a.logf("iroh sidecar ready, endpoint_id=%s", status.EndpointID)
-
-		// Monitor sidecar process liveness.
-		go a.monitorSidecar(ctx)
+// startIrohSidecar launches the iroh sidecar process and registers iroh
+// peers as sync targets. It always creates a dedicated callback listener
+// for sidecar-to-agent xfer traffic (decoupled from the public HTTP server).
+func (a *Agent) startIrohSidecar(ctx context.Context) error {
+	if !a.config.IrohEnabled {
+		return nil
 	}
 
+	binPath, err := a.findIrohBinary()
+	if err != nil {
+		return fmt.Errorf("agent: iroh: %w", err)
+	}
+
+	// Use a hash of the repo path to make the socket unique per agent instance,
+	// so multiple agents in the same process (tests) don't collide.
+	sockHash := fmt.Sprintf("%x", sha256.Sum256([]byte(a.config.RepoPath)))[:12]
+	a.irohSock = fmt.Sprintf("/tmp/iroh-%s.sock", sockHash)
+
+	// Always create a dedicated callback listener for sidecar-to-agent traffic.
+	// This is internal plumbing -- not the agent's public HTTP server.
+	callbackLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return fmt.Errorf("agent: iroh callback listener: %w", err)
+	}
+	callbackMux := http.NewServeMux()
+	callbackMux.Handle("/", a.repo.XferHandler())
+	callbackSrv := &http.Server{Handler: callbackMux}
+	go func() {
+		<-ctx.Done()
+		callbackSrv.Close()
+	}()
+	go func() {
+		if err := callbackSrv.Serve(callbackLn); err != nil && err != http.ErrServerClosed {
+			slog.Error("iroh callback server stopped", "error", err)
+		}
+	}()
+	callbackURL := fmt.Sprintf("http://127.0.0.1:%d", callbackLn.Addr().(*net.TCPAddr).Port)
+
+	a.irohSidecar = &sidecar{
+		binPath:     binPath,
+		socketPath:  a.irohSock,
+		keyPath:     a.config.IrohKeyPath,
+		callbackURL: callbackURL,
+		alpn:        irohALPN,
+	}
+
+	status, err := a.irohSidecar.Start(10 * time.Second)
+	if err != nil {
+		callbackSrv.Close()
+		return fmt.Errorf("agent: iroh sidecar: %w", err)
+	}
+	a.irohEndpointID = status.EndpointID
+	a.logf("iroh sidecar ready, endpoint_id=%s", status.EndpointID)
+
+	// Register iroh peers as sync targets.
+	for _, peerID := range a.config.IrohPeers {
+		a.syncTargets = append(a.syncTargets, syncTarget{
+			transport: NewIrohTransport(a.irohSock, peerID),
+			label:     "iroh:" + peerID,
+		})
+	}
+
+	// Monitor sidecar process liveness.
+	go a.monitorSidecar(ctx)
 	return nil
 }
 
@@ -348,50 +390,42 @@ func (a *Agent) pollLoop(ctx context.Context) {
 			a.logf("manual sync triggered")
 		}
 
-		act := a.Tick(ctx, ev)
-		if act.Err != nil {
-			a.logf("sync error: %v", act.Err)
+		// BUGGIFY: skip a timer-triggered sync to test stale-state behavior.
+		if ev == EventTimer && a.config.Buggify != nil && a.config.Buggify.Check("agent.runSync.earlyReturn", 0.05) {
 			continue
 		}
-		if act.Result != nil {
-			a.logf("sync done: ↑%d ↓%d rounds=%d", act.Result.FilesSent, act.Result.FilesRecvd, act.Result.Rounds)
+
+		// Iterate all sync targets uniformly.
+		for _, target := range a.syncTargets {
+			result, err := a.repo.Sync(ctx, target.transport, a.buildSyncOpts())
+			if err != nil {
+				a.logf("sync error [%s]: %v", target.label, err)
+				slog.ErrorContext(ctx, "sync error", "target", target.label, "error", err)
+				continue
+			}
+			a.logf("sync done [%s]: ↑%d ↓%d rounds=%d", target.label, result.FilesSent, result.FilesRecvd, result.Rounds)
 			slog.DebugContext(ctx, "sync details",
-				"rounds", act.Result.Rounds,
-				"files_sent", act.Result.FilesSent,
-				"files_recv", act.Result.FilesRecvd,
-				"bytes_sent", act.Result.BytesSent,
-				"bytes_recv", act.Result.BytesRecvd,
-				"uv_sent", act.Result.UVFilesSent,
-				"uv_recv", act.Result.UVFilesRecvd,
-				"errors", len(act.Result.Errors),
+				"target", target.label,
+				"rounds", result.Rounds,
+				"files_sent", result.FilesSent,
+				"files_recv", result.FilesRecvd,
+				"bytes_sent", result.BytesSent,
+				"bytes_recv", result.BytesRecvd,
+				"uv_sent", result.UVFilesSent,
+				"uv_recv", result.UVFilesRecvd,
+				"errors", len(result.Errors),
 			)
-			for _, e := range act.Result.Errors {
-				a.logf("sync warning: %s", e)
+			for _, e := range result.Errors {
+				a.logf("sync warning [%s]: %s", target.label, e)
 			}
 			if a.config.PostSyncHook != nil {
-				a.config.PostSyncHook(act.Result)
-			}
-			// Update peer registry after successful sync.
-			if err := a.updatePeerRegistryAfterSync(); err != nil {
-				a.logf("warning: updatePeerRegistryAfterSync: %v", err)
+				a.config.PostSyncHook(result)
 			}
 		}
 
-		// Sync with iroh peers.
-		if a.config.IrohEnabled && a.irohSock != "" {
-			for _, peerID := range a.config.IrohPeers {
-				transport := NewIrohTransport(a.irohSock, peerID)
-				result, err := a.repo.Sync(ctx, transport, a.buildSyncOpts())
-				if err != nil {
-					a.logf("iroh sync with %s: %v", peerID, err)
-					slog.ErrorContext(ctx, "iroh sync error", "peer", peerID, "error", err)
-					continue
-				}
-				a.logf("iroh sync with %s: ↑%d ↓%d rounds=%d", peerID, result.FilesSent, result.FilesRecvd, result.Rounds)
-				if a.config.PostSyncHook != nil {
-					a.config.PostSyncHook(result)
-				}
-			}
+		// Update peer registry once per poll cycle.
+		if err := a.updatePeerRegistryAfterSync(); err != nil {
+			a.logf("warning: updatePeerRegistryAfterSync: %v", err)
 		}
 	}
 }
@@ -439,9 +473,18 @@ func (a *Agent) monitorSidecar(ctx context.Context) {
 	}
 }
 
-// findIrohBinary looks for the iroh-sidecar binary next to the leaf binary,
-// then in PATH.
+// findIrohBinary looks for the iroh-sidecar binary. It checks, in order:
+// 1. Config.IrohBinaryPath (explicit override)
+// 2. Next to the leaf binary
+// 3. In PATH
 func (a *Agent) findIrohBinary() (string, error) {
+	if a.config.IrohBinaryPath != "" {
+		if _, err := os.Stat(a.config.IrohBinaryPath); err != nil {
+			return "", fmt.Errorf("iroh-sidecar binary not found at configured path %q: %w", a.config.IrohBinaryPath, err)
+		}
+		return a.config.IrohBinaryPath, nil
+	}
+
 	exe, err := os.Executable()
 	if err == nil {
 		candidate := filepath.Join(filepath.Dir(exe), "iroh-sidecar")
