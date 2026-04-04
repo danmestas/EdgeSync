@@ -81,6 +81,20 @@ type Config struct {
 	// Use for crosslinking received manifests or refreshing UI state.
 	PostSyncHook func(result *libfossil.SyncResult)
 
+	// IrohEnabled starts the iroh sidecar for peer-to-peer sync.
+	IrohEnabled bool
+
+	// IrohPeers is a list of remote EndpointIds to sync with.
+	IrohPeers []string
+
+	// IrohKeyPath is the path to the persistent Ed25519 keypair.
+	// Defaults to "<repo-dir>.iroh-key" (adjacent to the repo file).
+	IrohKeyPath string
+
+	// IrohBinaryPath is the path to the iroh-sidecar binary.
+	// Empty means auto-discover (next to leaf binary, then PATH).
+	IrohBinaryPath string
+
 	// ContentCacheSize is kept for config compatibility but is no longer
 	// used directly — content caching is handled internally by go-libfossil.
 	ContentCacheSize int64
@@ -121,6 +135,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Clock == nil {
 		c.Clock = simio.RealClock{}
+	}
+	if c.IrohEnabled && c.IrohKeyPath == "" {
+		c.IrohKeyPath = c.RepoPath + ".iroh-key"
 	}
 	if c.ContentCacheSize == 0 {
 		c.ContentCacheSize = 32 << 20 // 32 MiB

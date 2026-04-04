@@ -12,6 +12,7 @@ libfossil/
 /soak
 /edgesync
 .worktrees/
+iroh-sidecar/target/
 
 # Merge test artifacts
 *.LOCAL

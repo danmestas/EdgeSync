@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log/slog"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -35,24 +35,21 @@ func main() {
 
 	b, err := bridge.New(cfg)
 	if err != nil {
-		slog.Error("bridge init failed", "error", err)
-		os.Exit(1)
+		log.Fatalf("bridge init: %v", err)
 	}
 
 	if err := b.Start(); err != nil {
-		slog.Error("bridge start failed", "error", err)
-		os.Exit(1)
+		log.Fatalf("bridge start: %v", err)
 	}
 
 	// Wait for SIGINT or SIGTERM.
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	s := <-sig
-	slog.Info("received signal, shutting down", "signal", s.String())
+	log.Printf("received signal %v, shutting down", s)
 
 	if err := b.Stop(); err != nil {
-		slog.Error("bridge stop failed", "error", err)
-		os.Exit(1)
+		log.Fatalf("bridge stop: %v", err)
 	}
 }
 

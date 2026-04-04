@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -18,6 +19,9 @@ func (a *Agent) serveHTTP(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthzHandler)
+	if a.config.IrohEnabled {
+		mux.HandleFunc("/iroh/status", a.irohStatusHandler)
+	}
 	mux.Handle("/", a.repo.XferHandler())
 
 	handler := otelhttp.NewMiddleware("edgesync-leaf-http")(mux)
@@ -45,4 +49,30 @@ func healthzHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, `{"status":"ok"}`)
+}
+
+// irohStatusHandler returns the iroh sidecar status.
+func (a *Agent) irohStatusHandler(w http.ResponseWriter, _ *http.Request) {
+	alive := a.irohSidecar != nil && !a.irohSidecarExited()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"enabled":     true,
+		"endpoint_id": a.irohEndpointID,
+		"peers":       a.config.IrohPeers,
+		"sidecar":     map[string]any{"alive": alive},
+	})
+}
+
+// irohSidecarExited returns true if the sidecar process has exited.
+func (a *Agent) irohSidecarExited() bool {
+	if a.irohSidecar == nil || a.irohSidecar.exited == nil {
+		return true
+	}
+	select {
+	case <-a.irohSidecar.exited:
+		return true
+	default:
+		return false
+	}
 }

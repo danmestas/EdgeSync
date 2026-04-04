@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -30,6 +31,18 @@ func main() {
 	serveHTTP := flag.String("serve-http", envOrDefault("LEAF_SERVE_HTTP", ""), "HTTP listen address (e.g. :8080) to serve fossil clone/sync")
 	serveNATS := flag.Bool("serve-nats", false, "enable NATS request/reply listener for leaf-to-leaf sync")
 	uv := flag.Bool("uv", false, "enable unversioned file sync (wiki, forum, attachments)")
+	iroh := flag.Bool("iroh", envBool("LEAF_IROH"), "enable iroh sidecar for peer-to-peer sync")
+	irohKeyPath := flag.String("iroh-key", envOrDefault("LEAF_IROH_KEY", ""), "path to iroh Ed25519 keypair (default: <repo>.iroh-key)")
+
+	var irohPeers stringSlice
+	if v := os.Getenv("LEAF_IROH_PEERS"); v != "" {
+		for _, p := range strings.Split(v, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				irohPeers = append(irohPeers, p)
+			}
+		}
+	}
+	flag.Var(&irohPeers, "iroh-peer", "remote iroh EndpointId to sync with (repeatable)")
 	var verboseFlag bool
 	flag.BoolVar(&verboseFlag, "verbose", false, "log sync round details to stderr (no OTel required)")
 	flag.BoolVar(&verboseFlag, "v", false, "alias for --verbose")
@@ -38,12 +51,9 @@ func main() {
 	overrideLock := flag.Bool("override-lock", false, "ignore lock conflicts (implies allow-fork)")
 
 	// OTel flags (fall back to standard OTEL_* env vars)
-	otelEndpoint := flag.String("otel-endpoint", envOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""), "OTel OTLP gRPC endpoint (e.g. 100.105.156.92:4317)")
-	otelInsecure := flag.Bool("otel-insecure", envOrDefault("OTEL_EXPORTER_OTLP_INSECURE", "true") == "true", "skip TLS for OTel endpoint (default true for Tailscale)")
+	otelEndpoint := flag.String("otel-endpoint", envOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""), "OTel OTLP endpoint (e.g. api.honeycomb.io)")
+	otelHeaders := flag.String("otel-headers", envOrDefault("OTEL_EXPORTER_OTLP_HEADERS", ""), "OTel OTLP headers (key=value,key=value)")
 	otelServiceName := flag.String("otel-service-name", envOrDefault("OTEL_SERVICE_NAME", "edgesync-leaf"), "OTel service name")
-	otelEnvironment := flag.String("otel-environment", envOrDefault("EDGESYNC_ENVIRONMENT", "dev"), "deployment environment (dev, production)")
-	otelSampleRatio := flag.Float64("otel-sample-ratio", 1.0, "trace sampling ratio (0.0-1.0)")
-	otelMetricInterval := flag.Duration("otel-metric-interval", 0, "metric export interval (0 = SDK default 60s)")
 
 	flag.Parse()
 
@@ -56,14 +66,9 @@ func main() {
 	// Setup telemetry
 	ctx := context.Background()
 	telCfg := telemetry.TelemetryConfig{
-		ServiceName:    *otelServiceName,
-		Endpoint:       *otelEndpoint,
-		Insecure:       *otelInsecure,
-		Environment:    *otelEnvironment,
-		Version:        version,
-		RepoPath:       *repoPath,
-		SampleRatio:    *otelSampleRatio,
-		MetricInterval: *otelMetricInterval,
+		ServiceName: *otelServiceName,
+		Endpoint:    *otelEndpoint,
+		Headers:     parseHeaders(*otelHeaders),
 	}
 	shutdown, err := telemetry.Setup(ctx, telCfg)
 	if err != nil {
@@ -74,7 +79,7 @@ func main() {
 	if *otelEndpoint == "" {
 		slog.Info("telemetry disabled: no OTEL_EXPORTER_OTLP_ENDPOINT or --otel-endpoint set")
 	} else {
-		slog.Info("telemetry enabled", "endpoint", *otelEndpoint, "service", *otelServiceName, "environment", *otelEnvironment)
+		slog.Info("telemetry enabled", "endpoint", *otelEndpoint, "service", *otelServiceName)
 	}
 
 	// Create observer (nil-safe: if no endpoint, OTel uses no-op providers)
@@ -95,6 +100,9 @@ func main() {
 		ServeHTTPAddr:    *serveHTTP,
 		ServeNATSEnabled: *serveNATS,
 		Observer:         obs,
+		IrohEnabled:      *iroh,
+		IrohPeers:        irohPeers,
+		IrohKeyPath:      *irohKeyPath,
 		Autosync:         parseAutosyncMode(*autosyncFlag),
 		AllowFork:        *allowFork,
 		OverrideLock:     *overrideLock,
@@ -115,7 +123,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	slog.Info("leaf-agent started", "repo", *repoPath, "nats", *natsURL, "poll", *poll, "version", version)
+	logAttrs := []any{"repo", *repoPath, "nats", *natsURL, "poll", *poll, "version", version}
+	if *iroh {
+		logAttrs = append(logAttrs, "iroh", true, "iroh_peers", len(irohPeers))
+	}
+	slog.Info("leaf-agent started", logAttrs...)
 	awaitSignals(a, shutdown)
 }
 
@@ -144,6 +156,21 @@ func awaitSignals(a *agent.Agent, shutdown func(context.Context) error) {
 	}
 }
 
+// parseHeaders parses "key=value,key=value" into a map.
+func parseHeaders(s string) map[string]string {
+	if s == "" {
+		return nil
+	}
+	headers := make(map[string]string)
+	for _, pair := range strings.Split(s, ",") {
+		k, v, ok := strings.Cut(pair, "=")
+		if ok {
+			headers[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
+	}
+	return headers
+}
+
 // parseAutosyncMode converts a CLI string to an AutosyncMode value.
 func parseAutosyncMode(s string) agent.AutosyncMode {
 	switch s {
@@ -163,4 +190,22 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envBool returns true if the named env var is set to "1", "true", or "yes".
+func envBool(key string) bool {
+	switch strings.ToLower(os.Getenv(key)) {
+	case "1", "true", "yes":
+		return true
+	}
+	return false
+}
+
+// stringSlice implements flag.Value for repeatable string flags.
+type stringSlice []string
+
+func (s *stringSlice) String() string { return fmt.Sprintf("%v", *s) }
+func (s *stringSlice) Set(v string) error {
+	*s = append(*s, v)
+	return nil
 }

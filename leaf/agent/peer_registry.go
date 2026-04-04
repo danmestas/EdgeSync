@@ -56,6 +56,9 @@ func (a *Agent) capabilities() []string {
 	if a.config.ServeNATSEnabled {
 		caps = append(caps, "serve-nats")
 	}
+	if a.config.IrohEnabled {
+		caps = append(caps, "serve-iroh")
+	}
 	caps = append(caps, "push", "pull")
 	return caps
 }

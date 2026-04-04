@@ -7,17 +7,13 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"os"
-	"time"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
-	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/log/global"
-	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -28,15 +24,9 @@ import (
 // TelemetryConfig configures the OTel SDK.
 // Empty fields fall back to standard OTEL_* environment variables.
 type TelemetryConfig struct {
-	ServiceName    string
-	Endpoint       string         // gRPC endpoint, e.g. "100.105.156.92:4317"
-	Insecure       bool           // skip TLS (for Tailscale-internal endpoints)
-	Environment    string         // deployment.environment resource attribute
-	Version        string         // service.version resource attribute
-	InstanceID     string         // service.instance.id (PeerID or hostname)
-	RepoPath       string         // fossil repo path (resource attribute)
-	SampleRatio    float64        // 0.0-1.0, default 1.0 (always sample)
-	MetricInterval time.Duration  // metric export interval (0 defaults to 60s)
+	ServiceName string
+	Endpoint    string
+	Headers     map[string]string
 }
 
 // Setup initializes the OTel SDK (traces, metrics, logs) and configures
@@ -48,103 +38,65 @@ func Setup(ctx context.Context, cfg TelemetryConfig) (shutdown func(context.Cont
 		serviceName = "edgesync-leaf"
 	}
 
-	// Build resource attributes.
-	attrs := []attribute.KeyValue{
-		semconv.ServiceName(serviceName),
-		semconv.ServiceNamespace("edgesync"),
-	}
-	if cfg.Version != "" {
-		attrs = append(attrs, semconv.ServiceVersion(cfg.Version))
-	}
-	if cfg.InstanceID != "" {
-		attrs = append(attrs, semconv.ServiceInstanceID(cfg.InstanceID))
-	} else if hostname, herr := os.Hostname(); herr == nil && hostname != "" {
-		attrs = append(attrs, semconv.ServiceInstanceID(hostname))
-	}
-	if cfg.Environment != "" {
-		attrs = append(attrs, semconv.DeploymentEnvironment(cfg.Environment))
-	}
-	if hostname, herr := os.Hostname(); herr == nil && hostname != "" {
-		attrs = append(attrs, semconv.HostName(hostname))
-	}
-	if cfg.RepoPath != "" {
-		attrs = append(attrs, attribute.String("edgesync.repo.path", cfg.RepoPath))
-	}
-
 	res, err := resource.Merge(
 		resource.Default(),
-		resource.NewSchemaless(attrs...),
+		resource.NewSchemaless(
+			semconv.ServiceName(serviceName),
+		),
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	// Set up W3C trace context propagation for cross-service linking.
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	))
-
 	var shutdowns []func(context.Context) error
 
-	// Trace provider (gRPC)
-	traceOpts := []otlptracegrpc.Option{}
+	// Trace provider
+	traceOpts := []otlptracehttp.Option{}
 	if cfg.Endpoint != "" {
-		traceOpts = append(traceOpts, otlptracegrpc.WithEndpoint(cfg.Endpoint))
+		traceOpts = append(traceOpts, otlptracehttp.WithEndpoint(cfg.Endpoint))
 	}
-	if cfg.Insecure {
-		traceOpts = append(traceOpts, otlptracegrpc.WithInsecure())
+	if len(cfg.Headers) > 0 {
+		traceOpts = append(traceOpts, otlptracehttp.WithHeaders(cfg.Headers))
 	}
-	traceExp, err := otlptracegrpc.New(ctx, traceOpts...)
+	traceExp, err := otlptracehttp.New(ctx, traceOpts...)
 	if err != nil {
 		return nil, err
 	}
-
-	sampler := sdktrace.AlwaysSample()
-	if cfg.SampleRatio > 0 && cfg.SampleRatio < 1.0 {
-		sampler = sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.SampleRatio))
-	}
-
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(traceExp),
 		sdktrace.WithResource(res),
-		sdktrace.WithSampler(sampler),
 	)
 	otel.SetTracerProvider(tp)
 	shutdowns = append(shutdowns, tp.Shutdown)
 
-	// Metric provider (gRPC)
-	metricOpts := []otlpmetricgrpc.Option{}
+	// Metric provider
+	metricOpts := []otlpmetrichttp.Option{}
 	if cfg.Endpoint != "" {
-		metricOpts = append(metricOpts, otlpmetricgrpc.WithEndpoint(cfg.Endpoint))
+		metricOpts = append(metricOpts, otlpmetrichttp.WithEndpoint(cfg.Endpoint))
 	}
-	if cfg.Insecure {
-		metricOpts = append(metricOpts, otlpmetricgrpc.WithInsecure())
+	if len(cfg.Headers) > 0 {
+		metricOpts = append(metricOpts, otlpmetrichttp.WithHeaders(cfg.Headers))
 	}
-	metricExp, err := otlpmetricgrpc.New(ctx, metricOpts...)
+	metricExp, err := otlpmetrichttp.New(ctx, metricOpts...)
 	if err != nil {
 		return nil, err
 	}
-	readerOpts := []sdkmetric.PeriodicReaderOption{}
-	if cfg.MetricInterval > 0 {
-		readerOpts = append(readerOpts, sdkmetric.WithInterval(cfg.MetricInterval))
-	}
 	mp := sdkmetric.NewMeterProvider(
-		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExp, readerOpts...)),
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExp)),
 		sdkmetric.WithResource(res),
 	)
 	otel.SetMeterProvider(mp)
 	shutdowns = append(shutdowns, mp.Shutdown)
 
-	// Log provider (gRPC) + slog bridge
-	logOpts := []otlploggrpc.Option{}
+	// Log provider + slog bridge
+	logOpts := []otlploghttp.Option{}
 	if cfg.Endpoint != "" {
-		logOpts = append(logOpts, otlploggrpc.WithEndpoint(cfg.Endpoint))
+		logOpts = append(logOpts, otlploghttp.WithEndpoint(cfg.Endpoint))
 	}
-	if cfg.Insecure {
-		logOpts = append(logOpts, otlploggrpc.WithInsecure())
+	if len(cfg.Headers) > 0 {
+		logOpts = append(logOpts, otlploghttp.WithHeaders(cfg.Headers))
 	}
-	logExp, err := otlploggrpc.New(ctx, logOpts...)
+	logExp, err := otlploghttp.New(ctx, logOpts...)
 	if err != nil {
 		return nil, err
 	}
