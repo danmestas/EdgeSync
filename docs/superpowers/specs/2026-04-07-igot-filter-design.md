@@ -25,90 +25,81 @@ The cookie card (`xfer.c:1678–1679`) is defined in the protocol spec but the s
 
 ### Approach: Go map on handler struct
 
-Add a `remoteHas map[string]bool` field to the `handler` struct. This is the Go equivalent of Fossil's `onremote` temp table, adapted to go-libfossil's UUID-string conventions (Fossil uses integer rids).
+Add a `remoteHas map[string]remoteHasEntry` field to the `handler` struct, where `remoteHasEntry` tracks both presence and the client's `IsPrivate` flag. This is the Go equivalent of Fossil's `onremote` temp table, adapted to go-libfossil's UUID-string conventions and private-status propagation model.
 
 **Why a Go map instead of a SQL temp table:** go-libfossil's igot queries select UUID strings. Using a SQL temp table would require either text joins (slow) or an extra rid lookup per igot card (extra round-trip per card). Filtering in Go after the scan is simpler. The wire bandwidth savings from not emitting redundant igot cards is the real win — not avoiding the SQL scan.
 
+**Why track `isPrivate` (divergence from Fossil):** Fossil's `onremote` is a simple `rid INTEGER PRIMARY KEY` — no private flag. Fossil doesn't need one because its server-side igot handler calls `content_make_public(rid)` / `content_make_private(rid)` to align private status during igot processing (xfer.c:1472-1476). go-libfossil deliberately does NOT mutate server private status from client igots ("server is authoritative"). This means private→public transitions must propagate through igot *emission*: if the client thinks a blob is private but the server made it public, the server must still emit the public igot so the client can update its status. Tracking `isPrivate` in `remoteHasEntry` enables this — the filter only skips when the client's announced status matches the server's current status.
+
 ### Changes
 
-**1. Handler struct** (`sync/handler.go`)
+**1. Handler struct** (`internal/sync/handler.go`)
 
-Add one field:
+Add type and field:
 
 ```go
+type remoteHasEntry struct {
+    isPrivate bool // IsPrivate flag from the client's igot card
+}
+
 type handler struct {
     // ...existing fields...
-    remoteHas map[string]bool // UUIDs the client announced via igot
+    remoteHas map[string]remoteHasEntry // UUIDs the client announced via igot
 }
 ```
 
 Lazily initialized — stays `nil` until the first igot card is processed. Zero overhead for clone requests and push-only sessions.
 
-**2. handleIGot()** (`sync/handler.go`, currently line 332)
+**2. handleIGot()** (`internal/sync/handler.go`)
 
-After confirming the blob exists locally, record the UUID:
+After confirming the blob exists locally, record the UUID and client's private flag:
 
 ```go
-func (h *handler) handleIGot(c *xfer.IGotCard) error {
-    if c == nil {
-        panic("handler.handleIGot: c must not be nil")
+if exists {
+    // Record that the client has this blob so emitIGots can skip it.
+    // Mirrors Fossil's remote_has() → onremote table (xfer.c:1471).
+    if h.remoteHas == nil {
+        h.remoteHas = make(map[string]remoteHasEntry)
     }
-    if !h.pullOK {
-        return nil
-    }
-    _, exists := blob.Exists(h.repo.DB(), c.UUID)
-    if exists {
-        if h.remoteHas == nil {
-            h.remoteHas = make(map[string]bool)
-        }
-        h.remoteHas[c.UUID] = true
-        return nil
-    }
-    if c.IsPrivate && !h.syncPrivate {
-        return nil
-    }
-    h.resp = append(h.resp, &xfer.GimmeCard{UUID: c.UUID})
+    h.remoteHas[c.UUID] = remoteHasEntry{isPrivate: c.IsPrivate}
     return nil
 }
 ```
 
-This mirrors Fossil's `remote_has(rid)` call at `xfer.c:1471` — same trigger point (igot card for a known blob), same semantics (record it so we skip it in emission).
+**3. emitIGots()** (`internal/sync/handler.go`)
 
-**3. emitIGots()** (`sync/handler.go`, currently line 447)
-
-Add a filter in the collection loop:
+Filter in the collection loop — skip only when client also considers the blob public:
 
 ```go
-for rows.Next() {
-    var uuid string
-    if err := rows.Scan(&uuid); err != nil {
-        return err
-    }
-    // remoteHas is populated from client igot cards in handleIGot.
-    // nil when no igots received (clone, push-only, or first round).
-    if h.remoteHas[uuid] {
-        continue
-    }
-    uuids = append(uuids, uuid)
-}
-```
-
-**4. emitPrivateIGots()** (`sync/handler.go`, currently line 493)
-
-Same one-line filter in the collection loop:
-
-```go
-if h.remoteHas[uuid] {
+// remoteHas is populated from client igot cards in handleIGot.
+// Skip if the client already has this blob as public (non-private).
+// If the client has it as private, we still emit the public igot so
+// the client can clear its private status (private→public transition).
+if e, ok := h.remoteHas[uuid]; ok && !e.isPrivate {
     continue
 }
 ```
 
-**5. sendAllClusters()** (`sync/handler.go`, currently line 527)
+**4. emitPrivateIGots()** (`internal/sync/handler.go`)
 
-Same one-line filter in the collection loop:
+Skip only when client also considers the blob private:
 
 ```go
-if h.remoteHas[uuid] {
+// Skip if the client already has this blob as private.
+// If the client has it as public, we still emit the private igot so
+// the client can update its private status (public→private transition).
+if e, ok := h.remoteHas[uuid]; ok && e.isPrivate {
+    continue
+}
+```
+
+**5. sendAllClusters()** (`internal/sync/handler.go`)
+
+Clusters are always public (query excludes private table):
+
+```go
+// Clusters are always public (query excludes private table).
+if e, ok := h.remoteHas[uuid]; ok && !e.isPrivate {
     continue
 }
 ```
