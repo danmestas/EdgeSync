@@ -101,11 +101,26 @@ Two phases per request:
 2. **Data phase:** `file`, `cfile`, `igot`, `gimme`, UV cards, extension table cards
 
 Key behaviors:
-- `pull` -> emit `igot` for all unclustered blobs (not all blobs -- clustered blobs discovered via `pragma req-clusters`)
+- `pull` -> emit `igot` for unclustered blobs, filtered by `remoteHas` (see below)
 - `push` -> enable accepting file cards (rejected without preceding push)
+- `igot` for known UUID -> record in `remoteHas` (skip in igot emission later)
 - `igot` for unknown UUID -> emit `gimme`
 - `gimme` -> load blob, emit `file` card
 - File with bad hash -> error card
+
+### Server-Side IGot Filtering (remoteHas)
+
+Mirrors Fossil's per-request `onremote` temp table (xfer.c:1011-1012, 1056-1057). The handler tracks UUIDs the client announced via igot cards, then filters `emitIGots()`, `emitPrivateIGots()`, and `sendAllClusters()` to skip blobs the client already has.
+
+**Implementation:** `remoteHas map[string]remoteHasEntry` on the handler struct, where `remoteHasEntry{isPrivate bool}` records the client's announced private status. Lazily initialized (nil until first igot received). Lifecycle is per-request -- no cross-request persistence.
+
+**Private-status-aware filtering (divergence from Fossil):** Fossil's `onremote` is a simple `rid INTEGER PRIMARY KEY` -- no private flag. Fossil doesn't need one because its server-side igot handler calls `content_make_public(rid)` / `content_make_private(rid)` to synchronize private status during igot processing (xfer.c:1472-1476). go-libfossil deliberately does NOT mutate server private status from client igots ("server is authoritative"). This means private/public transitions must propagate through igot *emission*: the filter only skips when the client's announced status matches the server's current status.
+
+- `emitIGots()` (public blobs): skip when `ok && !e.isPrivate` -- client has it as public
+- `emitPrivateIGots()` (private blobs): skip when `ok && e.isPrivate` -- client has it as private
+- `sendAllClusters()` (always public): skip when `ok && !e.isPrivate`
+
+**Cookie card:** Defined in the wire protocol but server-side is a stub (matching upstream Fossil). Client parses, caches, and echoes; server ignores. `session.cookie` field exists for forward compatibility.
 
 ## Clone Protocol
 

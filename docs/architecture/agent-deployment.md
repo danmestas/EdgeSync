@@ -43,6 +43,32 @@ The bridge is a NATS-to-HTTP translator in its own module (`bridge/`). It subscr
 
 **JetStream upgrade path:** Replace `Request` with JetStream publish/consume. The `Exchange` signature stays the same.
 
+## Iroh P2P Transport
+
+Third transport option alongside NATS and HTTP. Enables direct peer-to-peer sync without central infrastructure, using QUIC holepunching + relay fallback for NAT traversal.
+
+**Architecture:** Rust sidecar binary (`iroh-sidecar`) communicates with the Go agent via HTTP on a Unix socket. The agent spawns the sidecar as a child process. This avoids CGo while leveraging iroh's Rust networking stack.
+
+**Identity:** Ed25519 keypair. Each agent has a stable `EndpointId` derived from its key. Peers are configured by EndpointId, not address.
+
+| Config Field | Default | CLI Flag |
+|---|---|---|
+| `IrohEnabled` | `false` | `--iroh` |
+| `IrohPeers` | `[]` | `--iroh-peer` (repeatable) |
+| `IrohKeyPath` | `~/.config/edgesync/iroh.key` | `--iroh-key` |
+
+**Agent lifecycle:**
+- `Start()`: spawn sidecar (`--socket`, `--key-path`, `--callback`, `--alpn /edgesync/xfer/1`), wait for `/status` 200, register each peer as a `syncTarget` with `IrohTransport`
+- Poll loop: iterates all `syncTargets` uniformly (NATS, iroh, HTTP)
+- Incoming: sidecar forwards peer requests to agent's callback listener → `repo.XferHandler()`
+- `Stop()`: POST `/shutdown` to sidecar, wait 5s, SIGTERM, wait 2s, SIGKILL
+
+**Socket path:** `/tmp/iroh-<sha256(repoPath)[:12]>.sock` — deterministic, collision-free for multiple agents.
+
+**IrohTransport:** `RoundTrip(ctx, payload)` POSTs to `http://iroh-sidecar/exchange/<endpointID>` over Unix socket. Same `Transport` interface as NATS and HTTP — sync layer is unaware of the transport.
+
+**Discovery:** Phase 1 is manual config only (`--iroh-peer`). DNS discovery and NATS-assisted peer exchange are future work.
+
 ## HTTP Serving
 
 `serve_http.go` in `leaf/agent/` composes an HTTP mux with `/healthz` (200 OK, JSON status) and `sync.XferHandler()` for Fossil's `/xfer` endpoint. Operational endpoints live in the agent, not in go-libfossil (which is transport-agnostic).
@@ -142,12 +168,13 @@ All OTel code lives in `leaf/telemetry/` (build-tagged `!wasip1 && !js`). WASM g
 
 ## Module Layout
 
-Five modules in `go.work`:
+Four modules in EdgeSync's `go.work`:
 
 | Module | OTel Deps | NATS Deps | Purpose |
 |---|---|---|---|
 | `.` (root) | No | No | CLI, sim tests, soak runner |
-| `go-libfossil/` | No | No | Core library, Observer interface |
 | `leaf/` | Yes | Yes | Agent daemon, telemetry |
 | `bridge/` | No | Yes | NATS-HTTP translator |
 | `dst/` | No | No | Deterministic simulation |
+
+go-libfossil is an external dependency at `github.com/danmestas/go-libfossil` (standalone repo). For local development, copy `go.work.example` to `go.work` and clone go-libfossil at `../go-libfossil`.
