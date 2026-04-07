@@ -84,14 +84,14 @@ for rows.Next() {
     if err := rows.Scan(&uuid); err != nil {
         return err
     }
+    // remoteHas is populated from client igot cards in handleIGot.
+    // nil when no igots received (clone, push-only, or first round).
     if h.remoteHas[uuid] {
         continue
     }
     uuids = append(uuids, uuid)
 }
 ```
-
-`nil` map lookup returns `false`, so this is safe without a nil check.
 
 **4. emitPrivateIGots()** (`sync/handler.go`, currently line 493)
 
