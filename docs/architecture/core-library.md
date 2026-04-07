@@ -1,10 +1,45 @@
 # go-libfossil Core Library
 
-Pure-Go reimplementation of Fossil's core operations. Lives at `go-libfossil/` as its own Go module. No CGo in the default build. Every operation must produce `.fossil` files that `fossil rebuild --verify` accepts.
+Pure-Go reimplementation of Fossil's core operations. Standalone repo at `github.com/danmestas/go-libfossil` (private, v0.2.x). No CGo in the default build. Every operation must produce `.fossil` files that `fossil rebuild --verify` accepts.
+
+## Repository & Module Structure
+
+Extracted from EdgeSync monorepo (April 2026) via `git filter-repo` with history. Three sub-modules, lockstep versioned:
+
+| Module | Purpose |
+|---|---|
+| `github.com/danmestas/go-libfossil` | Root — opaque handle API, CLI, tests |
+| `github.com/danmestas/go-libfossil/db/driver/modernc` | Default SQLite driver |
+| `github.com/danmestas/go-libfossil/db/driver/ncruces` | WASM-compatible SQLite driver |
+
+Optional sub-module: `observer/otel/` — OTel observer implementation (separate go.mod, zero OTel deps in root).
+
+Versioning: lockstep `v0.x` tags across all sub-modules. Tags: `v0.2.5`, `db/driver/modernc/v0.2.5`, `db/driver/ncruces/v0.2.5`.
+
+## Encapsulation & Public API
+
+All implementation packages live under `internal/` (blob, content, manifest, sync, xfer, etc.). The public API is an opaque `Repo` handle with methods — no direct DB/SQL access for consumers.
+
+**Constructors:** `Open(path)`, `Create(path, user, rand)`, `Clone(ctx, url, path, opts)`
+
+**Repo handle methods:** `Sync()`, `HandleSync()`, `HandleSyncWithOpts()`, `XferHandler()`, `Commit()`, `Timeline()`, `ListFiles()`, `Tag()`, `UVWrite/Read/List()`, `CreateUser()`, `Config()`
+
+**Checkout handle:** `CreateCheckout()`, `OpenCheckout()` — working directory management
+
+**Extension points:**
+- `Transport` interface: `RoundTrip(ctx, []byte) ([]byte, error)` — pluggable sync transport
+- `SyncObserver` / `CheckoutObserver` interfaces — lifecycle hooks for telemetry (nil = nop)
+- Driver registration: `db.Register(DriverConfig)` via import side-effect
+
+**CLI embedding:** `cli/` package provides 38 kong command structs (`cli.RepoCmd`). EdgeSync embeds this and adds only NATS/bridge/iroh commands on top.
+
+**Standalone binary:** `cmd/fossil/` — Fossil-compatible CLI built from `cli.RepoCmd`.
 
 ## Package Architecture
 
-See the package table in `CLAUDE.md` for the full listing. Key dependency chain:
+All packages below are under `internal/` (not importable by consumers). Public packages: `db/`, `db/driver/*`, `simio/`, `testutil/`, `cli/`.
+
+Key dependency chain:
 
 ```
 hash, delta (no deps)
@@ -17,7 +52,7 @@ repo -> db, blob, content, hash
 sync -> repo, manifest, xfer, blob, content
 ```
 
-No circular imports. `deck` and `xfer` are intentionally database-free.
+No circular imports. `deck` and `xfer` are intentionally database-free. `internal/fsltype` breaks import cycles (root types re-exported).
 
 ## Context Decomposition
 
@@ -74,22 +109,20 @@ Cards emitted in strict ASCII order: `A B C D E F G H I J K L M N P Q R T U W Z`
 
 ## SQLite Driver Selection
 
-Three drivers, selected via import (registration API pattern):
+Two drivers, selected via import (registration API pattern):
 
 | Driver | Module | CGo | WASM | Import |
 |--------|--------|-----|------|--------|
 | modernc (default) | `db/driver/modernc/` | No | No | `_ ".../db/driver/modernc"` |
 | ncruces | `db/driver/ncruces/` | No | Yes | `_ ".../db/driver/ncruces"` |
-| mattn | `db/driver/mattn/` | Yes | No | `_ ".../db/driver/mattn"` |
 
-Each driver is a separate Go sub-module with its own `go.mod`. The `db` package has zero driver dependencies -- drivers self-register via `db.Register(DriverConfig)` in `init()`. Consumers import exactly one driver; no build tags needed in production code.
+Each driver is a separate Go sub-module with its own `go.mod`. The `db` package has zero driver dependencies — drivers self-register via `db.Register(DriverConfig)` in `init()`. Consumers import exactly one driver; no build tags needed in production code. Test files use `internal/testdriver` which selects the driver via build tags (`test_ncruces`).
 
 Default pragmas applied to every connection: `journal_mode=WAL`, `busy_timeout=5000`, `foreign_keys=ON`. DSN syntax varies per driver; each driver's `BuildDSN` handles it.
 
 ```bash
-go test ./go-libfossil/...                           # modernc
-go test -tags test_ncruces ./go-libfossil/...        # ncruces
-CGO_ENABLED=1 go test -tags test_mattn ./go-libfossil/...  # mattn
+GOWORK=off go test ./...                              # modernc (default)
+GOWORK=off go test -tags test_ncruces ./...           # ncruces
 ```
 
 ## TigerStyle Conventions
