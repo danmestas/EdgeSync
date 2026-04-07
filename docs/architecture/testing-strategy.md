@@ -85,6 +85,20 @@ Goroutine-safe fault injection inside application code. Complements the fault pr
 | `handleXIGot.skipXDelete` | Skip sending xdelete for tombstone | 5% |
 | `handleXDeleteResponse.drop` | Drop received xdelete | 5% |
 | `buildTableSendCards.skipXDelete` | Skip queued xdelete send | 3% |
+| `clone.processResponse.dropFile` | Skip storing received file (creates phantom) | 5% |
+| `clone.processResponse.corruptHash` | Flip byte in file content (tests verify-before-commit) | 2% |
+| `clone.processResponse.dropSeqNo` | Ignore clone completion signal (forces extra round) | 5% |
+| `clone.buildRequest.dropGimme` | Drop last gimme card (delays phantom resolution) | 5% |
+| `clone.buildRequest.badLogin` | Corrupt login nonce (tests auth failure recovery) | 5% |
+| `clone.emitCloneBatch.truncate` | Remove last file from clone batch (incomplete delivery) | 10% |
+
+### Clone DST
+
+Clone is exercised via `dst/clone_test.go` — calls `sync.Clone()` directly through `MockFossil` (handler-backed transport) with Buggify on both client and server. Not driven through Agent/Tick — clone is a one-shot operation, not a poll loop.
+
+**Seed sweep:** 20 seeds, each producing a deterministic fault combination. ~50% converge successfully, ~50% trigger `corruptHash` and verify clean repo deletion.
+
+**Invariants:** On success: blob convergence, no residual phantoms. On failure: repo file deleted, error indicates hash mismatch.
 
 ## Fossil Interop Tests
 
