@@ -59,24 +59,33 @@ Six sites across three phases. Rates follow existing conventions (2-10%).
 
 | Site | Location | Rate | Effect |
 |------|----------|------|--------|
-| `clone.processResponse.corruptHash` | clone.go, `processResponse()` | 2% | Flip byte in file content before storing. Tests hash verification catches corruption and repo file is deleted. |
+| `clone.processResponse.corruptHash` | clone.go, `processResponse()` | 2% | Flip byte in file content before storing. Tests hash verification catches corruption and repo file is deleted. Comment at site: relies on `blob.Store` verify-before-commit. |
 | `clone.buildRequest.badLogin` | clone.go, `buildRequest()` | 5% | Corrupt login nonce. Tests auth failure recovery. |
+
+### go-libfossil: TransportFunc Adapter
+
+Add `TransportFunc` to `transport.go` — the `http.HandlerFunc` pattern for Transport:
+
+```go
+type TransportFunc func(ctx context.Context, payload []byte) ([]byte, error)
+
+func (f TransportFunc) RoundTrip(ctx context.Context, payload []byte) ([]byte, error) {
+    return f(ctx, payload)
+}
+```
+
+Two lines. Eliminates shallow adapter structs in tests and DST. Any function with the right signature becomes a Transport.
 
 ### EdgeSync: DST Test
 
 New file `dst/clone_test.go`.
 
-**handlerTransport** — wraps `HandleSyncWithOpts` as a `Transport`:
+**Transport setup** — uses `TransportFunc` closure wrapping `HandleSyncWithOpts`:
 
 ```go
-type handlerTransport struct {
-    repo *libfossil.Repo
-    opts libfossil.HandleOpts
-}
-
-func (t *handlerTransport) RoundTrip(ctx context.Context, payload []byte) ([]byte, error) {
-    return t.repo.HandleSyncWithOpts(ctx, payload, t.opts)
-}
+transport := libfossil.TransportFunc(func(ctx context.Context, payload []byte) ([]byte, error) {
+    return serverRepo.HandleSyncWithOpts(ctx, payload, handleOpts)
+})
 ```
 
 **TestCloneDST** — single-seed test:
