@@ -19,6 +19,7 @@ type sidecar struct {
 	keyPath     string
 	callbackURL string
 	alpn        string
+	natsAddr    string // optional, for --nats-addr (mesh leaf node address)
 	cmd         *exec.Cmd
 	exited      chan struct{} // closed when the process exits
 	exitErr     error        // set before exited is closed
@@ -50,12 +51,16 @@ func (s *sidecar) spawn() error {
 		return fmt.Errorf("iroh sidecar binary not found: %w", err)
 	}
 
-	s.cmd = exec.Command(s.binPath,
+	args := []string{
 		"--socket", s.socketPath,
 		"--key-path", s.keyPath,
 		"--callback", s.callbackURL,
 		"--alpn", s.alpn,
-	)
+	}
+	if s.natsAddr != "" {
+		args = append(args, "--nats-addr", s.natsAddr)
+	}
+	s.cmd = exec.Command(s.binPath, args...)
 	s.cmd.Stdout = os.Stdout
 	s.cmd.Stderr = os.Stderr
 

@@ -57,7 +57,8 @@ type Agent struct {
 	config      Config
 	clock       simio.Clock
 	repo        *libfossil.Repo
-	conn        *nats.Conn // nil when created via NewFromParts
+	mesh        *NATSMesh    // nil when created via NewFromParts
+	conn        *nats.Conn   // nil when created via NewFromParts
 	transport   libfossil.Transport
 	syncTargets []syncTarget // unified list of sync destinations
 	projectCode string
@@ -96,6 +97,19 @@ func New(cfg Config) (*Agent, error) {
 		return nil, fmt.Errorf("agent: read server-code: %w", err)
 	}
 
+	// Start the embedded NATS mesh. The mesh handles role-based routing:
+	// it starts a local NATS server and optionally joins an upstream as a leaf.
+	mesh := &NATSMesh{
+		role:      cfg.NATSRole,
+		upstream:  cfg.NATSUpstream,
+		irohPeers: cfg.IrohPeers,
+	}
+	clientURL, err := mesh.Start()
+	if err != nil {
+		r.Close()
+		return nil, fmt.Errorf("agent: nats mesh start: %w", err)
+	}
+
 	natsOpts := []nats.Option{
 		nats.Name("edgesync-leaf"),
 		nats.MaxReconnects(-1),
@@ -114,25 +128,26 @@ func New(cfg Config) (*Agent, error) {
 		}
 	}))
 	natsOpts = append(natsOpts, nats.ReconnectHandler(func(_ *nats.Conn) {
-		slog.Info("NATS reconnected", "url", cfg.NATSUpstream)
+		slog.Info("NATS reconnected", "url", clientURL)
 		if cfg.Logger != nil {
 			cfg.Logger("NATS reconnected")
 		}
 	}))
-	nc, err := nats.Connect(cfg.NATSUpstream, natsOpts...)
+	nc, err := nats.Connect(clientURL, natsOpts...)
 	if err != nil {
+		mesh.Stop()
 		r.Close()
 		return nil, fmt.Errorf("agent: nats connect: %w", err)
 	}
 	if nc.IsConnected() {
-		slog.Info("connected to NATS", "url", cfg.NATSUpstream)
+		slog.Info("connected to NATS", "url", clientURL, "upstream", cfg.NATSUpstream, "role", cfg.NATSRole)
 		if cfg.Logger != nil {
-			cfg.Logger("connected to NATS: " + cfg.NATSUpstream)
+			cfg.Logger("connected to NATS: " + clientURL)
 		}
 	} else {
-		slog.Warn("NATS not yet reachable, will retry in background", "url", cfg.NATSUpstream)
+		slog.Warn("NATS not yet reachable, will retry in background", "url", clientURL)
 		if cfg.Logger != nil {
-			cfg.Logger("warning: NATS not yet reachable at " + cfg.NATSUpstream + ", will retry in background")
+			cfg.Logger("warning: NATS not yet reachable at " + clientURL + ", will retry in background")
 		}
 	}
 
@@ -142,6 +157,7 @@ func New(cfg Config) (*Agent, error) {
 		config:      cfg,
 		clock:       cfg.Clock,
 		repo:        r,
+		mesh:        mesh,
 		conn:        nc,
 		transport:   transport,
 		projectCode: projectCode,
@@ -314,6 +330,12 @@ func (a *Agent) startIrohSidecar(ctx context.Context) error {
 		alpn:        irohALPN,
 	}
 
+	// If the mesh has a leaf node address, pass it to the sidecar so it can
+	// accept inbound NATS leaf connections from remote peers.
+	if a.mesh != nil && a.mesh.LeafAddr() != "" {
+		a.irohSidecar.natsAddr = a.mesh.LeafAddr()
+	}
+
 	status, err := a.irohSidecar.Start(10 * time.Second)
 	if err != nil {
 		callbackSrv.Close()
@@ -321,6 +343,17 @@ func (a *Agent) startIrohSidecar(ctx context.Context) error {
 	}
 	a.irohEndpointID = status.EndpointID
 	a.logf("iroh sidecar ready, endpoint_id=%s", status.EndpointID)
+
+	// Wire the sidecar info back into the mesh for tunnel establishment.
+	if a.mesh != nil {
+		a.mesh.SetEndpointID(status.EndpointID)
+		a.mesh.SetSidecarSocket(a.irohSock)
+		if err := a.mesh.EstablishTunnels(); err != nil {
+			// Non-fatal: log and continue. Tunnels can be retried later.
+			a.logf("warning: establish tunnels: %v", err)
+			slog.Warn("failed to establish iroh NATS tunnels", "error", err)
+		}
+	}
 
 	// Register iroh peers as sync targets.
 	for _, peerID := range a.config.IrohPeers {
@@ -336,7 +369,7 @@ func (a *Agent) startIrohSidecar(ctx context.Context) error {
 }
 
 // Stop cancels the poll loop, waits for it to finish, closes the NATS
-// connection, and closes the repo.
+// connection, shuts down the mesh, and closes the repo.
 func (a *Agent) Stop() error {
 	if a.cancel != nil {
 		a.cancel()
@@ -349,6 +382,9 @@ func (a *Agent) Stop() error {
 	}
 	if a.conn != nil {
 		a.conn.Close()
+	}
+	if a.mesh != nil {
+		a.mesh.Stop()
 	}
 	if a.repo != nil {
 		return a.repo.Close()
