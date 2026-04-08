@@ -7,6 +7,9 @@ use clap::Parser;
 use std::path::PathBuf;
 use tokio::sync::oneshot;
 
+pub const XFER_ALPN: &[u8] = b"/edgesync/xfer/1";
+pub const NATS_ALPN: &[u8] = b"/edgesync/nats-leaf/1";
+
 #[derive(Parser)]
 #[command(name = "iroh-sidecar", about = "Iroh P2P proxy for EdgeSync")]
 struct Args {
@@ -25,6 +28,10 @@ struct Args {
     /// ALPN protocol identifier
     #[arg(long, default_value = "/edgesync/xfer/1")]
     alpn: String,
+
+    /// Local NATS server address for tunnel connections (e.g. 127.0.0.1:4222)
+    #[arg(long)]
+    nats_addr: Option<String>,
 }
 
 #[tokio::main]
@@ -33,9 +40,15 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     tracing::info!(socket = %args.socket.display(), "iroh-sidecar starting");
 
+    let alpns: Vec<Vec<u8>> = if args.nats_addr.is_some() {
+        vec![args.alpn.as_bytes().to_vec(), NATS_ALPN.to_vec()]
+    } else {
+        vec![args.alpn.as_bytes().to_vec()]
+    };
+
     let (ep, endpoint_id) = endpoint::create_endpoint(
         &args.key_path,
-        args.alpn.as_bytes(),
+        &alpns,
     ).await?;
 
     tracing::info!(%endpoint_id, "iroh endpoint ready");
@@ -50,11 +63,12 @@ async fn main() -> anyhow::Result<()> {
         shutdown_tx,
     );
 
-    // Task 4: Accept loop for incoming P2P connections.
+    // Accept loop for incoming P2P connections.
     let accept_ep = ep.clone();
     let callback_url = args.callback.clone();
+    let accept_nats_addr = args.nats_addr.clone();
     let accept_handle = tokio::spawn(async move {
-        acceptor::run_accept_loop(accept_ep, callback_url).await;
+        acceptor::run_accept_loop(accept_ep, callback_url, accept_nats_addr).await;
     });
 
     // Task 3: HTTP server on the Unix socket.

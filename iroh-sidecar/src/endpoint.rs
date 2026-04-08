@@ -5,14 +5,14 @@ use tokio::fs;
 /// Load or generate an Ed25519 keypair, then bind an iroh Endpoint.
 pub async fn create_endpoint(
     key_path: &Path,
-    alpn: &[u8],
+    alpns: &[Vec<u8>],
 ) -> anyhow::Result<(Endpoint, String)> {
     let secret_key = load_or_generate_key(key_path).await?;
     let endpoint_id = secret_key.public().to_string();
 
     let endpoint = Endpoint::builder(presets::N0)
         .secret_key(secret_key)
-        .alpns(vec![alpn.to_vec()])
+        .alpns(alpns.to_vec())
         .bind()
         .await?;
 
