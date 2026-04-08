@@ -86,21 +86,29 @@ if alpn == XFER_ALPN {
 
 ## Go Agent Changes
 
-### Embedded NATS server
+### NATS Mesh Module
 
-New file: `leaf/agent/embedded_nats.go`
+New file: `leaf/agent/nats_mesh.go`
 
-Always created in `Start()`, shut down in `Stop()`. Listens on `127.0.0.1:<ephemeral>` for client connections and a separate ephemeral port for leaf node connections.
+Single module that owns both the embedded NATS server and tunnel establishment. This keeps lifecycle ordering constraints hidden inside one module instead of spread across the agent. Interface to the agent:
 
-**Configuration by role:**
+```go
+type NATSMesh struct { ... }
+
+func NewNATSMesh(cfg NATSMeshConfig, sidecar *Sidecar) *NATSMesh
+func (m *NATSMesh) Start() (clientURL string, err error)
+func (m *NATSMesh) Stop()
+```
+
+The agent calls `mesh.Start()` and gets back a NATS client URL. Everything else — embedded server config, leaf node ports, tunnel establishment, startup ordering — is internal to the mesh module.
+
+**Embedded NATS configuration by role:**
 
 - `peer` / `hub`: `LeafNode.Port` set to ephemeral port. This is the address passed to the sidecar via `--nats-addr`. Incoming iroh tunnels connect here.
 - `leaf`: `LeafNode.Port` disabled. `LeafNode.Remotes` populated after tunnel establishment — embedded NATS solicits outward through the tunnel to a remote peer's NATS.
-- All roles: if `--nats` URL provided, added to `LeafNode.Remotes` as an upstream (embedded NATS joins external cluster as a leaf).
+- All roles: if `NATSUpstream` URL provided, added to `LeafNode.Remotes` as an upstream (embedded NATS joins external cluster as a leaf).
 
-### Tunnel establishment
-
-New file: `leaf/agent/tunnel.go`
+**Tunnel establishment (internal to mesh):**
 
 Called after sidecar is ready and EndpointIds are known. For each iroh peer:
 
@@ -116,20 +124,31 @@ elif my_role == "peer":
         skip  (they will connect to me)
 ```
 
-The sidecar handles the QUIC stream lifecycle. The Go agent only triggers establishment.
+The sidecar handles the QUIC stream lifecycle. The mesh module only triggers establishment.
+
+**Internal startup sequence** (hidden inside `mesh.Start()`):
+
+1. Create embedded NATS server (role-based config)
+2. Start embedded NATS
+3. Start iroh sidecar (with `--nats-addr localhost:<leaf-port>`)
+4. Wait for sidecar ready
+5. Establish NATS tunnels to iroh peers (role + EndpointId logic)
+6. Return `nats://127.0.0.1:<client-port>` to caller
+
+The agent then connects its NATS client to the returned URL. Ordering constraints are encapsulated — the agent never sees steps 1-5.
 
 ### Transport simplification
 
 With NATS-over-iroh, the `syncTargets` list collapses. Instead of iterating NATS + iroh targets separately, there's one `NATSTransport` connected to the local embedded server. Iroh peers are reached via NATS leaf node routing — not direct xfer exchange.
 
-The agent connects its NATS client to `nats://127.0.0.1:<embedded-client-port>`. `NATSTransport` and `ServeNATS` work unchanged — they just talk to the local embedded server.
+`NATSTransport` and `ServeNATS` work unchanged — they just talk to the local embedded server.
 
 ### Config changes
 
 | Field | Change |
 |-------|--------|
 | `NATSRole` | New — `"peer"` (default), `"hub"`, `"leaf"` |
-| `NATSUrl` | No longer required. If set, embedded NATS joins it as a leaf upstream |
+| `NATSUrl` | Renamed to `NATSUpstream`. No longer required. If set, embedded NATS joins it as a leaf |
 | `IrohEnabled` | Still controls whether sidecar starts. Now also controls NATS tunnel establishment |
 | `IrohPeers` | Still lists remote EndpointIds. Tunnel logic uses these for NATS connections too |
 
@@ -137,46 +156,40 @@ The agent connects its NATS client to `nats://127.0.0.1:<embedded-client-port>`.
 
 ```
 Start():
-  1. Create embedded NATS server (role-based config)
-  2. Start embedded NATS
-  3. Connect agent's NATS client to localhost:<embedded-client-port>
-  4. Start iroh sidecar (with --nats-addr localhost:<embedded-leaf-port>)
-  5. Wait for sidecar ready
-  6. Establish NATS tunnels to iroh peers (role + EndpointId logic)
-  7. Start ServeNATS (subscribe to sync subject on embedded NATS)
-  8. Start HTTP server (if configured)
-  9. Start poll loop
+  1. mesh.Start()  → returns clientURL (mesh handles embedded NATS + sidecar + tunnels internally)
+  2. Connect agent's NATS client to clientURL
+  3. Start ServeNATS (subscribe to sync subject on embedded NATS)
+  4. Start HTTP server (if configured)
+  5. Start poll loop
 
 Stop():
   1. Cancel poll loop
   2. Drain NATS client
-  3. Shutdown sidecar (tunnels close with it)
-  4. Shutdown embedded NATS
-  5. Close repo
+  3. mesh.Stop()  (shuts down sidecar + embedded NATS internally)
+  4. Close repo
 ```
 
 ### Failure handling
 
 - **Tunnel drops** (QUIC stream closes): sidecar detects EOF, closes TCP side. NATS sees leaf node disconnect. Agent's NATS client has `MaxReconnects(-1)` — reconnect is automatic once tunnel is re-established.
 - **Sidecar crash**: agent's liveness monitor detects exit. Can restart sidecar and re-establish tunnels.
-- **No explicit tunnel health polling** — NATS's built-in disconnect/reconnect handles detection. The agent monitors NATS connection status, not tunnel status.
+- **No explicit tunnel health polling** — NATS's built-in disconnect/reconnect handles detection. Tunnel failure is defined out of existence from the agent's perspective.
 
 ### Files changed
 
 | File | Change |
 |------|--------|
-| `leaf/agent/embedded_nats.go` | New — embedded NATS server creation, role-based config |
-| `leaf/agent/tunnel.go` | New — tunnel establishment logic, role + EndpointId comparison |
-| `leaf/agent/agent.go` | Updated lifecycle: embedded NATS + tunnel steps, simplified syncTargets |
-| `leaf/agent/config.go` | New field `NATSRole`, `NATSUrl` no longer required |
-| `leaf/agent/sidecar.go` | Pass `--nats-addr` to sidecar CLI |
+| `leaf/agent/nats_mesh.go` | New — embedded NATS server, role-based config, tunnel establishment, startup sequencing |
+| `leaf/agent/agent.go` | Simplified lifecycle: `mesh.Start()` / `mesh.Stop()`, single NATSTransport |
+| `leaf/agent/config.go` | New field `NATSRole`, rename `NATSUrl` → `NATSUpstream` |
+| `leaf/agent/sidecar.go` | Accept `--nats-addr` passthrough from mesh |
 
 ## What Does NOT Change
 
 - **go-libfossil** — transport-agnostic, no changes
 - **NATSTransport** (`leaf/agent/nats.go`) — still does request/reply on subjects, connects to localhost
 - **ServeNATS** (`leaf/agent/serve_nats.go`) — still subscribes and handles sync requests
-- **IrohTransport** (`leaf/agent/iroh.go`) — kept for backwards compat with peers that don't have embedded NATS
+- **IrohTransport** (`leaf/agent/iroh.go`) — kept for backwards compat with peers that don't have embedded NATS. Deprecate once NATS-over-iroh is stable (follow-up ticket) — having two paths to reach iroh peers increases cognitive load
 - **serve_http.go** — HTTP serving unchanged
 - **Wire protocol** — same xfer cards, same NATS subjects
 - **Bridge** — still works with external NATS (embedded NATS joins as leaf)
