@@ -72,8 +72,10 @@ type Agent struct {
 }
 
 // New creates a new Agent from the given configuration.
-// It opens the Fossil repo, reads project-code and server-code from
-// the config table, connects to NATS, and builds the NATSTransport.
+// It opens the Fossil repo and reads project-code / server-code.
+// The embedded NATS server is NOT started here — that happens in Start()
+// after iroh tunnels are established (tunnel ports must be known before
+// NATS can be configured with leaf remotes).
 func New(cfg Config) (*Agent, error) {
 	cfg.applyDefaults()
 	if err := cfg.validate(); err != nil {
@@ -97,69 +99,20 @@ func New(cfg Config) (*Agent, error) {
 		return nil, fmt.Errorf("agent: read server-code: %w", err)
 	}
 
-	// Start the embedded NATS mesh. The mesh handles role-based routing:
-	// it starts a local NATS server and optionally joins an upstream as a leaf.
+	// Create the mesh but don't start it yet. Start() will call
+	// startIrohSidecar (which establishes tunnels and populates
+	// tunnelPorts) before starting the NATS server.
 	mesh := &NATSMesh{
 		role:      cfg.NATSRole,
 		upstream:  cfg.NATSUpstream,
 		irohPeers: cfg.IrohPeers,
 	}
-	clientURL, err := mesh.Start()
-	if err != nil {
-		r.Close()
-		return nil, fmt.Errorf("agent: nats mesh start: %w", err)
-	}
-
-	natsOpts := []nats.Option{
-		nats.Name("edgesync-leaf"),
-		nats.MaxReconnects(-1),
-		nats.ReconnectWait(2 * time.Second),
-		nats.RetryOnFailedConnect(true),
-	}
-	if cfg.CustomDialer != nil {
-		natsOpts = append(natsOpts, nats.SetCustomDialer(cfg.CustomDialer))
-	}
-	natsOpts = append(natsOpts, nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
-		if err != nil {
-			slog.Warn("NATS disconnected", "error", err)
-			if cfg.Logger != nil {
-				cfg.Logger("NATS disconnected: " + err.Error())
-			}
-		}
-	}))
-	natsOpts = append(natsOpts, nats.ReconnectHandler(func(_ *nats.Conn) {
-		slog.Info("NATS reconnected", "url", clientURL)
-		if cfg.Logger != nil {
-			cfg.Logger("NATS reconnected")
-		}
-	}))
-	nc, err := nats.Connect(clientURL, natsOpts...)
-	if err != nil {
-		mesh.Stop()
-		r.Close()
-		return nil, fmt.Errorf("agent: nats connect: %w", err)
-	}
-	if nc.IsConnected() {
-		slog.Info("connected to NATS", "url", clientURL, "upstream", cfg.NATSUpstream, "role", cfg.NATSRole)
-		if cfg.Logger != nil {
-			cfg.Logger("connected to NATS: " + clientURL)
-		}
-	} else {
-		slog.Warn("NATS not yet reachable, will retry in background", "url", clientURL)
-		if cfg.Logger != nil {
-			cfg.Logger("warning: NATS not yet reachable at " + clientURL + ", will retry in background")
-		}
-	}
-
-	transport := NewNATSTransport(nc, projectCode, 0, cfg.SubjectPrefix)
 
 	a := &Agent{
 		config:      cfg,
 		clock:       cfg.Clock,
 		repo:        r,
 		mesh:        mesh,
-		conn:        nc,
-		transport:   transport,
 		projectCode: projectCode,
 		serverCode:  serverCode,
 		syncNow:     make(chan struct{}, 1),
@@ -227,20 +180,36 @@ func (a *Agent) Repo() *libfossil.Repo {
 
 // Start launches the background poll loop and any configured server
 // listeners. Call Stop to shut everything down.
+//
+// The startup order is critical for correct NATS leaf node handshakes:
+//  1. Start iroh sidecar and establish tunnels (get local listener ports)
+//  2. Start embedded NATS server with tunnel ports as leaf remotes
+//  3. Connect NATS client and configure sync targets
+//  4. Start HTTP/NATS serve listeners
+//  5. Launch poll loop
 func (a *Agent) Start() error {
 	a.logf("starting agent...")
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
 
-	if err := a.startNATS(ctx); err != nil {
+	// Step 1: iroh sidecar + tunnels (must happen before NATS start).
+	if err := a.startIrohSidecar(ctx); err != nil {
+		cancel()
+		return err
+	}
+
+	// Step 2+3: start embedded NATS mesh and connect client.
+	if err := a.startNATSMesh(); err != nil {
+		cancel()
+		return err
+	}
+
+	// Step 4: serve listeners.
+	if err := a.startNATSServe(ctx); err != nil {
 		cancel()
 		return err
 	}
 	if err := a.startHTTPServer(ctx); err != nil {
-		cancel()
-		return err
-	}
-	if err := a.startIrohSidecar(ctx); err != nil {
 		cancel()
 		return err
 	}
@@ -250,8 +219,67 @@ func (a *Agent) Start() error {
 	return nil
 }
 
-// startNATS launches the NATS serve listener if configured.
-func (a *Agent) startNATS(ctx context.Context) error {
+// startNATSMesh starts the embedded NATS server (with tunnel remotes already
+// configured by EstablishTunnels) and connects the NATS client.
+func (a *Agent) startNATSMesh() error {
+	if a.mesh == nil {
+		return nil
+	}
+
+	clientURL, err := a.mesh.Start()
+	if err != nil {
+		return fmt.Errorf("agent: nats mesh start: %w", err)
+	}
+
+	cfg := a.config
+	natsOpts := []nats.Option{
+		nats.Name("edgesync-leaf"),
+		nats.MaxReconnects(-1),
+		nats.ReconnectWait(2 * time.Second),
+		nats.RetryOnFailedConnect(true),
+	}
+	if cfg.CustomDialer != nil {
+		natsOpts = append(natsOpts, nats.SetCustomDialer(cfg.CustomDialer))
+	}
+	natsOpts = append(natsOpts, nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
+		if err != nil {
+			slog.Warn("NATS disconnected", "error", err)
+			if cfg.Logger != nil {
+				cfg.Logger("NATS disconnected: " + err.Error())
+			}
+		}
+	}))
+	natsOpts = append(natsOpts, nats.ReconnectHandler(func(_ *nats.Conn) {
+		slog.Info("NATS reconnected", "url", clientURL)
+		if cfg.Logger != nil {
+			cfg.Logger("NATS reconnected")
+		}
+	}))
+	nc, err := nats.Connect(clientURL, natsOpts...)
+	if err != nil {
+		a.mesh.Stop()
+		return fmt.Errorf("agent: nats connect: %w", err)
+	}
+	if nc.IsConnected() {
+		slog.Info("connected to NATS", "url", clientURL, "upstream", cfg.NATSUpstream, "role", cfg.NATSRole)
+		if cfg.Logger != nil {
+			cfg.Logger("connected to NATS: " + clientURL)
+		}
+	} else {
+		slog.Warn("NATS not yet reachable, will retry in background", "url", clientURL)
+		if cfg.Logger != nil {
+			cfg.Logger("warning: NATS not yet reachable at " + clientURL + ", will retry in background")
+		}
+	}
+
+	a.conn = nc
+	a.transport = NewNATSTransport(nc, a.projectCode, 0, cfg.SubjectPrefix)
+	return nil
+}
+
+// startNATSServe adds the NATS transport as a sync target and launches the
+// NATS request/reply listener if configured.
+func (a *Agent) startNATSServe(ctx context.Context) error {
 	// Add NATS as the primary sync target (always present when agent is built via New).
 	if a.transport != nil {
 		a.syncTargets = append(a.syncTargets, syncTarget{
@@ -284,9 +312,15 @@ func (a *Agent) startHTTPServer(ctx context.Context) error {
 	return nil
 }
 
-// startIrohSidecar launches the iroh sidecar process and registers iroh
-// peers as sync targets. It always creates a dedicated callback listener
-// for sidecar-to-agent xfer traffic (decoupled from the public HTTP server).
+// startIrohSidecar launches the iroh sidecar process, establishes outbound
+// NATS tunnels, and registers iroh peers as sync targets. It creates a
+// dedicated callback listener for sidecar-to-agent xfer traffic (decoupled
+// from the public HTTP server).
+//
+// This runs BEFORE the NATS server starts. The leaf port is pre-reserved so
+// the sidecar knows where NATS will listen for inbound leaf connections.
+// Outbound tunnel ports are collected so the NATS server can be started with
+// them as leaf remotes.
 func (a *Agent) startIrohSidecar(ctx context.Context) error {
 	if !a.config.IrohEnabled {
 		return nil
@@ -295,6 +329,14 @@ func (a *Agent) startIrohSidecar(ctx context.Context) error {
 	binPath, err := a.findIrohBinary()
 	if err != nil {
 		return fmt.Errorf("agent: iroh: %w", err)
+	}
+
+	// Pre-reserve the NATS leaf port so we can tell the sidecar where NATS
+	// will listen before NATS actually starts. NATS will bind this exact port.
+	if a.mesh != nil {
+		if err := a.mesh.ReserveLeafPort(); err != nil {
+			return fmt.Errorf("agent: reserve leaf port: %w", err)
+		}
 	}
 
 	// Use a hash of the repo path to make the socket unique per agent instance,
@@ -330,8 +372,8 @@ func (a *Agent) startIrohSidecar(ctx context.Context) error {
 		alpn:        irohALPN,
 	}
 
-	// If the mesh has a leaf node address, pass it to the sidecar so it can
-	// accept inbound NATS leaf connections from remote peers.
+	// Pass the pre-reserved leaf port so the sidecar can accept inbound NATS
+	// leaf connections from remote peers.
 	if a.mesh != nil && a.mesh.LeafAddr() != "" {
 		a.irohSidecar.natsAddr = a.mesh.LeafAddr()
 	}
@@ -344,7 +386,9 @@ func (a *Agent) startIrohSidecar(ctx context.Context) error {
 	a.irohEndpointID = status.EndpointID
 	a.logf("iroh sidecar ready, endpoint_id=%s", status.EndpointID)
 
-	// Wire the sidecar info back into the mesh for tunnel establishment.
+	// Establish outbound NATS tunnels. Each tunnel returns a local port that
+	// the NATS server will solicit to. These ports are consumed by
+	// startNATSMesh -> mesh.Start -> buildServerOpts.
 	if a.mesh != nil {
 		a.mesh.SetEndpointID(status.EndpointID)
 		a.mesh.SetSidecarSocket(a.irohSock)
