@@ -32,6 +32,8 @@ pub struct AppState {
     pub endpoint: Endpoint,
     pub endpoint_id: String,
     pub alpn: Vec<u8>,
+    /// Local NATS server address for tunnel connections.
+    pub nats_addr: Option<String>,
     /// Cache of live outbound connections keyed by remote endpoint-id string.
     pub conn_cache: Arc<Mutex<HashMap<String, Connection>>>,
     /// Send on this channel to trigger graceful shutdown.
@@ -43,22 +45,25 @@ impl AppState {
         endpoint: Endpoint,
         endpoint_id: String,
         alpn: Vec<u8>,
+        nats_addr: Option<String>,
         shutdown_tx: oneshot::Sender<()>,
     ) -> Self {
         AppState {
             endpoint,
             endpoint_id,
             alpn,
+            nats_addr,
             conn_cache: Arc::new(Mutex::new(HashMap::new())),
             shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
         }
     }
 }
 
-/// Build the axum Router with all three routes wired up.
+/// Build the axum Router with all routes wired up.
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/exchange/{endpoint_id}", post(handle_exchange))
+        .route("/nats-tunnel/{endpoint_id}", post(handle_nats_tunnel))
         .route("/status", get(handle_status))
         .route("/shutdown", post(handle_shutdown))
         .with_state(state)
@@ -90,6 +95,39 @@ async fn handle_exchange(
         .map_err(AppError::internal)?;
 
     Ok((StatusCode::OK, response_bytes).into_response())
+}
+
+/// POST /nats-tunnel/{endpoint-id}
+///
+/// Establishes an outbound NATS leaf node tunnel to a remote peer. Connects
+/// over QUIC using the NATS ALPN, then pipes bidirectionally between the
+/// local NATS server and the remote peer's NATS server. Returns 200
+/// immediately; the tunnel runs in a background task.
+async fn handle_nats_tunnel(
+    State(state): State<AppState>,
+    Path(remote_id_str): Path<String>,
+) -> Result<Response, AppError> {
+    let nats_addr = state.nats_addr.clone().ok_or_else(|| {
+        AppError::bad_request("NATS tunnel not available: --nats-addr not configured")
+    })?;
+
+    let remote_id = EndpointId::from_str(&remote_id_str)
+        .map_err(|e| AppError::bad_request(format!("invalid endpoint id: {e}")))?;
+
+    tracing::info!(remote = %remote_id_str, %nats_addr, "opening outbound NATS tunnel");
+
+    let addr: EndpointAddr = remote_id.into();
+    let conn = state
+        .endpoint
+        .connect(addr, crate::NATS_ALPN)
+        .await
+        .map_err(AppError::internal)?;
+
+    tokio::spawn(async move {
+        crate::tunnel::establish_outbound(conn, nats_addr).await;
+    });
+
+    Ok(StatusCode::OK.into_response())
 }
 
 /// GET /status
