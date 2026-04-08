@@ -100,21 +100,17 @@ async fn handle_exchange(
 /// POST /nats-tunnel/{endpoint-id}
 ///
 /// Establishes an outbound NATS leaf node tunnel to a remote peer. Connects
-/// over QUIC using the NATS ALPN, then pipes bidirectionally between the
-/// local NATS server and the remote peer's NATS server. Returns 200
-/// immediately; the tunnel runs in a background task.
+/// over QUIC using the NATS ALPN, then binds a local TCP listener that the
+/// embedded NATS server can solicit to. Returns `{"port": <u16>}` so the Go
+/// mesh can configure the NATS leaf remote before starting the server.
 async fn handle_nats_tunnel(
     State(state): State<AppState>,
     Path(remote_id_str): Path<String>,
 ) -> Result<Response, AppError> {
-    let nats_addr = state.nats_addr.clone().ok_or_else(|| {
-        AppError::bad_request("NATS tunnel not available: --nats-addr not configured")
-    })?;
-
     let remote_id = EndpointId::from_str(&remote_id_str)
         .map_err(|e| AppError::bad_request(format!("invalid endpoint id: {e}")))?;
 
-    tracing::info!(remote = %remote_id_str, %nats_addr, "opening outbound NATS tunnel");
+    tracing::info!(remote = %remote_id_str, "opening outbound NATS tunnel");
 
     let addr: EndpointAddr = remote_id.into();
     let conn = state
@@ -123,11 +119,11 @@ async fn handle_nats_tunnel(
         .await
         .map_err(AppError::internal)?;
 
-    tokio::spawn(async move {
-        crate::tunnel::establish_outbound(conn, nats_addr).await;
-    });
+    let port = crate::tunnel::establish_outbound(conn)
+        .await
+        .map_err(AppError::internal)?;
 
-    Ok(StatusCode::OK.into_response())
+    Ok(axum::Json(json!({"port": port})).into_response())
 }
 
 /// GET /status
