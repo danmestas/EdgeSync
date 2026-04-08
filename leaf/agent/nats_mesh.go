@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -100,6 +101,7 @@ func (m *NATSMesh) EstablishTunnels() error {
 
 	m.tunnelPorts = make(map[string]uint16)
 
+	var errs []error
 	for _, peerID := range m.irohPeers {
 		if !shouldSolicit(m.role, m.endpointID, peerID) {
 			continue
@@ -108,25 +110,29 @@ func (m *NATSMesh) EstablishTunnels() error {
 		reqURL := fmt.Sprintf("http://iroh-sidecar/nats-tunnel/%s", peerID)
 		resp, err := client.Post(reqURL, "", nil)
 		if err != nil {
-			return fmt.Errorf("tunnel to %s: %w", peerID, err)
+			errs = append(errs, fmt.Errorf("tunnel to %s: %w", peerID, err))
+			continue
 		}
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
-			return fmt.Errorf("tunnel to %s: HTTP %d", peerID, resp.StatusCode)
+			errs = append(errs, fmt.Errorf("tunnel to %s: HTTP %d", peerID, resp.StatusCode))
+			continue
 		}
 
 		var tr tunnelResponse
 		err = json.NewDecoder(resp.Body).Decode(&tr)
 		resp.Body.Close()
 		if err != nil {
-			return fmt.Errorf("tunnel to %s: decode response: %w", peerID, err)
+			errs = append(errs, fmt.Errorf("tunnel to %s: decode response: %w", peerID, err))
+			continue
 		}
 		if tr.Port == 0 {
-			return fmt.Errorf("tunnel to %s: sidecar returned port 0", peerID)
+			errs = append(errs, fmt.Errorf("tunnel to %s: sidecar returned port 0", peerID))
+			continue
 		}
 		m.tunnelPorts[peerID] = tr.Port
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // Start brings up the embedded NATS server.
@@ -141,7 +147,7 @@ func (m *NATSMesh) Start() (clientURL string, err error) {
 	m.server.Start()
 	if !m.server.ReadyForConnections(5 * time.Second) {
 		m.server.Shutdown()
-		return "", fmt.Errorf("nats mesh: server not ready within 5s")
+		return "", fmt.Errorf("nats mesh: server not ready within 5s (reserved leaf port: %d)", m.reservedLeafPort)
 	}
 
 	m.clientURL = m.server.ClientURL()

@@ -60,7 +60,6 @@ async fn main() -> anyhow::Result<()> {
         ep.clone(),
         endpoint_id,
         args.alpn.as_bytes().to_vec(),
-        args.nats_addr.clone(),
         shutdown_tx,
     );
 
