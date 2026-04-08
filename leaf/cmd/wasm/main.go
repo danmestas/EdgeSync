@@ -50,7 +50,7 @@ func jsNewAgent(_ js.Value, args []js.Value) any {
 
 	config := agent.Config{
 		RepoPath:     repoPath,
-		NATSUrl:      natsUrl,
+		NATSUpstream:      natsUrl,
 		Push:         true,
 		Pull:         true,
 		PollInterval: time.Duration(pollSec) * time.Second,

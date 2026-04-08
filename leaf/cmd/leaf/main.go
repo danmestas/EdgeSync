@@ -90,7 +90,7 @@ func main() {
 
 	cfg := agent.Config{
 		RepoPath:         *repoPath,
-		NATSUrl:          *natsURL,
+		NATSUpstream:          *natsURL,
 		PollInterval:     *poll,
 		User:             *user,
 		Password:         *password,

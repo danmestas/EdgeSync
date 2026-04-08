@@ -114,25 +114,25 @@ func New(cfg Config) (*Agent, error) {
 		}
 	}))
 	natsOpts = append(natsOpts, nats.ReconnectHandler(func(_ *nats.Conn) {
-		slog.Info("NATS reconnected", "url", cfg.NATSUrl)
+		slog.Info("NATS reconnected", "url", cfg.NATSUpstream)
 		if cfg.Logger != nil {
 			cfg.Logger("NATS reconnected")
 		}
 	}))
-	nc, err := nats.Connect(cfg.NATSUrl, natsOpts...)
+	nc, err := nats.Connect(cfg.NATSUpstream, natsOpts...)
 	if err != nil {
 		r.Close()
 		return nil, fmt.Errorf("agent: nats connect: %w", err)
 	}
 	if nc.IsConnected() {
-		slog.Info("connected to NATS", "url", cfg.NATSUrl)
+		slog.Info("connected to NATS", "url", cfg.NATSUpstream)
 		if cfg.Logger != nil {
-			cfg.Logger("connected to NATS: " + cfg.NATSUrl)
+			cfg.Logger("connected to NATS: " + cfg.NATSUpstream)
 		}
 	} else {
-		slog.Warn("NATS not yet reachable, will retry in background", "url", cfg.NATSUrl)
+		slog.Warn("NATS not yet reachable, will retry in background", "url", cfg.NATSUpstream)
 		if cfg.Logger != nil {
-			cfg.Logger("warning: NATS not yet reachable at " + cfg.NATSUrl + ", will retry in background")
+			cfg.Logger("warning: NATS not yet reachable at " + cfg.NATSUpstream + ", will retry in background")
 		}
 	}
 

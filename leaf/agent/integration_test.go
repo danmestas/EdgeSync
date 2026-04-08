@@ -161,7 +161,7 @@ func TestIntegrationLeafPush(t *testing.T) {
 	// 6. Create Agent, Start, SyncNow.
 	a, err := New(Config{
 		RepoPath:     localPath,
-		NATSUrl:      natsURL,
+		NATSUpstream:      natsURL,
 		PollInterval: 10 * time.Second, // long interval; we use SyncNow
 		Push:         true,
 		Pull:         false,

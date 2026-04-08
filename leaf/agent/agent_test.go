@@ -15,8 +15,11 @@ func TestConfigDefaults(t *testing.T) {
 	c := Config{RepoPath: "/tmp/test.fossil"}
 	c.applyDefaults()
 
-	if c.NATSUrl != "nats://localhost:4222" {
-		t.Errorf("NATSUrl = %q, want %q", c.NATSUrl, "nats://localhost:4222")
+	if c.NATSUpstream != "" {
+		t.Errorf("NATSUpstream = %q, want empty (no upstream by default)", c.NATSUpstream)
+	}
+	if c.NATSRole != NATSRolePeer {
+		t.Errorf("NATSRole = %q, want %q", c.NATSRole, NATSRolePeer)
 	}
 	if c.PollInterval != 5*time.Second {
 		t.Errorf("PollInterval = %v, want %v", c.PollInterval, 5*time.Second)
@@ -38,7 +41,8 @@ func TestConfigDefaults(t *testing.T) {
 func TestConfigDefaultsPreserveExplicit(t *testing.T) {
 	c := Config{
 		RepoPath:      "/tmp/test.fossil",
-		NATSUrl:       "nats://custom:4223",
+		NATSUpstream:  "nats://custom:4223",
+		NATSRole:      NATSRoleHub,
 		PollInterval:  10 * time.Second,
 		User:          "alice",
 		Push:          true,
@@ -47,8 +51,11 @@ func TestConfigDefaultsPreserveExplicit(t *testing.T) {
 	}
 	c.applyDefaults()
 
-	if c.NATSUrl != "nats://custom:4223" {
-		t.Errorf("NATSUrl = %q, want %q", c.NATSUrl, "nats://custom:4223")
+	if c.NATSUpstream != "nats://custom:4223" {
+		t.Errorf("NATSUpstream = %q, want %q", c.NATSUpstream, "nats://custom:4223")
+	}
+	if c.NATSRole != NATSRoleHub {
+		t.Errorf("NATSRole = %q, want %q", c.NATSRole, NATSRoleHub)
 	}
 	if c.PollInterval != 10*time.Second {
 		t.Errorf("PollInterval = %v, want %v", c.PollInterval, 10*time.Second)
@@ -128,7 +135,7 @@ func TestAgentNewAndStop(t *testing.T) {
 
 	a, err := New(Config{
 		RepoPath: repoPath,
-		NATSUrl:  natsURL,
+		NATSUpstream:  natsURL,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -152,7 +159,7 @@ func TestAgentStartAndStop(t *testing.T) {
 
 	a, err := New(Config{
 		RepoPath:     repoPath,
-		NATSUrl:      natsURL,
+		NATSUpstream:      natsURL,
 		PollInterval: 50 * time.Millisecond,
 	})
 	if err != nil {
@@ -176,7 +183,7 @@ func TestAgentNewBadRepoPath(t *testing.T) {
 
 	_, err := New(Config{
 		RepoPath: "/nonexistent/path/to/repo.fossil",
-		NATSUrl:  natsURL,
+		NATSUpstream:  natsURL,
 	})
 	if err == nil {
 		t.Fatal("expected error for bad repo path, got nil")
@@ -190,7 +197,7 @@ func TestAgentSyncNowNonBlocking(t *testing.T) {
 
 	a, err := New(Config{
 		RepoPath:     repoPath,
-		NATSUrl:      natsURL,
+		NATSUpstream:      natsURL,
 		PollInterval: 10 * time.Second, // long interval so only SyncNow triggers
 	})
 	if err != nil {
