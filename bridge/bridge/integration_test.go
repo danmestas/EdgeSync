@@ -138,7 +138,7 @@ func TestIntegrationLeafBridgeFossil(t *testing.T) {
 	// 6. Start leaf Agent (repo -> NATS).
 	a, err := leafagent.New(leafagent.Config{
 		RepoPath:     localPath,
-		NATSUrl:      natsURL,
+		NATSUpstream: natsURL,
 		PollInterval: 10 * time.Second, // long interval; we use SyncNow
 		Push:         true,
 		Pull:         true,

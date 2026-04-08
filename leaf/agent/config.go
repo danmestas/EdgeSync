@@ -4,6 +4,7 @@ package agent
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
@@ -12,13 +13,27 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
+// NATSRole determines how the embedded NATS server participates in the mesh.
+type NATSRole string
+
+const (
+	NATSRolePeer NATSRole = "peer" // accepts + solicits (lower EndpointId solicits)
+	NATSRoleHub  NATSRole = "hub"  // accepts only, never solicits
+	NATSRoleLeaf NATSRole = "leaf" // solicits only, never accepts
+)
+
 // Config holds all settings for a leaf agent instance.
 type Config struct {
 	// RepoPath is the path to the local Fossil repository file (required).
 	RepoPath string
 
-	// NATSUrl is the NATS server URL to connect to.
-	NATSUrl string
+	// NATSUpstream is an optional external NATS URL that the embedded server
+	// joins as a leaf node. Empty means standalone mesh (no upstream).
+	NATSUpstream string
+
+	// NATSRole determines how the embedded NATS server participates in the
+	// mesh (peer, hub, or leaf). Default: peer.
+	NATSRole NATSRole
 
 	// PollInterval is how often the agent checks for local changes.
 	PollInterval time.Duration
@@ -111,8 +126,8 @@ type Config struct {
 
 // applyDefaults fills in zero-valued fields with sensible defaults.
 func (c *Config) applyDefaults() {
-	if c.NATSUrl == "" {
-		c.NATSUrl = "nats://localhost:4222"
+	if c.NATSRole == "" {
+		c.NATSRole = NATSRolePeer
 	}
 	if c.PollInterval == 0 {
 		c.PollInterval = 5 * time.Second
@@ -148,6 +163,12 @@ func (c *Config) applyDefaults() {
 func (c *Config) validate() error {
 	if c.RepoPath == "" {
 		return errors.New("agent: config: RepoPath is required")
+	}
+	switch c.NATSRole {
+	case NATSRolePeer, NATSRoleHub, NATSRoleLeaf:
+		// valid
+	default:
+		return fmt.Errorf("agent: config: invalid NATSRole %q (must be peer, hub, or leaf)", c.NATSRole)
 	}
 	return nil
 }

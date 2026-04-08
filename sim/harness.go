@@ -270,7 +270,7 @@ func (h *Harness) StartAgents() error {
 	for i, repoPath := range h.leafPaths {
 		a, err := agent.New(agent.Config{
 			RepoPath:      repoPath,
-			NATSUrl:       natsTarget,
+			NATSUpstream:  natsTarget,
 
 			Push:          true,
 			Pull:          true,
@@ -389,7 +389,7 @@ func (h *Harness) restartLeaf(target string, t *testing.T) {
 	}
 	a, err := agent.New(agent.Config{
 		RepoPath:      h.leafPaths[idx],
-		NATSUrl:       natsTarget,
+		NATSUpstream:  natsTarget,
 		Push:          true,
 		Pull:          true,
 		PollInterval:  2 * time.Second,
