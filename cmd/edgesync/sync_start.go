@@ -27,7 +27,7 @@ func (c *SyncStartCmd) Run(g *cli.Globals) error {
 
 	a, err := agent.New(agent.Config{
 		RepoPath:     g.Repo,
-		NATSUrl:      c.NATSUrl,
+		NATSUpstream: c.NATSUrl,
 		PollInterval: c.PollInterval,
 		Push:         c.Push,
 		Pull:         c.Pull,
