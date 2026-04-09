@@ -19,12 +19,14 @@ graph LR
     Leaf -- NATS --> Bridge
     Leaf -- NATS --> Peer
     Leaf -- HTTP --> Peer
+    Leaf -- "NATS over iroh (QUIC)" --> Peer
 ```
 
-**Three sync modes:**
+**Four sync modes:**
 1. **Leaf → Bridge → Fossil Server** — Original mode. Bridge translates NATS to HTTP `/xfer`.
 2. **Leaf → Leaf (NATS)** — Peer-to-peer via ServeNATS. No bridge or server needed.
 3. **Leaf → Leaf (HTTP)** — Peer-to-peer via ServeHTTP. Stock `fossil clone`/`fossil sync` works.
+4. **Leaf → Leaf (iroh)** — Peer-to-peer over QUIC with NAT traversal. Each agent runs an embedded NATS server; leaf node connections tunnel over iroh. Enables presence and messaging without central infrastructure.
 
 ## Quick Start
 

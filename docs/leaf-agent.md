@@ -1,127 +1,155 @@
 # Leaf Agent
 
-A daemon process that sits next to a Fossil repo and keeps it synced over NATS.
+A daemon that syncs a local Fossil repo via NATS messaging and/or direct peer-to-peer over iroh.
 
 ## Overview
 
-The leaf agent watches a local Fossil repository for new artifacts and syncs them to a remote Fossil server through a NATS message bus. It implements the client side of Fossil's sync protocol without needing the `fossil` binary installed.
+The leaf agent opens a Fossil repository, runs an embedded NATS server, and syncs artifacts on a poll loop. It implements both the client and server sides of Fossil's sync protocol — a stock `fossil clone`/`fossil sync` can talk to it directly via HTTP.
 
-## How It Works
+## Transport Modes
 
-```
-fossil commit → repo SQLite updated → leaf polls unsent/unclustered tables
-    → sync.Sync() via NATSTransport → NATS request/reply → bridge → fossil server
-```
+| Mode | Transport | Infrastructure | Use case |
+|------|-----------|---------------|----------|
+| Bridged | NATS → Bridge → HTTP | External NATS + Fossil server | Production with central server |
+| Leaf-to-leaf (NATS) | NATS subject request/reply | External NATS | Peer-to-peer via shared NATS |
+| Leaf-to-leaf (HTTP) | HTTP `/xfer` | None | Direct sync, `fossil clone` compat |
+| Leaf-to-leaf (iroh) | NATS over QUIC tunnel | iroh sidecar | P2P with NAT traversal, no central infra |
 
-1. **Opens a Fossil repo** via `repo.Open(path)` — reads `project-code` and `server-code` from the SQLite config table
-2. **Connects to NATS** at the configured URL
-3. **Runs a poll loop** — every N seconds (default 5s):
-   - Queries `unsent` and `unclustered` tables for new local artifacts
-   - If anything found (or pull is enabled), calls `sync.Sync()` through the NATS transport
-4. **Syncs via NATS request/reply** — encodes an xfer Message, publishes to `<prefix>.<project-code>.sync`, waits for the bridge's reply, decodes the response
-5. **Handles signals**:
-   - `SIGUSR1` — triggers an immediate sync (skips the poll timer)
-   - `SIGINT` / `SIGTERM` — graceful shutdown (stops loop, closes NATS, closes repo)
-
-## Usage
-
-```bash
-leaf-agent --repo /path/to/repo.fossil \
-           --nats nats://localhost:4222 \
-           --poll 5s \
-           --user anonymous \
-           --push \
-           --pull
-```
-
-### Flags
+## Flags
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
 | `--repo` | `LEAF_REPO` | (required) | Path to `.fossil` repo file |
-| `--nats` | `LEAF_NATS_URL` | `nats://localhost:4222` | NATS server URL |
-| `--poll` | — | `5s` | Poll interval |
-| `--user` | `LEAF_USER` | `anonymous` | Sync user |
+| `--nats` | `LEAF_NATS_URL` | `""` | Optional upstream NATS URL (embedded server joins as leaf) |
+| `--nats-role` | | `peer` | Mesh role: `peer`, `hub`, or `leaf` |
+| `--poll` | | `5s` | Poll interval |
+| `--user` | `LEAF_USER` | (anonymous) | Sync user |
 | `--password` | `LEAF_PASSWORD` | (empty) | Sync password |
-| `--push` | — | `true` | Enable pushing local artifacts |
-| `--pull` | — | `true` | Enable pulling remote artifacts |
-| `--prefix` | — | `fossil` | NATS subject prefix |
+| `--push` / `--no-push` | | `true` | Enable pushing local artifacts |
+| `--pull` / `--no-pull` | | `true` | Enable pulling remote artifacts |
+| `--serve-http` | `LEAF_SERVE_HTTP` | (disabled) | HTTP listen address for `/xfer` + `/healthz` |
+| `--serve-nats` | | `false` | Enable NATS request/reply listener |
+| `--uv` | | `false` | Sync unversioned files (wiki, forum, attachments) |
+| `--prefix` | | `fossil` | NATS subject prefix |
+| `--iroh` | `LEAF_IROH` | `false` | Enable iroh sidecar for P2P |
+| `--iroh-peer` | | (none) | Remote EndpointId (repeatable) |
+| `--iroh-key` | `LEAF_IROH_KEY` | `<repo>.iroh-key` | Ed25519 keypair path |
+| `--verbose` / `-v` | | `false` | Verbose logging |
 
-### Manual Sync
+## Embedded NATS
+
+Every agent runs an in-process NATS server on a random localhost port. The agent's NATS client connects to this local server. This is transparent — the agent doesn't need to know whether peers are reached via external NATS, iroh tunnels, or both.
+
+If `--nats` is provided, the embedded server joins the external NATS as a leaf node. Messages flow between external and embedded NATS automatically.
+
+## Connecting Two Nodes over iroh
+
+iroh enables peer-to-peer sync over QUIC with automatic NAT traversal. No central NATS server or VPN needed — just two machines with internet access.
+
+### Prerequisites
+
+- Both machines have the `leaf` and `iroh-sidecar` binaries
+- Both repos have matching `project-code` and `server-code`
+
+### Step 1: Start both agents
+
+On machine A:
+```bash
+leaf --repo project.fossil --iroh --serve-nats --poll 5s
+```
+
+On machine B:
+```bash
+leaf --repo project.fossil --iroh --serve-nats --poll 5s
+```
+
+Both agents will start their iroh sidecars and log their EndpointIds:
+```
+iroh sidecar ready, endpoint_id=abc123def456...
+```
+
+### Step 2: Exchange EndpointIds
+
+Copy each machine's EndpointId and restart with `--iroh-peer`:
+
+On machine A:
+```bash
+leaf --repo project.fossil --iroh --serve-nats \
+     --iroh-peer <machine-B-endpoint-id>
+```
+
+On machine B:
+```bash
+leaf --repo project.fossil --iroh --serve-nats \
+     --iroh-peer <machine-A-endpoint-id>
+```
+
+The agents will establish a NATS leaf node tunnel over iroh QUIC. Sync happens automatically on the next poll cycle.
+
+### How it works
+
+```
+Machine A                              Machine B
+┌─────────────────┐                   ┌─────────────────┐
+│ Leaf Agent      │                   │ Leaf Agent      │
+│  ↕ nats://      │                   │  ↕ nats://      │
+│ Embedded NATS   │                   │ Embedded NATS   │
+│  ↕ TCP          │                   │  ↕ TCP          │
+│ iroh sidecar    │◄═══ QUIC ════════►│ iroh sidecar    │
+│ (NAT traversal) │   (encrypted)     │ (NAT traversal) │
+└─────────────────┘                   └─────────────────┘
+```
+
+1. Each agent runs an embedded NATS server
+2. The iroh sidecar tunnels NATS leaf node connections over QUIC
+3. The lower EndpointId peer initiates the tunnel (deterministic, no config needed)
+4. NATS handles message routing, subscriptions, and reconnection automatically
+5. Sync happens over NATS subjects — the agent's `NATSTransport` doesn't know it's going over iroh
+
+### Roles
+
+For simple two-node sync, the default `peer` role works. For more complex topologies:
+
+- **`--nats-role hub`** — Dedicated server that only accepts connections. Use when one machine is always-on and others connect to it.
+- **`--nats-role leaf`** — Lightweight client that always solicits outward. Use for WASM browsers or ephemeral machines.
+- **`--nats-role peer`** (default) — Both accepts and solicits. The peer with the lexicographically lower EndpointId initiates the connection.
+
+### With an existing NATS server
+
+You can combine iroh P2P with an external NATS server. The embedded NATS joins the external server as a leaf:
 
 ```bash
-# Trigger immediate sync without waiting for poll
-kill -USR1 $(pgrep leaf-agent)
+leaf --repo project.fossil --iroh --serve-nats \
+     --nats nats://central-server:4222 \
+     --iroh-peer <peer-endpoint-id>
 ```
+
+This gives you:
+- Central NATS for peers that can reach it directly
+- iroh tunnels for peers behind NAT or firewalls
+- All peers see each other through the NATS leaf node graph
 
 ## Architecture
 
 ```
 leaf/
-  cmd/leaf/main.go      CLI entry point, flag parsing, signal handling
+  cmd/leaf/main.go        CLI entry point, flag parsing, signal handling
   agent/
-    config.go            Config struct with defaults and validation
-    agent.go             Agent: New/Start/Stop/SyncNow, poll loop
-    nats.go              NATSTransport implementing sync.Transport
+    config.go             Config struct with defaults and validation
+    agent.go              Agent: New/Start/Stop/SyncNow, poll loop
+    nats_mesh.go          NATSMesh: embedded NATS + iroh tunnel lifecycle
+    nats.go               NATSTransport implementing libfossil.Transport
+    iroh.go               IrohTransport for direct xfer-over-QUIC
+    sidecar.go            iroh-sidecar process management
+    serve_http.go         HTTP server (/healthz + /xfer)
+    serve_nats.go         NATS request/reply handler
+    peer_registry.go      Peer discovery metadata table
 ```
-
-### NATSTransport
-
-Implements `sync.Transport` over NATS request/reply:
-
-```go
-type NATSTransport struct {
-    conn    *nats.Conn
-    subject string        // "<prefix>.<project-code>.sync"
-    timeout time.Duration // default 30s
-}
-
-func (t *NATSTransport) Exchange(ctx, req) (*xfer.Message, error) {
-    // 1. req.Encode() → zlib bytes with 4-byte size prefix
-    // 2. conn.RequestWithContext(ctx, subject, bytes)
-    // 3. xfer.Decode(reply.Data) → *xfer.Message
-}
-```
-
-### Poll Loop
-
-```go
-for {
-    select {
-    case <-ctx.Done():
-        return  // shutdown
-    case <-time.After(pollInterval):
-        doSync()
-    case <-syncNow:
-        doSync()  // SIGUSR1 triggered
-    }
-}
-```
-
-The poll goroutine is the sole executor of `doSync()` — `SyncNow()` only sends on a buffered channel, avoiding concurrent SQLite access.
-
-### doSync
-
-1. **Optimization check** — if `unsent` and `unclustered` tables are both empty and pull is disabled, skip this round
-2. Call `sync.Sync(ctx, repo, transport, opts)`
-3. Log results (rounds, files sent/received, errors)
-4. On error: log and continue (don't crash)
 
 ## What It Does NOT Do
 
-- No web UI or HTTP server
+- No web UI
 - No multi-repo support (one agent per repo)
-- No JetStream persistence (request/reply only — JetStream is a future upgrade)
-- No peer discovery or P2P sync
-- No filesystem watching (polls SQLite tables, not the filesystem)
-- No authentication computation (uses `nobody` permissions or sends login card if user/password provided)
-
-## Dependencies
-
-- `go-libfossil` — sync engine, repo access, xfer codec
-- `github.com/nats-io/nats.go` — NATS client
-- `github.com/nats-io/nats-server/v2` — embedded NATS server (test only)
-
-## Relationship to Bridge
-
-The leaf agent sends sync requests over NATS. It does not know or care what's on the other end. In production, a [bridge](bridge.md) subscribes to those requests and proxies them to a Fossil HTTP server. In tests, a mock subscriber plays the same role.
+- No filesystem watching (polls SQLite tables)
+- No peer discovery (manual `--iroh-peer` config for now)
+- No JetStream persistence (request/reply only)
