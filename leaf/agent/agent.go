@@ -219,14 +219,22 @@ func (a *Agent) Start() error {
 	return nil
 }
 
-// startNATSMesh starts the embedded NATS server (with tunnel remotes already
-// configured by EstablishTunnels) and connects the NATS client.
+// startNATSMesh starts the embedded NATS server and connects the NATS client.
+// If iroh is active, passes sidecar info so the mesh can establish tunnels.
 func (a *Agent) startNATSMesh() error {
 	if a.mesh == nil {
 		return nil
 	}
 
-	clientURL, err := a.mesh.Start()
+	var sc *SidecarInfo
+	if a.irohSidecar != nil && a.irohEndpointID != "" {
+		sc = &SidecarInfo{
+			EndpointID: a.irohEndpointID,
+			SocketPath: a.irohSock,
+		}
+	}
+
+	clientURL, err := a.mesh.Start(sc)
 	if err != nil {
 		return fmt.Errorf("agent: nats mesh start: %w", err)
 	}
@@ -386,18 +394,9 @@ func (a *Agent) startIrohSidecar(ctx context.Context) error {
 	a.irohEndpointID = status.EndpointID
 	a.logf("iroh sidecar ready, endpoint_id=%s", status.EndpointID)
 
-	// Establish outbound NATS tunnels. Each tunnel returns a local port that
-	// the NATS server will solicit to. These ports are consumed by
-	// startNATSMesh -> mesh.Start -> buildServerOpts.
-	if a.mesh != nil {
-		a.mesh.SetEndpointID(status.EndpointID)
-		a.mesh.SetSidecarSocket(a.irohSock)
-		if err := a.mesh.EstablishTunnels(); err != nil {
-			// Non-fatal: log and continue. Tunnels can be retried later.
-			a.logf("warning: establish tunnels: %v", err)
-			slog.Warn("failed to establish iroh NATS tunnels", "error", err)
-		}
-	}
+	// Tunnel establishment is now handled by mesh.Start(SidecarInfo) in
+	// startNATSMesh. The mesh uses the EndpointID and socket path to
+	// establish tunnels before starting the NATS server.
 
 	// Register iroh peers as sync targets.
 	for _, peerID := range a.config.IrohPeers {

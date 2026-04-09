@@ -32,8 +32,6 @@ pub struct AppState {
     pub endpoint: Endpoint,
     pub endpoint_id: String,
     pub alpn: Vec<u8>,
-    /// Local NATS server address for tunnel connections.
-    pub nats_addr: Option<String>,
     /// Cache of live outbound connections keyed by remote endpoint-id string.
     pub conn_cache: Arc<Mutex<HashMap<String, Connection>>>,
     /// Send on this channel to trigger graceful shutdown.
@@ -45,14 +43,12 @@ impl AppState {
         endpoint: Endpoint,
         endpoint_id: String,
         alpn: Vec<u8>,
-        nats_addr: Option<String>,
         shutdown_tx: oneshot::Sender<()>,
     ) -> Self {
         AppState {
             endpoint,
             endpoint_id,
             alpn,
-            nats_addr,
             conn_cache: Arc::new(Mutex::new(HashMap::new())),
             shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
         }

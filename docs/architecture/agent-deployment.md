@@ -11,7 +11,8 @@ The leaf agent is a Go daemon in its own module (`leaf/`) that opens a Fossil re
 | Config Field | Default | CLI Flag | Env Var |
 |---|---|---|---|
 | `RepoPath` | (required) | `--repo` | `LEAF_REPO` |
-| `NATSUrl` | `nats://localhost:4222` | `--nats` | `LEAF_NATS_URL` |
+| `NATSRole` | `"peer"` | `--nats-role` | |
+| `NATSUpstream` | `""` (embedded only) | `--nats` | `LEAF_NATS_URL` |
 | `PollInterval` | `5s` | `--poll` | |
 | `User` | `""` (anonymous) | `--user` | |
 | `Password` | `""` | `--password` | |
@@ -21,6 +22,16 @@ The leaf agent is a Go daemon in its own module (`leaf/`) that opens a Fossil re
 | `ServeNATSEnabled` | `false` | `--serve-nats` | |
 | `UV` | `false` | `--uv` | |
 | `SubjectPrefix` | `"fossil"` | `--prefix` | |
+
+**Embedded NATS:** Every agent runs an in-process NATS server. The agent's NATS client connects to localhost. If `NATSUpstream` is set, the embedded server joins external NATS as a leaf node. If iroh peers are configured, the embedded server connects to them via tunnels over QUIC.
+
+**NATSRole** determines mesh topology:
+
+| Role | Accepts leaf connections | Solicits leaf connections | Use case |
+|---|---|---|---|
+| `peer` (default) | Yes | Yes (lower EndpointId solicits) | Native P2P mesh |
+| `hub` | Yes | No | Dedicated server, cluster node |
+| `leaf` | No | Yes (always solicits outward) | WASM browser, lightweight client |
 
 ## Bridge Architecture
 

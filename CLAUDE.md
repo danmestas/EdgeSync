@@ -84,11 +84,11 @@ go-libfossil exposes an opaque `Repo` handle — all operations are methods on i
 
 ### Agent/Bridge
 - `leaf/agent/` — `Config` (config.go), `New()`, `Start()`, `Stop()`, `SyncNow()`
+  - `nats_mesh.go` — `NATSMesh` module: embedded NATS server + iroh tunnel establishment
   - `serve_http.go` — composes mux with `/healthz` + `r.XferHandler()` (operational endpoints live here, not in go-libfossil)
   - `serve_nats.go` — NATS request/reply listener for leaf-to-leaf sync
-  - `serve_p2p.go` — libp2p stub
-  - Config fields: `ServeHTTPAddr` (":8080" to serve HTTP), `ServeNATSEnabled` (leaf-to-leaf)
-  - CLI flags: `--repo`, `--nats`, `--poll`, `--serve-http`, `--serve-nats`, `--uv`, `--push`, `--pull`, `--user`, `--password`
+  - Config fields: `NATSRole` (peer/hub/leaf), `NATSUpstream` (optional external NATS), `ServeHTTPAddr`, `ServeNATSEnabled`, `IrohEnabled`, `IrohPeers`, `IrohKeyPath`
+  - CLI flags: `--repo`, `--nats`, `--nats-role`, `--poll`, `--serve-http`, `--serve-nats`, `--uv`, `--push`, `--pull`, `--user`, `--password`, `--iroh`, `--iroh-peer`, `--iroh-key`
 - `bridge/bridge/` — `Config` (config.go), `New()`, `Start()`, `Stop()`
 
 ### Simulation Testing

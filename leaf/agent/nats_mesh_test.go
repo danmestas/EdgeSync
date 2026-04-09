@@ -9,7 +9,7 @@ import (
 
 func TestNATSMeshStartStop(t *testing.T) {
 	mesh := &NATSMesh{role: NATSRolePeer}
-	clientURL, err := mesh.Start()
+	clientURL, err := mesh.Start(nil) // no sidecar
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}

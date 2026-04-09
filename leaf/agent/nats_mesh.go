@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -12,7 +13,17 @@ import (
 	natsserver "github.com/nats-io/nats-server/v2/server"
 )
 
+// SidecarInfo provides the sidecar details that NATSMesh needs for tunnel
+// establishment. Passed to Start so the mesh can drive the full sequence.
+type SidecarInfo struct {
+	EndpointID string // our iroh EndpointId
+	SocketPath string // Unix socket for HTTP calls to sidecar
+}
+
 // NATSMesh owns the embedded NATS server and tunnel establishment lifecycle.
+//
+// The caller creates a NATSMesh and calls Start(). Everything else — port
+// reservation, tunnel establishment, NATS server configuration — is internal.
 //
 // The startup order matters because the NATS leaf node protocol is asymmetric:
 //   - Hub side sends INFO, waits for CONNECT from the leaf.
@@ -23,32 +34,20 @@ import (
 // remote BEFORE starting. Meanwhile, the sidecar's inbound (accepting) side
 // needs to know the local NATS leaf port to connect to.
 //
-// To break the chicken-and-egg between sidecar needing the leaf port and
-// NATS needing the tunnel ports, we pre-reserve the leaf port:
-//
-//  1. ReserveLeafPort — bind an ephemeral port, record it, close the listener
-//  2. Start sidecar with --nats-addr pointing to the reserved port
-//  3. EstablishTunnels — get outbound tunnel ports from the sidecar
-//  4. Start — build NATS opts with the reserved leaf port + tunnel remotes
+// To break the chicken-and-egg, Start pre-reserves the leaf port, uses it
+// to tell the sidecar where NATS will listen, establishes tunnels to get
+// remote ports, then starts NATS with all ports configured.
 type NATSMesh struct {
 	role      NATSRole
 	upstream  string   // optional external NATS URL
 	irohPeers []string // remote EndpointIds
-	endpointID string  // our iroh EndpointId
 
-	sidecarSocketPath string // for HTTP calls to sidecar
-
-	// reservedLeafPort is pre-allocated so the sidecar can be told the leaf
-	// address before the NATS server starts. Zero means "let NATS pick".
+	// Set internally during Start.
 	reservedLeafPort int
-
-	// tunnelPorts holds local listener ports returned by the sidecar for each
-	// peer we should solicit. Populated by EstablishTunnels, consumed by Start.
-	tunnelPorts map[string]uint16 // peerID -> local port
-
-	server    *natsserver.Server
-	clientURL string // nats://127.0.0.1:<client-port>
-	leafAddr  string // 127.0.0.1:<leaf-port> (for sidecar --nats-addr)
+	tunnelPorts      map[string]uint16 // peerID -> local port
+	server           *natsserver.Server
+	clientURL        string // nats://127.0.0.1:<client-port>
+	leafAddr         string // 127.0.0.1:<leaf-port> (for sidecar --nats-addr)
 }
 
 // tunnelResponse is the JSON body returned by POST /nats-tunnel/{endpoint-id}.
@@ -56,17 +55,21 @@ type tunnelResponse struct {
 	Port uint16 `json:"port"`
 }
 
+// LeafAddr returns the pre-reserved leaf node listen address for the sidecar's
+// --nats-addr. Only valid after ReserveLeafPort or Start. Empty for leaf role.
+func (m *NATSMesh) LeafAddr() string {
+	return m.leafAddr
+}
+
 // ReserveLeafPort pre-allocates an ephemeral TCP port for the NATS leaf node
-// listener. The port is recorded so buildServerOpts can pass a specific port
-// to NATS instead of -1 (random). The listener is closed immediately — NATS
-// will rebind it when it starts. There is a small TOCTOU window, but in
-// practice collisions are extremely unlikely on localhost.
+// listener. The sidecar needs this address at launch (--nats-addr), which
+// happens before Start. The listener is closed immediately — NATS rebinds it.
 //
-// Call this before starting the sidecar so --nats-addr can be set. Only
-// meaningful for hub/peer roles (leaf role has no leaf port).
+// This is the one method that must be called before Start when iroh is enabled.
+// For non-iroh usage, Start handles everything.
 func (m *NATSMesh) ReserveLeafPort() error {
 	if m.role == NATSRoleLeaf {
-		return nil // leaf nodes don't listen for leaf connections
+		return nil
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -80,59 +83,21 @@ func (m *NATSMesh) ReserveLeafPort() error {
 	return nil
 }
 
-// EstablishTunnels tells the sidecar to open NATS tunnels to peers.
-// Each tunnel returns a local TCP port that the embedded NATS server will
-// solicit to. Must be called BEFORE Start so the ports can be wired into
-// the NATS server options.
-func (m *NATSMesh) EstablishTunnels() error {
-	if m.sidecarSocketPath == "" || m.endpointID == "" {
-		return nil // no sidecar or no endpoint — nothing to tunnel
+// Start brings up the NATS mesh. If sidecar info is provided, it establishes
+// tunnels to iroh peers first, then starts the embedded NATS server with
+// tunnel ports wired as leaf remotes. Returns the NATS client URL.
+//
+// Pass nil for sidecar when iroh is not enabled.
+func (m *NATSMesh) Start(sidecar *SidecarInfo) (clientURL string, err error) {
+	// Step 1: establish tunnels (if sidecar available).
+	if sidecar != nil {
+		if tunnelErr := m.establishTunnels(sidecar); tunnelErr != nil {
+			// Non-fatal: partial connectivity is better than none.
+			fmt.Printf("nats mesh: tunnel establishment (non-fatal): %v\n", tunnelErr)
+		}
 	}
 
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", m.sidecarSocketPath)
-			},
-		},
-		Timeout: 10 * time.Second,
-	}
-
-	m.tunnelPorts = make(map[string]uint16)
-
-	for _, peerID := range m.irohPeers {
-		if !shouldSolicit(m.role, m.endpointID, peerID) {
-			continue
-		}
-
-		reqURL := fmt.Sprintf("http://iroh-sidecar/nats-tunnel/%s", peerID)
-		resp, err := client.Post(reqURL, "", nil)
-		if err != nil {
-			return fmt.Errorf("tunnel to %s: %w", peerID, err)
-		}
-		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
-			return fmt.Errorf("tunnel to %s: HTTP %d", peerID, resp.StatusCode)
-		}
-
-		var tr tunnelResponse
-		err = json.NewDecoder(resp.Body).Decode(&tr)
-		resp.Body.Close()
-		if err != nil {
-			return fmt.Errorf("tunnel to %s: decode response: %w", peerID, err)
-		}
-		if tr.Port == 0 {
-			return fmt.Errorf("tunnel to %s: sidecar returned port 0", peerID)
-		}
-		m.tunnelPorts[peerID] = tr.Port
-	}
-	return nil
-}
-
-// Start brings up the embedded NATS server.
-// Tunnel ports from EstablishTunnels (if any) are included as leaf remotes.
-// Returns the NATS client URL for the agent to connect to.
-func (m *NATSMesh) Start() (clientURL string, err error) {
+	// Step 2: start embedded NATS with tunnel ports as leaf remotes.
 	opts := m.buildServerOpts()
 	m.server, err = natsserver.NewServer(opts)
 	if err != nil {
@@ -141,12 +106,12 @@ func (m *NATSMesh) Start() (clientURL string, err error) {
 	m.server.Start()
 	if !m.server.ReadyForConnections(5 * time.Second) {
 		m.server.Shutdown()
-		return "", fmt.Errorf("nats mesh: server not ready within 5s")
+		return "", fmt.Errorf("nats mesh: server not ready within 5s (reserved leaf port: %d)", m.reservedLeafPort)
 	}
 
 	m.clientURL = m.server.ClientURL()
 
-	// Determine leaf node address for sidecar (when not pre-reserved).
+	// Determine leaf node address when not pre-reserved.
 	if m.role != NATSRoleLeaf && m.leafAddr == "" {
 		varz, vErr := m.server.Varz(&natsserver.VarzOptions{})
 		if vErr == nil && varz.LeafNode.Port > 0 {
@@ -166,19 +131,56 @@ func (m *NATSMesh) Stop() {
 	}
 }
 
-// LeafAddr returns the leaf node listen address for the sidecar's --nats-addr.
-func (m *NATSMesh) LeafAddr() string {
-	return m.leafAddr
-}
+// establishTunnels tells the sidecar to open NATS tunnels to peers.
+// Each tunnel returns a local TCP port that NATS will solicit to.
+func (m *NATSMesh) establishTunnels(sc *SidecarInfo) error {
+	if sc.SocketPath == "" || sc.EndpointID == "" {
+		return nil
+	}
 
-// SetEndpointID is called after the sidecar reports its EndpointId.
-func (m *NATSMesh) SetEndpointID(id string) {
-	m.endpointID = id
-}
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial("unix", sc.SocketPath)
+			},
+		},
+		Timeout: 10 * time.Second,
+	}
 
-// SetSidecarSocket provides the sidecar Unix socket path for tunnel HTTP calls.
-func (m *NATSMesh) SetSidecarSocket(path string) {
-	m.sidecarSocketPath = path
+	m.tunnelPorts = make(map[string]uint16)
+
+	var errs []error
+	for _, peerID := range m.irohPeers {
+		if !shouldSolicit(m.role, sc.EndpointID, peerID) {
+			continue
+		}
+
+		reqURL := fmt.Sprintf("http://iroh-sidecar/nats-tunnel/%s", peerID)
+		resp, err := client.Post(reqURL, "", nil)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("tunnel to %s: %w", peerID, err))
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			errs = append(errs, fmt.Errorf("tunnel to %s: HTTP %d", peerID, resp.StatusCode))
+			continue
+		}
+
+		var tr tunnelResponse
+		err = json.NewDecoder(resp.Body).Decode(&tr)
+		resp.Body.Close()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("tunnel to %s: decode response: %w", peerID, err))
+			continue
+		}
+		if tr.Port == 0 {
+			errs = append(errs, fmt.Errorf("tunnel to %s: sidecar returned port 0", peerID))
+			continue
+		}
+		m.tunnelPorts[peerID] = tr.Port
+	}
+	return errors.Join(errs...)
 }
 
 // buildServerOpts creates nats-server options based on role.
