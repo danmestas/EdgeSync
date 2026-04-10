@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	libfossil "github.com/danmestas/go-libfossil"
@@ -114,6 +115,14 @@ type Config struct {
 	// used directly — content caching is handled internally by go-libfossil.
 	ContentCacheSize int64
 
+	// NotifyEnabled starts the notify messaging service alongside sync.
+	// Requires a notify.fossil repo adjacent to the main repo (or at NotifyRepoPath).
+	NotifyEnabled bool
+
+	// NotifyRepoPath is the path to the notify.fossil repo.
+	// Defaults to "<repo-dir>/notify.fossil" if empty.
+	NotifyRepoPath string
+
 	// Autosync controls automatic sync around commit (default: AutosyncOff).
 	Autosync AutosyncMode
 
@@ -156,6 +165,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.ContentCacheSize == 0 {
 		c.ContentCacheSize = 32 << 20 // 32 MiB
+	}
+	if c.NotifyEnabled && c.NotifyRepoPath == "" {
+		c.NotifyRepoPath = filepath.Join(filepath.Dir(c.RepoPath), "notify.fossil")
 	}
 }
 

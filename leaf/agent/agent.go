@@ -14,6 +14,7 @@ import (
 
 	libfossil "github.com/danmestas/go-libfossil"
 	"github.com/danmestas/go-libfossil/simio"
+	"github.com/dmestas/edgesync/leaf/agent/notify"
 	"github.com/nats-io/nats.go"
 )
 
@@ -69,6 +70,8 @@ type Agent struct {
 	irohSidecar    *sidecar     // nil when iroh is disabled
 	irohSock       string       // Unix socket path for iroh sidecar
 	irohEndpointID string       // local iroh endpoint ID (set after sidecar ready)
+	notifyRepo     *libfossil.Repo  // nil when notify is disabled
+	notifySvc      *notify.Service  // nil when notify is disabled
 }
 
 // New creates a new Agent from the given configuration.
@@ -214,8 +217,51 @@ func (a *Agent) Start() error {
 		return err
 	}
 
+	// Step 5: notify messaging service (after NATS is connected).
+	if err := a.startNotify(); err != nil {
+		a.logf("warning: notify service failed to start: %v", err)
+		// Non-fatal — agent still works without notify.
+	}
+
 	a.done = make(chan struct{})
 	go a.pollLoop(ctx)
+	return nil
+}
+
+// startNotify opens the notify.fossil repo and creates the notify Service
+// with the agent's NATS connection. Non-fatal if notify.fossil doesn't exist.
+func (a *Agent) startNotify() error {
+	if !a.config.NotifyEnabled {
+		return nil
+	}
+
+	path := a.config.NotifyRepoPath
+	r, err := libfossil.Open(path)
+	if err != nil {
+		return fmt.Errorf("open notify repo %s: %w", path, err)
+	}
+	a.notifyRepo = r
+
+	fromName := a.config.PeerID
+	from := a.irohEndpointID
+	if from == "" {
+		from = a.config.PeerID
+	}
+
+	svc, err := notify.NewService(notify.ServiceConfig{
+		Repo:     r,
+		NATSConn: a.conn,
+		From:     from,
+		FromName: fromName,
+	})
+	if err != nil {
+		r.Close()
+		a.notifyRepo = nil
+		return fmt.Errorf("create notify service: %w", err)
+	}
+	a.notifySvc = svc
+
+	a.logf("notify service started (repo=%s, nats=%v)", path, a.conn != nil)
 	return nil
 }
 
@@ -420,6 +466,12 @@ func (a *Agent) Stop() error {
 	if a.done != nil {
 		<-a.done
 	}
+	if a.notifySvc != nil {
+		a.notifySvc.Close()
+	}
+	if a.notifyRepo != nil {
+		a.notifyRepo.Close()
+	}
 	if a.irohSidecar != nil {
 		a.irohSidecar.shutdown()
 	}
@@ -434,6 +486,9 @@ func (a *Agent) Stop() error {
 	}
 	return nil
 }
+
+// NotifyService returns the notify messaging service, or nil if notify is not enabled.
+func (a *Agent) NotifyService() *notify.Service { return a.notifySvc }
 
 // IrohEndpointID returns the local iroh endpoint ID, or "" if iroh is not enabled
 // or the sidecar hasn't started yet.

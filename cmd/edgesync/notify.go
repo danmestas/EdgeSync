@@ -11,6 +11,7 @@ import (
 	libfossil "github.com/danmestas/go-libfossil"
 	"github.com/danmestas/go-libfossil/cli"
 	"github.com/dmestas/edgesync/leaf/agent/notify"
+	"github.com/nats-io/nats.go"
 )
 
 // NotifyCmd is the top-level "notify" command group.
@@ -41,6 +42,21 @@ func openNotifyRepo(g *cli.Globals) (*libfossil.Repo, error) {
 		return nil, fmt.Errorf("open notify repo: %w", err)
 	}
 	return r, nil
+}
+
+// connectNATS optionally connects to a NATS server. Returns nil conn if url is empty.
+func connectNATS(url string) (*nats.Conn, error) {
+	if url == "" {
+		return nil, nil
+	}
+	nc, err := nats.Connect(url,
+		nats.Name("edgesync-notify-cli"),
+		nats.Timeout(5*time.Second),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("connect to NATS %s: %w", url, err)
+	}
+	return nc, nil
 }
 
 // parseActions splits a comma-separated string into Action slices.
@@ -85,6 +101,7 @@ type NotifySendCmd struct {
 	Thread   string `help:"Existing thread short ID (omit to start a new thread)"`
 	Actions  string `help:"Comma-separated action labels"`
 	Priority string `help:"Priority level (info, action_required, urgent)" default:"info" enum:"info,action_required,urgent"`
+	NATS     string `help:"NATS server URL (enables real-time delivery)" env:"EDGESYNC_NATS"`
 	Body     string `arg:"" help:"Message body"`
 }
 
@@ -98,8 +115,17 @@ func (c *NotifySendCmd) Run(g *cli.Globals) error {
 	}
 	defer r.Close()
 
+	nc, err := connectNATS(c.NATS)
+	if err != nil {
+		return err
+	}
+	if nc != nil {
+		defer nc.Close()
+	}
+
 	svc, err := notify.NewService(notify.ServiceConfig{
-		Repo: r,
+		Repo:     r,
+		NATSConn: nc,
 	})
 	if err != nil {
 		return err
@@ -130,6 +156,7 @@ type NotifyAskCmd struct {
 	Actions  string        `help:"Comma-separated action labels"`
 	Priority string        `help:"Priority level (info, action_required, urgent)" default:"action_required" enum:"info,action_required,urgent"`
 	Timeout  time.Duration `help:"Timeout waiting for reply (0 = forever)" default:"0s"`
+	NATS     string        `help:"NATS server URL (required for receiving replies)" env:"EDGESYNC_NATS"`
 	Body     string        `arg:"" help:"Message body"`
 }
 
@@ -143,8 +170,17 @@ func (c *NotifyAskCmd) Run(g *cli.Globals) error {
 	}
 	defer r.Close()
 
+	nc, err := connectNATS(c.NATS)
+	if err != nil {
+		return err
+	}
+	if nc != nil {
+		defer nc.Close()
+	}
+
 	svc, err := notify.NewService(notify.ServiceConfig{
-		Repo: r,
+		Repo:     r,
+		NATSConn: nc,
 	})
 	if err != nil {
 		return err
@@ -197,6 +233,7 @@ func (c *NotifyAskCmd) Run(g *cli.Globals) error {
 type NotifyWatchCmd struct {
 	Project string `help:"Project code" required:""`
 	Thread  string `help:"Filter to specific thread short ID"`
+	NATS    string `help:"NATS server URL (required for real-time delivery)" env:"EDGESYNC_NATS"`
 }
 
 func (c *NotifyWatchCmd) Run(g *cli.Globals) error {
@@ -209,8 +246,17 @@ func (c *NotifyWatchCmd) Run(g *cli.Globals) error {
 	}
 	defer r.Close()
 
+	nc, err := connectNATS(c.NATS)
+	if err != nil {
+		return err
+	}
+	if nc != nil {
+		defer nc.Close()
+	}
+
 	svc, err := notify.NewService(notify.ServiceConfig{
-		Repo: r,
+		Repo:     r,
+		NATSConn: nc,
 	})
 	if err != nil {
 		return err
