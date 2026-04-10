@@ -18,6 +18,7 @@ type SyncStartCmd struct {
 	Push         bool          `help:"Enable push" default:"true" negatable:""`
 	Pull         bool          `help:"Enable pull" default:"true" negatable:""`
 	UV           bool          `help:"Sync unversioned files" default:"false"`
+	Notify       bool          `help:"Enable notify messaging (requires notify.fossil next to repo)" default:"false"`
 }
 
 func (c *SyncStartCmd) Run(g *cli.Globals) error {
@@ -26,12 +27,13 @@ func (c *SyncStartCmd) Run(g *cli.Globals) error {
 	}
 
 	a, err := agent.New(agent.Config{
-		RepoPath:     g.Repo,
-		NATSUpstream: c.NATSUrl,
-		PollInterval: c.PollInterval,
-		Push:         c.Push,
-		Pull:         c.Pull,
-		UV:           c.UV,
+		RepoPath:      g.Repo,
+		NATSUpstream:  c.NATSUrl,
+		PollInterval:  c.PollInterval,
+		Push:          c.Push,
+		Pull:          c.Pull,
+		UV:            c.UV,
+		NotifyEnabled: c.Notify,
 	})
 	if err != nil {
 		return fmt.Errorf("agent: %w", err)
@@ -41,7 +43,7 @@ func (c *SyncStartCmd) Run(g *cli.Globals) error {
 		return fmt.Errorf("start: %w", err)
 	}
 
-	slog.Info("edgesync sync agent running", "repo", g.Repo, "nats", c.NATSUrl, "poll", c.PollInterval)
+	slog.Info("edgesync sync agent running", "repo", g.Repo, "nats", c.NATSUrl, "poll", c.PollInterval, "notify", c.Notify)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
