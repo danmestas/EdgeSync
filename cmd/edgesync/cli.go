@@ -10,6 +10,7 @@ type CLI struct {
 	Repo   cli.RepoCmd `cmd:"" help:"Repository operations"`
 	Sync   SyncCmd     `cmd:"" help:"Leaf agent sync"`
 	Bridge BridgeCmd   `cmd:"" help:"NATS-to-Fossil bridge"`
+	Notify NotifyCmd   `cmd:"" help:"Bidirectional notification messaging"`
 	Doctor DoctorCmd   `cmd:"" help:"Check development environment health"`
 }
 
