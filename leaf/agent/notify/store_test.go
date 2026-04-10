@@ -1,6 +1,9 @@
 package notify
 
 import (
+	"bytes"
+	"compress/zlib"
+	"encoding/binary"
 	"testing"
 	"time"
 
@@ -214,4 +217,81 @@ func TestReadThread(t *testing.T) {
 	if messages[1].ReplyTo != msg1.ID {
 		t.Errorf("second message ReplyTo = %q, want %q", messages[1].ReplyTo, msg1.ID)
 	}
+}
+
+func TestDecompressBlobEdgeCases(t *testing.T) {
+	t.Run("empty input", func(t *testing.T) {
+		out, err := decompressBlob(nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if out != nil {
+			t.Errorf("expected nil, got %v", out)
+		}
+	})
+
+	t.Run("too short for header", func(t *testing.T) {
+		out, err := decompressBlob([]byte{0x01, 0x02})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(out) != 2 {
+			t.Errorf("expected passthrough of 2 bytes, got %d", len(out))
+		}
+	})
+
+	t.Run("valid compressed blob", func(t *testing.T) {
+		payload := []byte("hello world")
+		var zbuf bytes.Buffer
+		w := zlib.NewWriter(&zbuf)
+		w.Write(payload)
+		w.Close()
+
+		// Build Fossil blob: 4-byte BE size + zlib data.
+		blob := make([]byte, 4+zbuf.Len())
+		binary.BigEndian.PutUint32(blob[:4], uint32(len(payload)))
+		copy(blob[4:], zbuf.Bytes())
+
+		out, err := decompressBlob(blob)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if string(out) != "hello world" {
+			t.Errorf("got %q, want %q", out, "hello world")
+		}
+	})
+
+	t.Run("corrupted zlib data", func(t *testing.T) {
+		// Valid size header but garbage zlib payload.
+		blob := make([]byte, 8)
+		binary.BigEndian.PutUint32(blob[:4], 100)
+		blob[4] = 0xFF
+		blob[5] = 0xFE
+		blob[6] = 0xFD
+		blob[7] = 0xFC
+
+		_, err := decompressBlob(blob)
+		if err == nil {
+			t.Fatal("expected error for corrupted zlib, got nil")
+		}
+	})
+
+	t.Run("truncated zlib data", func(t *testing.T) {
+		payload := []byte("hello world this is a longer string")
+		var zbuf bytes.Buffer
+		w := zlib.NewWriter(&zbuf)
+		w.Write(payload)
+		w.Close()
+
+		// Build blob but truncate the zlib data.
+		full := zbuf.Bytes()
+		blob := make([]byte, 4+len(full)/2)
+		binary.BigEndian.PutUint32(blob[:4], uint32(len(payload)))
+		copy(blob[4:], full[:len(full)/2])
+
+		_, err := decompressBlob(blob)
+		if err == nil {
+			t.Fatal("expected error for truncated zlib, got nil")
+		}
+	})
 }

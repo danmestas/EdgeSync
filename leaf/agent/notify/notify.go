@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -74,33 +75,22 @@ type SendOpts struct {
 
 // Send creates a message, commits to repo, publishes to NATS (best-effort).
 func (s *Service) Send(opts SendOpts) (Message, error) {
-	var msg Message
+	msg := NewMessage(MessageOpts{
+		Project:  opts.Project,
+		From:     s.config.From,
+		FromName: s.config.FromName,
+		Body:     opts.Body,
+		Priority: opts.Priority,
+		Actions:  opts.Actions,
+		Media:    opts.Media,
+	})
 
 	if opts.ThreadShort != "" {
 		threadID, err := s.resolveThread(opts.Project, opts.ThreadShort)
 		if err != nil {
 			return Message{}, fmt.Errorf("notify: resolve thread %q: %w", opts.ThreadShort, err)
 		}
-		msg = NewMessage(MessageOpts{
-			Project:  opts.Project,
-			From:     s.config.From,
-			FromName: s.config.FromName,
-			Body:     opts.Body,
-			Priority: opts.Priority,
-			Actions:  opts.Actions,
-			Media:    opts.Media,
-		})
 		msg.Thread = threadID
-	} else {
-		msg = NewMessage(MessageOpts{
-			Project:  opts.Project,
-			From:     s.config.From,
-			FromName: s.config.FromName,
-			Body:     opts.Body,
-			Priority: opts.Priority,
-			Actions:  opts.Actions,
-			Media:    opts.Media,
-		})
 	}
 
 	// Commit to repo.
@@ -115,7 +105,9 @@ func (s *Service) Send(opts SendOpts) (Message, error) {
 
 	// Publish to NATS (best-effort — nil conn means repo-only mode).
 	if s.conn != nil {
-		_ = Publish(s.conn, msg)
+		if err := Publish(s.conn, msg); err != nil {
+			slog.Warn("notify: NATS publish failed (message committed to repo)", "error", err, "msg_id", msg.ID)
+		}
 	}
 
 	return msg, nil

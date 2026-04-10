@@ -81,12 +81,11 @@ func (c *NotifyInitCmd) Run(g *cli.Globals) error {
 // --- Send ---
 
 type NotifySendCmd struct {
-	Project   string `help:"Project code" required:""`
-	Thread    string `help:"Existing thread short ID" xor:"thread"`
-	NewThread bool   `help:"Start a new thread" xor:"thread"`
-	Actions   string `help:"Comma-separated action labels"`
-	Priority  string `help:"Priority level (info, action_required, urgent)" default:"info" enum:"info,action_required,urgent"`
-	Body      string `arg:"" help:"Message body"`
+	Project  string `help:"Project code" required:""`
+	Thread   string `help:"Existing thread short ID (omit to start a new thread)"`
+	Actions  string `help:"Comma-separated action labels"`
+	Priority string `help:"Priority level (info, action_required, urgent)" default:"info" enum:"info,action_required,urgent"`
+	Body     string `arg:"" help:"Message body"`
 }
 
 func (c *NotifySendCmd) Run(g *cli.Globals) error {
@@ -126,13 +125,12 @@ func (c *NotifySendCmd) Run(g *cli.Globals) error {
 // --- Ask ---
 
 type NotifyAskCmd struct {
-	Project   string        `help:"Project code" required:""`
-	Thread    string        `help:"Existing thread short ID" xor:"thread"`
-	NewThread bool          `help:"Start a new thread" xor:"thread"`
-	Actions   string        `help:"Comma-separated action labels"`
-	Priority  string        `help:"Priority level (info, action_required, urgent)" default:"action_required" enum:"info,action_required,urgent"`
-	Timeout   time.Duration `help:"Timeout waiting for reply (0 = forever)" default:"0s"`
-	Body      string        `arg:"" help:"Message body"`
+	Project  string        `help:"Project code" required:""`
+	Thread   string        `help:"Existing thread short ID (omit to start a new thread)"`
+	Actions  string        `help:"Comma-separated action labels"`
+	Priority string        `help:"Priority level (info, action_required, urgent)" default:"action_required" enum:"info,action_required,urgent"`
+	Timeout  time.Duration `help:"Timeout waiting for reply (0 = forever)" default:"0s"`
+	Body     string        `arg:"" help:"Message body"`
 }
 
 func (c *NotifyAskCmd) Run(g *cli.Globals) error {

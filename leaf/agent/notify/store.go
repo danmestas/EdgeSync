@@ -238,6 +238,8 @@ func readFileContent(r *libfossil.Repo, name string) ([]byte, error) {
 }
 
 // decompressBlob decodes Fossil's blob format: 4-byte big-endian size prefix + zlib payload.
+// If go-libfossil adds r.ReadFile() in the future, this function and readFileContent should
+// migrate to use it and this direct DB access can be removed.
 func decompressBlob(data []byte) ([]byte, error) {
 	if len(data) < 4 {
 		return data, nil // Too small to be compressed.
