@@ -74,6 +74,7 @@ edgesync/media/
   "from_name": "claude-macbook",
   "timestamp": "2026-04-10T12:00:00Z",
   "body": "Build failed on commit abc123. Want me to retry?",
+  "priority": "action_required",
   "actions": [
     {"id": "retry", "label": "Retry"},
     {"id": "skip", "label": "Skip"},
@@ -96,6 +97,7 @@ edgesync/media/
 | `from_name` | string | yes | Human-readable sender name |
 | `timestamp` | string | yes | ISO 8601 UTC timestamp |
 | `body` | string | yes | Message text |
+| `priority` | string | no | `info` (default), `action_required`, or `urgent`. Controls sort order and badge style in the app. |
 | `actions` | array | no | Quick action buttons |
 | `reply_to` | string | no | Message ID this is replying to |
 | `media` | array | no | List of media filenames in `<project>/media/` |
@@ -117,6 +119,7 @@ Note: message JSON files are versioned artifacts (committed via `r.Commit()`). M
 
 ```
 notify.<project>.<thread-id>    # Per-thread messages
+notify.<project>.ack            # Delivery receipts
 notify.<project>.presence       # Online/typing indicators
 notify.<project>.*              # All threads in a project (wildcard)
 notify.>                        # All projects, all threads (firehose)
@@ -138,10 +141,17 @@ Deduplication: the receiver checks the message `id`. If it already received the 
 Commands added to the `edgesync` binary under the `notify` subcommand:
 
 ```bash
-# Send a message (new thread)
+# Ask a question and wait for a reply (most common pattern)
+# Sends a message, prints the thread ID, blocks until the first reply
+edgesync notify ask --project edgesync \
+  "Build failed on commit abc123. Retry?" \
+  --actions "Retry,Skip,Show Logs" \
+  --priority action_required
+
+# Send a message (new thread, fire-and-forget)
 edgesync notify send --project edgesync --new-thread \
-  "Build failed on commit abc123" \
-  --actions "Retry,Skip,Show Logs"
+  "Deploy to staging complete" \
+  --priority info
 
 # Send a message (existing thread)
 edgesync notify send --project edgesync --thread a1b2c3d4 \
@@ -159,12 +169,39 @@ edgesync notify threads --project edgesync
 # Read thread history
 edgesync notify log --project edgesync --thread a1b2c3d4
 
-# Initialize the notify repo
+# Initialize the notify system (creates notify.fossil repo, configures NATS subjects)
 edgesync notify init
 
 # Show connection state and unread counts
 edgesync notify status
+
+# Trace a message through the delivery pipeline
+edgesync notify trace <msg-id>
+
+# Pair a new device (generates a one-time pairing token)
+edgesync notify pair --name "dan-iphone"
+
+# Accept a pairing token (run on the new device / app)
+edgesync notify pair --accept <token>
 ```
+
+### Ask Command
+
+`ask` is the primary command for Claude's request/response pattern. It combines `send --new-thread` and `watch` into a single blocking call:
+
+1. Creates a new thread and sends the message
+2. Prints the thread ID to stderr (so Claude can reference it later)
+3. Blocks on the NATS subscription, waiting for the first reply
+4. Prints the reply to stdout and exits
+
+```bash
+$ edgesync notify ask --project edgesync "Deploy to prod?" --actions "Yes,No"
+# stderr: thread:a1b2c3d4
+# (blocks until reply)
+# stdout: [2026-04-10T12:01:03Z] thread:a1b2c3d4 from:dan-iphone action:yes
+```
+
+Optional `--timeout 5m` flag (default: no timeout, blocks indefinitely). On timeout, exits with code 2 so Claude can detect it.
 
 ### Watch Output Format
 
@@ -173,7 +210,10 @@ Structured for machine parsing (Claude reads stdout):
 ```
 [2026-04-10T12:01:03Z] thread:a1b2c3d4 from:dan-iphone action:retry
 [2026-04-10T12:01:15Z] thread:a1b2c3d4 from:dan-iphone text:also bump the version
+[2026-04-10T12:01:20Z] thread:a1b2c3d4 from:dan-iphone delivered
 ```
+
+The `delivered` line appears when the recipient's device acknowledges receipt (see Delivery Receipts below).
 
 ### Send Behavior
 
@@ -182,6 +222,13 @@ Structured for machine parsing (Claude reads stdout):
 ### Thread ID Shorthand
 
 Full thread IDs are UUIDs. The CLI accepts and displays 8-character short hashes. Collision resolution: if ambiguous, the CLI prompts for more characters.
+
+### Priority Flag
+
+`--priority` accepts `info` (default), `action_required`, or `urgent`. Sets the `priority` field in the message JSON. The Expo app uses this for sort order, badge color, and notification sound:
+- `info` — standard notification, no badge
+- `action_required` — highlighted in inbox, badge on thread
+- `urgent` — prominent badge, persistent notification sound
 
 ## Expo App
 
@@ -203,13 +250,15 @@ The go-libfossil `notify.fossil` repo is the single source of truth. The app rea
 
 ### Screens
 
-**Inbox** — all threads grouped by project, sorted by last activity. Unread indicators based on which files are new since last view. Each thread shows the last message preview and sender attribution.
+**Inbox** — all threads grouped by project. Primary sort: priority (`urgent` > `action_required` > `info`). Secondary sort: last activity. Unread indicators based on which files are new since last view. Each thread shows the last message preview, sender attribution, and priority badge. Urgent threads get a distinct visual treatment.
 
 **Thread Detail** — message bubbles with sender identity, timestamps. Quick action buttons rendered from the message's `actions` array. Media attachments rendered inline. Messages ordered by timestamp from the filename.
 
 **Reply Composer** — text input and quick action buttons. Committing a reply writes a JSON file to the repo and publishes on NATS.
 
 **Settings** — hub connection configuration (iroh peer ID, hub address), project subscriptions, device name (`from_name`).
+
+**Pairing** — accessible from Settings. Enter a pairing token (or scan QR code) to connect to a hub. Displays the device's iroh endpoint ID for manual pairing if needed.
 
 ### Offline Behavior
 
@@ -225,6 +274,62 @@ The UI holds only:
 - Reply text input buffer
 
 Everything else is derived from reading the repo file tree. Thread list = directory listing. Message list = file listing sorted by timestamp prefix. Unread state = files newer than last-viewed timestamp.
+
+## Delivery Receipts
+
+When a device receives a message via NATS, it publishes an acknowledgment on `notify.<project>.ack` with the message ID and the receiver's endpoint ID. The sender's `watch` (or `ask`) prints a `delivered` line when it sees the ack.
+
+Delivery receipts are NATS-only (real-time). They are not committed to the Fossil repo — they're ephemeral signals. If the sender is offline when the ack is published, it simply doesn't see it. This is acceptable: receipts are a convenience, not a guarantee. Fossil sync is the guarantee.
+
+Ack payload:
+
+```json
+{
+  "msg_id": "msg-<uuid>",
+  "received_by": "<iroh-endpoint-id>",
+  "received_at": "2026-04-10T12:01:02Z"
+}
+```
+
+## Device Pairing
+
+Adding a new device to the mesh requires exchanging iroh endpoint IDs. Rather than manually editing hub config files, a pairing flow handles this:
+
+### Pairing Flow
+
+1. **On the hub (or any trusted peer):** `edgesync notify pair --name "dan-iphone"` generates a one-time pairing token. The token encodes the hub's iroh endpoint ID, NATS address, and a short-lived shared secret. Output: a token string (and optionally a QR code for terminal display).
+
+2. **On the new device (Expo app):** the user enters the token (or scans the QR code) in the Settings screen. The app uses the token to connect to the hub, presents its own iroh endpoint ID, and the hub verifies the shared secret.
+
+3. **Hub auto-adds the peer:** on successful verification, the hub adds the new device's endpoint ID to its known-peers list and persists it. No restart required.
+
+4. **Token expires:** tokens are single-use and expire after 10 minutes. A used or expired token is rejected.
+
+The pairing token does NOT grant long-term access — it bootstraps the initial iroh endpoint ID exchange. After pairing, trust is based solely on the iroh endpoint ID.
+
+### CLI Pairing (non-app peers)
+
+For adding a new CLI peer (e.g., a second Mac running Claude): `edgesync notify pair --accept <token>` on the new machine. Same flow, just terminal-based instead of app-based.
+
+## Message Tracing
+
+`edgesync notify trace <msg-id>` shows where a message is in the delivery pipeline:
+
+```
+$ edgesync notify trace msg-a1b2c3d4
+Message: msg-a1b2c3d4
+Thread:  thread-f5e6d7c8
+Project: edgesync
+
+Pipeline:
+  ✓ Committed to notify.fossil    2026-04-10T12:00:00Z
+  ✓ NATS published                2026-04-10T12:00:00Z
+  ✓ Hub received                  2026-04-10T12:00:01Z
+  ✓ Delivered to dan-iphone       2026-04-10T12:00:01Z
+  ✗ Delivered to dan-macbook      (not yet)
+```
+
+Implementation: the trace command reads from the local repo (committed?), checks Sentry breadcrumbs for NATS publish/receive events, and queries delivery receipts. This is a diagnostic tool — not needed for normal operation.
 
 ## Multi-Project & Multi-Session Support
 
@@ -249,11 +354,13 @@ Sentry is the sole error tracking dependency. Existing Honeycomb OTel setup in E
 
 A skill that teaches Claude how to use the `edgesync notify` CLI:
 
-- When to send notifications (build failures, decisions needed, task completions)
-- How to create threads (`--new-thread`) vs continue existing ones
+- **Primary pattern:** use `ask` for request/response (blocks for reply, most common)
+- **Fire-and-forget:** use `send --new-thread` for informational messages (`--priority info`)
+- **Continuing threads:** use `send --thread <id>` to add to an existing conversation
 - How to define quick actions (`--actions "Yes,No,Skip"`)
-- How to parse `watch` output (action vs text replies)
-- Pattern: `send` then `watch` for request/response flows
+- How to set priority (`--priority urgent` for critical decisions, `action_required` for steering, `info` for FYI)
+- How to parse `watch`/`ask` output (action vs text replies, delivered confirmations)
+- How to handle `ask` timeout (exit code 2 = no response, decide whether to retry or proceed)
 - Pattern: periodic `status` checks to verify connectivity
 
 ## Testing Strategy
@@ -264,18 +371,23 @@ All backend work follows TDD (red-green-refactor).
 
 **Unit tests:**
 - Message artifact creation and validation
-- JSON serialization/deserialization
+- JSON serialization/deserialization (including priority field)
 - File tree path generation (`<project>/threads/<thread>/<timestamp>-<id>.json`)
 - NATS subject construction
 - Deduplication logic (seen message IDs)
-- Thread listing and sorting
-- Watch output formatting
+- Thread listing and sorting (priority-aware ordering)
+- Watch output formatting (including `delivered` lines)
+- Pairing token generation and validation (expiry, single-use)
+- Delivery receipt creation and parsing
 
 **Integration tests:**
 - Two leaf agents exchange messages via hub
 - Verify NATS delivers messages in real-time
 - Verify go-libfossil sync delivers messages after NATS miss
+- CLI `ask` round-trip: send + receive reply through a real hub
 - CLI `send` → `watch` round-trip through a real hub
+- Delivery receipt: send message, verify sender sees `delivered`
+- Pairing flow: generate token, accept on new peer, verify peer added to hub
 - Multi-project isolation (messages don't cross project boundaries)
 - Multi-session attribution (distinct `from` identities)
 
@@ -284,21 +396,27 @@ All backend work follows TDD (red-green-refactor).
 - Partition a peer, verify it catches up on reconnect
 - Concurrent sends from multiple peers, verify ordering and dedup
 - Hub restart, verify message delivery resumes
+- `ask` timeout: verify exit code 2 when no reply within timeout
 
 **CLI end-to-end:**
 - `notify init` creates repo
 - `notify send --new-thread` → verify file in repo + NATS publish
+- `notify ask` → reply → verify output and exit
 - `notify watch` receives reply within timeout
 - `notify threads` lists active threads
 - `notify log` shows full thread history
+- `notify trace <msg-id>` shows pipeline status
+- `notify pair` → `notify pair --accept` completes pairing
 
 ## Build Order
 
-1. **Go backend (CLI + hub integration)** — TDD, fully tested
-2. **Sentry integration** — error tracking on CLI and hub
-3. **Claude Code skill** — teaches Claude the CLI interface
-4. **Expo app** — UI over proven backend
-5. **Sentry Expo integration** — crash reporting on devices
+1. **Go backend core** — message format, repo layout, `send`/`watch`/`ask`/`threads`/`log` commands. TDD.
+2. **Device pairing** — `pair` command, token generation/validation, hub auto-add. TDD.
+3. **Delivery receipts & tracing** — ack subject, `delivered` output, `trace` command. TDD.
+4. **Sentry integration** — error tracking on CLI and hub
+5. **Claude Code skill** — teaches Claude the CLI interface
+6. **Expo app** — UI over proven backend, priority-aware inbox
+7. **Sentry Expo integration** — crash reporting on devices
 
 ## Non-Goals
 
