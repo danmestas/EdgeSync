@@ -4,7 +4,7 @@
 
 **Goal:** Build the `edgesync notify` CLI commands — message format, Fossil repo storage, NATS pub/sub, and the `init`, `send`, `watch`, `ask`, `threads`, `log`, `status` commands — all TDD.
 
-**Architecture:** A `leaf/agent/notify/` package handles message creation, repo I/O, NATS pub/sub, and deduplication. CLI commands in `cmd/edgesync/` wire it together via Kong. The `notify.fossil` repo is managed entirely through go-libfossil. NATS subjects follow `notify.<project>.<thread-id>` for messages and `notify.<project>.*` for wildcard subscriptions.
+**Architecture:** A `leaf/agent/notify/` package provides message types, free functions for repo I/O (`CommitMessage`, `ListThreads`, `ReadThread` operating on `*libfossil.Repo`), a `Publish` free function and `Subscriber` type for NATS, and a `Service` that composes them. No wrapper types around `libfossil.Repo` or `nats.Conn` — functions operate on standard types directly (Ousterhout: deep modules, no pass-throughs, no leaking wrappers). CLI commands in `cmd/edgesync/` wire it together via Kong. NATS subjects follow `notify.<project>.<thread-id>` for messages and `notify.<project>.*` for wildcard subscriptions.
 
 **Tech Stack:** Go 1.26, go-libfossil v0.2.x, nats.go, Kong CLI, stdlib `encoding/json`
 
@@ -20,13 +20,13 @@
 
 | File | Responsibility |
 |------|---------------|
-| `leaf/agent/notify/message.go` | Message struct, JSON serialization, validation, path generation |
+| `leaf/agent/notify/message.go` | Message struct, JSON serialization, path generation. Two constructors: `NewMessage`, `NewReply`. No `NewActionReply` (caller sets `ActionResponse: true` on a reply). |
 | `leaf/agent/notify/message_test.go` | Unit tests for message format |
-| `leaf/agent/notify/repo.go` | Fossil repo operations: init, commit message, list threads, read thread, dedup |
-| `leaf/agent/notify/repo_test.go` | Unit tests for repo operations |
-| `leaf/agent/notify/pubsub.go` | NATS publish, subscribe, watch loop, delivery receipt handling |
+| `leaf/agent/notify/store.go` | Free functions on `*libfossil.Repo`: `CommitMessage`, `ReadMessage`, `ListThreads`, `ReadThread`. No wrapper type. |
+| `leaf/agent/notify/store_test.go` | Unit tests for repo operations |
+| `leaf/agent/notify/pubsub.go` | `Publish` free function + `Subscriber` type (manages dedup + subscriptions). No `Publisher` type (one function doesn't need a type). |
 | `leaf/agent/notify/pubsub_test.go` | Unit tests for NATS pub/sub |
-| `leaf/agent/notify/notify.go` | Top-level `Service` that composes repo + pubsub (send, ask, watch) |
+| `leaf/agent/notify/notify.go` | `Service` — holds `*libfossil.Repo` + `*nats.Conn` + `Subscriber` directly. `Send`, `Watch`, `FormatWatchLine`. |
 | `leaf/agent/notify/notify_test.go` | Integration-level tests for Service |
 | `cmd/edgesync/notify.go` | Kong command structs and Run methods for all notify subcommands |
 | `cmd/edgesync/notify_test.go` | CLI end-to-end tests |
@@ -124,7 +124,7 @@ func TestNewReply(t *testing.T) {
 	}
 }
 
-func TestNewActionReply(t *testing.T) {
+func TestActionReplyViaNewReply(t *testing.T) {
 	original := NewMessage(MessageOpts{
 		Project:  "edgesync",
 		From:     "endpoint-abc123",
@@ -133,13 +133,18 @@ func TestNewActionReply(t *testing.T) {
 		Actions:  []Action{{ID: "retry", Label: "Retry"}},
 	})
 
-	reply := NewActionReply(original, "retry", "endpoint-xyz789", "dan-iphone")
+	// Action replies use NewReply with ActionResponse set directly — no separate constructor.
+	reply := NewReply(original, ReplyOpts{From: "endpoint-xyz789", FromName: "dan-iphone", Body: "retry"})
+	reply.ActionResponse = true
 
 	if reply.Body != "retry" {
 		t.Errorf("Body = %q, want %q", reply.Body, "retry")
 	}
 	if !reply.ActionResponse {
 		t.Error("ActionResponse should be true")
+	}
+	if reply.Thread != original.Thread {
+		t.Errorf("Thread = %q, want %q", reply.Thread, original.Thread)
 	}
 }
 
@@ -291,21 +296,8 @@ func NewReply(original Message, opts ReplyOpts) Message {
 	}
 }
 
-// NewActionReply creates a reply from a quick action tap.
-func NewActionReply(original Message, actionID, from, fromName string) Message {
-	return Message{
-		V:              1,
-		ID:             "msg-" + newUUID(),
-		Thread:         original.Thread,
-		Project:        original.Project,
-		From:           from,
-		FromName:       fromName,
-		Timestamp:      time.Now().UTC(),
-		Body:           actionID,
-		ReplyTo:        original.ID,
-		ActionResponse: true,
-	}
-}
+// No NewActionReply — callers use NewReply and set ActionResponse = true directly.
+// This avoids a shallow method that hides almost nothing (Ousterhout: deep modules).
 
 // FilePath returns the repo-relative path for this message file.
 // Format: <project>/threads/<thread-short>/<unix-timestamp>-<msg-short>.json
@@ -423,21 +415,20 @@ git commit -m "test(notify): add file path and NATS subject generation tests"
 
 ---
 
-## Task 3: Repo Operations — Init & Commit Message
+## Task 3: Store Operations — Init & Commit Message
 
 **Files:**
-- Create: `leaf/agent/notify/repo.go`
-- Create: `leaf/agent/notify/repo_test.go`
+- Create: `leaf/agent/notify/store.go`
+- Create: `leaf/agent/notify/store_test.go`
 
-- [ ] **Step 1: Write the failing test for repo init and commit**
+- [ ] **Step 1: Write the failing test for store init and commit**
 
-Create `leaf/agent/notify/repo_test.go`:
+Create `leaf/agent/notify/store_test.go`:
 
 ```go
 package notify
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -446,15 +437,21 @@ import (
 	"github.com/danmestas/go-libfossil/simio"
 )
 
-func TestRepoInitAndCommit(t *testing.T) {
+// createTestRepo creates a notify.fossil repo in a temp dir for testing.
+func createTestRepo(t *testing.T) *libfossil.Repo {
+	t.Helper()
 	dir := t.TempDir()
 	repoPath := filepath.Join(dir, "notify.fossil")
-
-	repo, err := InitRepo(repoPath)
+	r, err := InitNotifyRepo(repoPath)
 	if err != nil {
-		t.Fatalf("InitRepo: %v", err)
+		t.Fatalf("InitNotifyRepo: %v", err)
 	}
-	defer repo.Close()
+	t.Cleanup(func() { r.Close() })
+	return r
+}
+
+func TestInitAndCommitMessage(t *testing.T) {
+	r := createTestRepo(t)
 
 	msg := NewMessage(MessageOpts{
 		Project:  "edgesync",
@@ -463,12 +460,12 @@ func TestRepoInitAndCommit(t *testing.T) {
 		Body:     "hello world",
 	})
 
-	if err := repo.CommitMessage(msg); err != nil {
+	if err := CommitMessage(r, msg); err != nil {
 		t.Fatalf("CommitMessage: %v", err)
 	}
 
 	// Verify the file exists in the repo by reading it back.
-	got, err := repo.ReadMessage(msg.FilePath())
+	got, err := ReadMessage(r, msg.FilePath())
 	if err != nil {
 		t.Fatalf("ReadMessage: %v", err)
 	}
@@ -480,34 +477,34 @@ func TestRepoInitAndCommit(t *testing.T) {
 	}
 }
 
-func TestRepoOpenExisting(t *testing.T) {
+func TestOpenExistingRepo(t *testing.T) {
 	dir := t.TempDir()
 	repoPath := filepath.Join(dir, "notify.fossil")
 
 	// Create and close.
-	repo, err := InitRepo(repoPath)
+	r, err := InitNotifyRepo(repoPath)
 	if err != nil {
-		t.Fatalf("InitRepo: %v", err)
+		t.Fatalf("InitNotifyRepo: %v", err)
 	}
-	repo.Close()
+	r.Close()
 
-	// Reopen.
-	repo, err = OpenRepo(repoPath)
+	// Reopen via standard libfossil.Open.
+	r, err = libfossil.Open(repoPath)
 	if err != nil {
-		t.Fatalf("OpenRepo: %v", err)
+		t.Fatalf("Open: %v", err)
 	}
-	defer repo.Close()
+	defer r.Close()
 }
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/dmestas/projects/EdgeSync && go test ./leaf/agent/notify/ -v -count=1 -run "TestRepo"`
-Expected: FAIL — `InitRepo` undefined
+Run: `cd /Users/dmestas/projects/EdgeSync && go test ./leaf/agent/notify/ -v -count=1 -run "TestInit|TestOpen"`
+Expected: FAIL — `InitNotifyRepo` undefined
 
 - [ ] **Step 3: Write minimal implementation**
 
-Create `leaf/agent/notify/repo.go`:
+Create `leaf/agent/notify/store.go`:
 
 ```go
 package notify
@@ -520,13 +517,9 @@ import (
 	"github.com/danmestas/go-libfossil/simio"
 )
 
-// Repo wraps a go-libfossil Repo for notify message storage.
-type Repo struct {
-	r *libfossil.Repo
-}
-
-// InitRepo creates a new notify.fossil repo at the given path.
-func InitRepo(path string) (*Repo, error) {
+// InitNotifyRepo creates a new notify.fossil repo at the given path.
+// Returns the opened *libfossil.Repo — caller owns it and must Close() it.
+func InitNotifyRepo(path string) (*libfossil.Repo, error) {
 	r, err := libfossil.Create(path, libfossil.CreateOpts{
 		ProjectName: "edgesync-notify",
 		CryptoRand:  simio.CryptoRand{},
@@ -534,41 +527,22 @@ func InitRepo(path string) (*Repo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("notify: create repo: %w", err)
 	}
-	return &Repo{r: r}, nil
-}
-
-// OpenRepo opens an existing notify.fossil repo.
-func OpenRepo(path string) (*Repo, error) {
-	r, err := libfossil.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("notify: open repo: %w", err)
-	}
-	return &Repo{r: r}, nil
-}
-
-// Close closes the underlying Fossil repo.
-func (repo *Repo) Close() error {
-	return repo.r.Close()
-}
-
-// Underlying returns the go-libfossil Repo for sync operations.
-func (repo *Repo) Underlying() *libfossil.Repo {
-	return repo.r
+	return r, nil
 }
 
 // CommitMessage serializes a message to JSON and commits it to the repo.
-func (repo *Repo) CommitMessage(msg Message) error {
+func CommitMessage(r *libfossil.Repo, msg Message) error {
 	data, err := json.MarshalIndent(msg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("notify: marshal message: %w", err)
 	}
 
 	path := msg.FilePath()
-	if err := repo.r.WriteFile(path, data); err != nil {
+	if err := r.WriteFile(path, data); err != nil {
 		return fmt.Errorf("notify: write file %s: %w", path, err)
 	}
 
-	_, err = repo.r.Commit(libfossil.CommitOpts{
+	_, err = r.Commit(libfossil.CommitOpts{
 		Comment: fmt.Sprintf("notify: %s", msg.ID),
 	})
 	if err != nil {
@@ -579,8 +553,8 @@ func (repo *Repo) CommitMessage(msg Message) error {
 }
 
 // ReadMessage reads and deserializes a message from the repo by its file path.
-func (repo *Repo) ReadMessage(filePath string) (Message, error) {
-	data, err := repo.r.ReadFile(filePath)
+func ReadMessage(r *libfossil.Repo, filePath string) (Message, error) {
+	data, err := r.ReadFile(filePath)
 	if err != nil {
 		return Message{}, fmt.Errorf("notify: read file %s: %w", filePath, err)
 	}
@@ -596,37 +570,31 @@ func (repo *Repo) ReadMessage(filePath string) (Message, error) {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd /Users/dmestas/projects/EdgeSync && go test ./leaf/agent/notify/ -v -count=1 -run "TestRepo"`
+Run: `cd /Users/dmestas/projects/EdgeSync && go test ./leaf/agent/notify/ -v -count=1 -run "TestInit|TestOpen"`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add leaf/agent/notify/repo.go leaf/agent/notify/repo_test.go
-git commit -m "feat(notify): add repo init, commit, and read operations"
+git add leaf/agent/notify/store.go leaf/agent/notify/store_test.go
+git commit -m "feat(notify): add store functions — init, commit, read (no wrapper type)"
 ```
 
 ---
 
-## Task 4: Repo Operations — List Threads & Read Thread History
+## Task 4: Store Operations — List Threads & Read Thread History
 
 **Files:**
-- Modify: `leaf/agent/notify/repo.go`
-- Modify: `leaf/agent/notify/repo_test.go`
+- Modify: `leaf/agent/notify/store.go`
+- Modify: `leaf/agent/notify/store_test.go`
 
 - [ ] **Step 1: Write the failing tests for thread listing and history**
 
-Append to `leaf/agent/notify/repo_test.go`:
+Append to `leaf/agent/notify/store_test.go`:
 
 ```go
-func TestRepoListThreads(t *testing.T) {
-	dir := t.TempDir()
-	repoPath := filepath.Join(dir, "notify.fossil")
-	repo, err := InitRepo(repoPath)
-	if err != nil {
-		t.Fatalf("InitRepo: %v", err)
-	}
-	defer repo.Close()
+func TestListThreads(t *testing.T) {
+	r := createTestRepo(t)
 
 	// Create messages in two threads.
 	msg1 := NewMessage(MessageOpts{
@@ -640,12 +608,12 @@ func TestRepoListThreads(t *testing.T) {
 	reply1 := NewReply(msg1, ReplyOpts{From: "c", FromName: "charlie", Body: "reply"})
 
 	for _, m := range []Message{msg1, msg2, reply1} {
-		if err := repo.CommitMessage(m); err != nil {
+		if err := CommitMessage(r, m); err != nil {
 			t.Fatalf("CommitMessage(%s): %v", m.ID, err)
 		}
 	}
 
-	threads, err := repo.ListThreads("edgesync")
+	threads, err := ListThreads(r, "edgesync")
 	if err != nil {
 		t.Fatalf("ListThreads: %v", err)
 	}
@@ -661,14 +629,8 @@ func TestRepoListThreads(t *testing.T) {
 	}
 }
 
-func TestRepoReadThread(t *testing.T) {
-	dir := t.TempDir()
-	repoPath := filepath.Join(dir, "notify.fossil")
-	repo, err := InitRepo(repoPath)
-	if err != nil {
-		t.Fatalf("InitRepo: %v", err)
-	}
-	defer repo.Close()
+func TestReadThread(t *testing.T) {
+	r := createTestRepo(t)
 
 	msg := NewMessage(MessageOpts{
 		Project: "edgesync", From: "a", FromName: "alice", Body: "first",
@@ -676,12 +638,12 @@ func TestRepoReadThread(t *testing.T) {
 	reply := NewReply(msg, ReplyOpts{From: "b", FromName: "bob", Body: "second"})
 
 	for _, m := range []Message{msg, reply} {
-		if err := repo.CommitMessage(m); err != nil {
+		if err := CommitMessage(r, m); err != nil {
 			t.Fatalf("CommitMessage: %v", err)
 		}
 	}
 
-	messages, err := repo.ReadThread("edgesync", msg.ThreadShort())
+	messages, err := ReadThread(r, "edgesync", msg.ThreadShort())
 	if err != nil {
 		t.Fatalf("ReadThread: %v", err)
 	}
@@ -702,16 +664,15 @@ func TestRepoReadThread(t *testing.T) {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd /Users/dmestas/projects/EdgeSync && go test ./leaf/agent/notify/ -v -count=1 -run "TestRepoList|TestRepoRead"`
+Run: `cd /Users/dmestas/projects/EdgeSync && go test ./leaf/agent/notify/ -v -count=1 -run "TestList|TestReadThread"`
 Expected: FAIL — `ListThreads` undefined
 
 - [ ] **Step 3: Write the implementation**
 
-Add to `leaf/agent/notify/repo.go`:
+Add to `leaf/agent/notify/store.go`:
 
 ```go
 import (
-	"path"
 	"sort"
 	"strings"
 	"time"
@@ -728,9 +689,9 @@ type ThreadSummary struct {
 }
 
 // ListThreads returns all threads for a project, sorted by last activity (most recent first).
-func (repo *Repo) ListThreads(project string) ([]ThreadSummary, error) {
+func ListThreads(r *libfossil.Repo, project string) ([]ThreadSummary, error) {
 	prefix := project + "/threads/"
-	files, err := repo.r.ListFiles()
+	files, err := r.ListFiles()
 	if err != nil {
 		return nil, fmt.Errorf("notify: list files: %w", err)
 	}
@@ -754,7 +715,7 @@ func (repo *Repo) ListThreads(project string) ([]ThreadSummary, error) {
 	for threadID, files := range threadFiles {
 		sort.Strings(files) // lexicographic = chronological (timestamp prefix)
 		lastFile := files[len(files)-1]
-		lastMsg, err := repo.ReadMessage(lastFile)
+		lastMsg, err := ReadMessage(r, lastFile)
 		if err != nil {
 			continue // skip unreadable threads
 		}
@@ -762,7 +723,7 @@ func (repo *Repo) ListThreads(project string) ([]ThreadSummary, error) {
 		// Thread priority = highest priority of any message.
 		highestPri := PriorityInfo
 		for _, f := range files {
-			m, err := repo.ReadMessage(f)
+			m, err := ReadMessage(r, f)
 			if err != nil {
 				continue
 			}
@@ -790,7 +751,7 @@ func (repo *Repo) ListThreads(project string) ([]ThreadSummary, error) {
 }
 
 // ReadThread returns all messages in a thread, sorted by timestamp (oldest first).
-func (repo *Repo) ReadThread(project, threadShort string) ([]Message, error) {
+func ReadThread(r *libfossil.Repo, project, threadShort string) ([]Message, error) {
 	prefix := project + "/threads/" + threadShort + "/"
 	files, err := repo.r.ListFiles()
 	if err != nil {
@@ -808,7 +769,7 @@ func (repo *Repo) ReadThread(project, threadShort string) ([]Message, error) {
 
 	var messages []Message
 	for _, f := range threadFiles {
-		msg, err := repo.ReadMessage(f)
+		msg, err := ReadMessage(r, f)
 		if err != nil {
 			continue
 		}
@@ -833,14 +794,14 @@ func priorityRank(p Priority) int {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd /Users/dmestas/projects/EdgeSync && go test ./leaf/agent/notify/ -v -count=1 -run "TestRepoList|TestRepoRead"`
+Run: `cd /Users/dmestas/projects/EdgeSync && go test ./leaf/agent/notify/ -v -count=1 -run "TestList|TestReadThread"`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add leaf/agent/notify/repo.go leaf/agent/notify/repo_test.go
-git commit -m "feat(notify): add thread listing and history reading"
+git add leaf/agent/notify/store.go leaf/agent/notify/store_test.go
+git commit -m "feat(notify): add thread listing and history reading (free functions)"
 ```
 
 ---
@@ -898,7 +859,6 @@ func TestPublishAndSubscribe(t *testing.T) {
 	}
 	defer subConn.Close()
 
-	pub := NewPublisher(pubConn)
 	sub := NewSubscriber(subConn)
 
 	var received Message
@@ -922,7 +882,7 @@ func TestPublishAndSubscribe(t *testing.T) {
 		Body:     "test message",
 	})
 
-	if err := pub.Publish(msg); err != nil {
+	if err := Publish(pubConn, msg); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
@@ -957,7 +917,6 @@ func TestSubscribeWildcard(t *testing.T) {
 	}
 	defer subConn.Close()
 
-	pub := NewPublisher(pubConn)
 	sub := NewSubscriber(subConn)
 
 	var messages []Message
@@ -979,10 +938,10 @@ func TestSubscribeWildcard(t *testing.T) {
 	msg1 := NewMessage(MessageOpts{Project: "edgesync", From: "a", FromName: "a", Body: "one"})
 	msg2 := NewMessage(MessageOpts{Project: "edgesync", From: "b", FromName: "b", Body: "two"})
 
-	if err := pub.Publish(msg1); err != nil {
+	if err := Publish(pubConn, msg1); err != nil {
 		t.Fatalf("Publish msg1: %v", err)
 	}
-	if err := pub.Publish(msg2); err != nil {
+	if err := Publish(pubConn, msg2); err != nil {
 		t.Fatalf("Publish msg2: %v", err)
 	}
 
@@ -1005,7 +964,7 @@ func TestSubscribeWildcard(t *testing.T) {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd /Users/dmestas/projects/EdgeSync && go test ./leaf/agent/notify/ -v -count=1 -run "TestPublish|TestSubscribe"`
-Expected: FAIL — `NewPublisher` undefined
+Expected: FAIL — `Publish` undefined
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -1021,29 +980,20 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-// Publisher sends messages to NATS subjects.
-type Publisher struct {
-	conn *nats.Conn
-}
-
-// NewPublisher creates a Publisher for the given NATS connection.
-func NewPublisher(conn *nats.Conn) *Publisher {
-	return &Publisher{conn: conn}
-}
-
-// Publish sends a message to its NATS subject.
-func (p *Publisher) Publish(msg Message) error {
+// Publish sends a message to its NATS subject. Free function — no Publisher type needed
+// for a single operation (Ousterhout: one method doesn't justify a type).
+func Publish(conn *nats.Conn, msg Message) error {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("notify: marshal for publish: %w", err)
 	}
 
 	subject := msg.NATSSubject()
-	if err := p.conn.Publish(subject, data); err != nil {
+	if err := conn.Publish(subject, data); err != nil {
 		return fmt.Errorf("notify: publish to %s: %w", subject, err)
 	}
 
-	return p.conn.Flush()
+	return conn.Flush()
 }
 
 // Subscriber receives messages from NATS subjects.
@@ -1145,14 +1095,21 @@ func newTestService(t *testing.T) (*Service, *nats.Conn) {
 	dir := t.TempDir()
 	repoPath := filepath.Join(dir, "notify.fossil")
 
+	// Create the repo explicitly (init is separate from open).
+	r, err := InitNotifyRepo(repoPath)
+	if err != nil {
+		t.Fatalf("InitNotifyRepo: %v", err)
+	}
+
 	conn, err := nats.Connect(url)
 	if err != nil {
+		r.Close()
 		t.Fatalf("nats connect: %v", err)
 	}
 	t.Cleanup(func() { conn.Close() })
 
 	svc, err := NewService(ServiceConfig{
-		RepoPath: repoPath,
+		Repo:     r,
 		NATSConn: conn,
 		From:     "endpoint-test",
 		FromName: "test-agent",
@@ -1204,9 +1161,9 @@ func TestServiceSend(t *testing.T) {
 	}
 
 	// Verify repo commit.
-	readBack, err := svc.repo.ReadMessage(msg.FilePath())
+	readBack, err := ReadMessage(svc.Repo(), msg.FilePath())
 	if err != nil {
-		t.Fatalf("repo ReadMessage: %v", err)
+		t.Fatalf("ReadMessage: %v", err)
 	}
 	if readBack.Body != "hello from test" {
 		t.Errorf("repo Body = %q, want %q", readBack.Body, "hello from test")
@@ -1293,64 +1250,66 @@ package notify
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
+	libfossil "github.com/danmestas/go-libfossil"
 	"github.com/nats-io/nats.go"
 )
 
 // ServiceConfig holds configuration for the notify Service.
 type ServiceConfig struct {
-	RepoPath string     // Path to notify.fossil
-	NATSConn *nats.Conn // Existing NATS connection (may be nil for repo-only mode)
-	From     string     // This peer's iroh endpoint ID
-	FromName string     // Human-readable name for this peer
+	Repo     *libfossil.Repo // Already-opened notify repo (caller owns lifecycle)
+	NATSConn *nats.Conn      // Existing NATS connection (may be nil for repo-only mode)
+	From     string          // This peer's iroh endpoint ID
+	FromName string          // Human-readable name for this peer
 }
 
-// Service is the top-level notify API, composing repo storage and NATS pub/sub.
+// Service is the top-level notify API. Holds *libfossil.Repo and *nats.Conn
+// directly — no wrapper types (Ousterhout: no shallow wrappers, no pass-throughs).
 type Service struct {
-	repo     *Repo
-	pub      *Publisher
-	sub      *Subscriber
-	config   ServiceConfig
+	repo      *libfossil.Repo
+	conn      *nats.Conn
+	sub       *Subscriber
+	config    ServiceConfig
 	// threadMap caches thread-short → full thread ID for Send to existing threads.
 	threadMap map[string]string
 }
 
-// NewService creates a new notify Service. If the repo doesn't exist, it is created.
+// NewService creates a new notify Service. The repo must already exist —
+// use InitNotifyRepo to create it first. This separation makes errors explicit
+// (Ousterhout: define errors out of existence — don't silently create repos).
 func NewService(cfg ServiceConfig) (*Service, error) {
-	var repo *Repo
-	var err error
-
-	repo, err = OpenRepo(cfg.RepoPath)
-	if err != nil {
-		repo, err = InitRepo(cfg.RepoPath)
-		if err != nil {
-			return nil, fmt.Errorf("notify: init or open repo: %w", err)
-		}
+	if cfg.Repo == nil {
+		return nil, fmt.Errorf("notify: Repo is required (use InitNotifyRepo or libfossil.Open first)")
 	}
 
 	svc := &Service{
-		repo:      repo,
+		repo:      cfg.Repo,
+		conn:      cfg.NATSConn,
 		config:    cfg,
 		threadMap: make(map[string]string),
 	}
 
 	if cfg.NATSConn != nil {
-		svc.pub = NewPublisher(cfg.NATSConn)
 		svc.sub = NewSubscriber(cfg.NATSConn)
 	}
 
 	return svc, nil
 }
 
-// Close shuts down the service.
+// Close shuts down subscriptions. Does NOT close the repo — caller owns it.
 func (s *Service) Close() error {
 	if s.sub != nil {
 		s.sub.Unsubscribe()
 	}
-	return s.repo.Close()
+	return nil
+}
+
+// Repo returns the underlying libfossil.Repo for direct operations (sync, etc.).
+func (s *Service) Repo() *libfossil.Repo {
+	return s.repo
 }
 
 // SendOpts are options for sending a message.
@@ -1400,13 +1359,13 @@ func (s *Service) Send(opts SendOpts) (Message, error) {
 	s.threadMap[msg.ThreadShort()] = msg.Thread
 
 	// Commit to repo.
-	if err := s.repo.CommitMessage(msg); err != nil {
+	if err := CommitMessage(s.repo, msg); err != nil {
 		return msg, fmt.Errorf("notify: send commit: %w", err)
 	}
 
 	// Publish to NATS (best-effort — if NATS is down, repo still has the message).
-	if s.pub != nil {
-		if err := s.pub.Publish(msg); err != nil {
+	if s.conn != nil {
+		if err := Publish(s.conn, msg); err != nil {
 			slog.Warn("notify: NATS publish failed (message committed to repo)", "error", err, "msg_id", msg.ID)
 		}
 	}
@@ -1458,16 +1417,6 @@ func (s *Service) Watch(ctx context.Context, opts WatchOpts) <-chan Message {
 	return ch
 }
 
-// ListThreads returns all threads for a project.
-func (s *Service) ListThreads(project string) ([]ThreadSummary, error) {
-	return s.repo.ListThreads(project)
-}
-
-// ReadThread returns all messages in a thread.
-func (s *Service) ReadThread(project, threadShort string) ([]Message, error) {
-	return s.repo.ReadThread(project, threadShort)
-}
-
 // resolveThread finds the full thread ID from a short ID.
 func (s *Service) resolveThread(project, threadShort string) (string, error) {
 	if full, ok := s.threadMap[threadShort]; ok {
@@ -1475,7 +1424,7 @@ func (s *Service) resolveThread(project, threadShort string) (string, error) {
 	}
 
 	// Scan the repo for a message in this thread.
-	messages, err := s.repo.ReadThread(project, threadShort)
+	messages, err := ReadThread(s.repo, project, threadShort)
 	if err != nil {
 		return "", err
 	}
@@ -1619,7 +1568,6 @@ func TestSubscribeDedup(t *testing.T) {
 	}
 	defer subConn.Close()
 
-	pub := NewPublisher(pubConn)
 	sub := NewSubscriber(subConn)
 	sub.EnableDedup()
 
@@ -1643,7 +1591,7 @@ func TestSubscribeDedup(t *testing.T) {
 
 	// Publish the same message three times.
 	for i := 0; i < 3; i++ {
-		if err := pub.Publish(msg); err != nil {
+		if err := Publish(pubConn, msg); err != nil {
 			t.Fatalf("Publish: %v", err)
 		}
 	}
@@ -1773,6 +1721,7 @@ import (
 	"syscall"
 	"time"
 
+	libfossil "github.com/danmestas/go-libfossil"
 	"github.com/danmestas/go-libfossil/cli"
 	"github.com/dmestas/edgesync/leaf/agent/notify"
 )
@@ -1795,17 +1744,27 @@ func notifyRepoPath(g *cli.Globals) string {
 	return "notify.fossil"
 }
 
+// openNotifyRepo opens an existing notify.fossil, returning a clear error if it doesn't exist.
+func openNotifyRepo(g *cli.Globals) (*libfossil.Repo, error) {
+	path := notifyRepoPath(g)
+	r, err := libfossil.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("notify repo not found at %s (run 'edgesync notify init' first): %w", path, err)
+	}
+	return r, nil
+}
+
 // --- init ---
 
 type NotifyInitCmd struct{}
 
 func (c *NotifyInitCmd) Run(g *cli.Globals) error {
 	path := notifyRepoPath(g)
-	repo, err := notify.InitRepo(path)
+	r, err := notify.InitNotifyRepo(path)
 	if err != nil {
 		return err
 	}
-	repo.Close()
+	r.Close()
 	fmt.Printf("Initialized notify repo at %s\n", path)
 	return nil
 }
@@ -1822,9 +1781,14 @@ type NotifySendCmd struct {
 }
 
 func (c *NotifySendCmd) Run(g *cli.Globals) error {
-	path := notifyRepoPath(g)
+	r, err := openNotifyRepo(g)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
 	svc, err := notify.NewService(notify.ServiceConfig{
-		RepoPath: path,
+		Repo:     r,
 		From:     "cli", // Will be replaced by iroh endpoint ID when agent is running
 		FromName: hostname(),
 	})
@@ -1864,9 +1828,14 @@ type NotifyAskCmd struct {
 }
 
 func (c *NotifyAskCmd) Run(g *cli.Globals) error {
-	path := notifyRepoPath(g)
+	r, err := openNotifyRepo(g)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
 	svc, err := notify.NewService(notify.ServiceConfig{
-		RepoPath: path,
+		Repo:     r,
 		From:     "cli",
 		FromName: hostname(),
 	})
@@ -1922,9 +1891,14 @@ type NotifyWatchCmd struct {
 }
 
 func (c *NotifyWatchCmd) Run(g *cli.Globals) error {
-	path := notifyRepoPath(g)
+	r, err := openNotifyRepo(g)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
 	svc, err := notify.NewService(notify.ServiceConfig{
-		RepoPath: path,
+		Repo:     r,
 		From:     "cli",
 		FromName: hostname(),
 	})
@@ -1952,18 +1926,13 @@ type NotifyThreadsCmd struct {
 }
 
 func (c *NotifyThreadsCmd) Run(g *cli.Globals) error {
-	path := notifyRepoPath(g)
-	svc, err := notify.NewService(notify.ServiceConfig{
-		RepoPath: path,
-		From:     "cli",
-		FromName: hostname(),
-	})
+	r, err := openNotifyRepo(g)
 	if err != nil {
 		return err
 	}
-	defer svc.Close()
+	defer r.Close()
 
-	threads, err := svc.ListThreads(c.Project)
+	threads, err := notify.ListThreads(r, c.Project)
 	if err != nil {
 		return err
 	}
@@ -1997,18 +1966,13 @@ type NotifyLogCmd struct {
 }
 
 func (c *NotifyLogCmd) Run(g *cli.Globals) error {
-	path := notifyRepoPath(g)
-	svc, err := notify.NewService(notify.ServiceConfig{
-		RepoPath: path,
-		From:     "cli",
-		FromName: hostname(),
-	})
+	r, err := openNotifyRepo(g)
 	if err != nil {
 		return err
 	}
-	defer svc.Close()
+	defer r.Close()
 
-	messages, err := svc.ReadThread(c.Project, c.Thread)
+	messages, err := notify.ReadThread(r, c.Project, c.Thread)
 	if err != nil {
 		return err
 	}
@@ -2035,16 +1999,6 @@ func (c *NotifyStatusCmd) Run(g *cli.Globals) error {
 		fmt.Printf("notify repo: not initialized (run 'edgesync notify init')\n")
 		return nil
 	}
-
-	svc, err := notify.NewService(notify.ServiceConfig{
-		RepoPath: path,
-		From:     "cli",
-		FromName: hostname(),
-	})
-	if err != nil {
-		return err
-	}
-	defer svc.Close()
 
 	fmt.Printf("notify repo: %s\n", path)
 	fmt.Printf("nats: not connected (standalone mode)\n")
