@@ -11,6 +11,7 @@ See `docs/architecture/` for condensed architectural decision records (ARDs):
 - `checkout-merge.md` — checkout/checkin, merge strategies, fork prevention, autosync, ci-lock
 - `repo-operations.md` — CLI, tags, FTS, verify/rebuild, auth, shun/purge
 - `testing-strategy.md` — test tiers, DST, sim, interop, BUGGIFY
+- `notify-messaging.md` — bidirectional messaging: data model, dual delivery, CLI, planned phases
 
 ## Architecture
 
@@ -29,6 +30,8 @@ make test               # Run CI-level tests + sim serve tests (~15s)
 make setup-hooks        # Install pre-commit hook (~8s before each commit)
 go build -buildvcs=false ./cmd/edgesync/   # Dual VCS needs -buildvcs=false
 ```
+
+**CI:** GitHub Actions (`.github/workflows/ci.yml`) runs on push to main and PRs. Steps: `go vet`, unit tests (leaf + bridge in parallel), CLI build, CLI tests. Uses `GOWORK=off` and `GO_MODULE_TOKEN` secret for private go-libfossil access.
 
 ## Go Modules (go.work)
 
@@ -90,6 +93,16 @@ go-libfossil exposes an opaque `Repo` handle — all operations are methods on i
   - Config fields: `NATSRole` (peer/hub/leaf), `NATSUpstream` (optional external NATS), `ServeHTTPAddr`, `ServeNATSEnabled`, `IrohEnabled`, `IrohPeers`, `IrohKeyPath`
   - CLI flags: `--repo`, `--nats`, `--nats-role`, `--poll`, `--serve-http`, `--serve-nats`, `--uv`, `--push`, `--pull`, `--user`, `--password`, `--iroh`, `--iroh-peer`, `--iroh-key`
 - `bridge/bridge/` — `Config` (config.go), `New()`, `Start()`, `Stop()`
+
+### Notify Messaging
+- `leaf/agent/notify/` — Bidirectional messaging for human-in-the-loop AI
+  - `message.go` — Message, Action, Priority types; `NewMessage()`, `NewReply()`
+  - `store.go` — Free functions on `*libfossil.Repo`: `InitNotifyRepo`, `CommitMessage`, `ReadMessage`, `ListThreads`, `ReadThread`
+  - `pubsub.go` — `Publish()` free function, `Subscriber` type (dedup, wildcard)
+  - `notify.go` — `Service` (Send, Watch, FormatWatchLine)
+- `cmd/edgesync/notify.go` — 7 CLI commands: init, send, ask, watch, threads, log, status
+- NATS subjects: `notify.<project>.<thread-short>` (separate from sync subjects)
+- Storage: dedicated `notify.fossil` repo, managed by go-libfossil (no `fossil` binary)
 
 ### Simulation Testing
 - `dst/` — Deterministic single-threaded sim. `SimNetwork` (bridge mode), `PeerNetwork` (leaf-to-leaf). `MockFossil` delegates to `HandleSyncWithOpts`.
