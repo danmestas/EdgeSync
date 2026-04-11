@@ -4,7 +4,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
+	"net/url"
 	"strings"
+
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 // tokenAlphabet is 29 chars: no 0/O/1/I/l to avoid ambiguity.
@@ -42,4 +45,53 @@ func HashToken(formatted string) string {
 	raw := RawToken(formatted)
 	h := sha256.Sum256([]byte(raw))
 	return fmt.Sprintf("%x", h)
+}
+
+// FormatPairURL builds the QR payload string.
+// The NATS address is URL-encoded to avoid slash ambiguity.
+func FormatPairURL(endpointID, natsAddr, token string) string {
+	return fmt.Sprintf("edgesync-pair://v1/%s/%s/%s",
+		endpointID,
+		url.PathEscape(natsAddr),
+		RawToken(token),
+	)
+}
+
+// PairInfo is the parsed content of a pairing URL.
+type PairInfo struct {
+	EndpointID string
+	NATSAddr   string
+	Token      string // raw, no dashes
+}
+
+// ParsePairURL parses an edgesync-pair:// URL into its components.
+func ParsePairURL(raw string) (PairInfo, error) {
+	const prefix = "edgesync-pair://v1/"
+	if !strings.HasPrefix(raw, prefix) {
+		return PairInfo{}, fmt.Errorf("invalid pair URL: missing prefix")
+	}
+	rest := raw[len(prefix):]
+	// Split into exactly 3 parts: endpointID / encoded-nats-addr / token
+	parts := strings.SplitN(rest, "/", 3)
+	if len(parts) != 3 {
+		return PairInfo{}, fmt.Errorf("invalid pair URL: expected 3 path segments, got %d", len(parts))
+	}
+	natsAddr, err := url.PathUnescape(parts[1])
+	if err != nil {
+		return PairInfo{}, fmt.Errorf("invalid pair URL: unescape NATS addr: %w", err)
+	}
+	return PairInfo{
+		EndpointID: parts[0],
+		NATSAddr:   natsAddr,
+		Token:      parts[2],
+	}, nil
+}
+
+// RenderQR returns a terminal-friendly QR code string for the given content.
+func RenderQR(content string) (string, error) {
+	qr, err := qrcode.New(content, qrcode.Medium)
+	if err != nil {
+		return "", fmt.Errorf("generate QR: %w", err)
+	}
+	return qr.ToSmallString(false), nil
 }

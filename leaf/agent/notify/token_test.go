@@ -65,3 +65,48 @@ func TestRawToken(t *testing.T) {
 		t.Errorf("RawToken = %q, want %q", got, "AXKF9M2PVR3T")
 	}
 }
+
+func TestFormatPairURL(t *testing.T) {
+	u := FormatPairURL("abc123endpointid", "nats://100.78.32.45:4222", "AXKF-9M2P-VR3T")
+	// url.PathEscape escapes '/' but not ':' — the exact encoding is:
+	want := "edgesync-pair://v1/abc123endpointid/nats:%2F%2F100.78.32.45:4222/AXKF9M2PVR3T"
+	if u != want {
+		t.Errorf("FormatPairURL =\n  %q\nwant:\n  %q", u, want)
+	}
+}
+
+func TestPairURLRoundTrip(t *testing.T) {
+	u := FormatPairURL("abc123endpointid", "nats://100.78.32.45:4222", "AXKF-9M2P-VR3T")
+	info, err := ParsePairURL(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.EndpointID != "abc123endpointid" {
+		t.Errorf("EndpointID = %q", info.EndpointID)
+	}
+	if info.NATSAddr != "nats://100.78.32.45:4222" {
+		t.Errorf("NATSAddr = %q", info.NATSAddr)
+	}
+	if info.Token != "AXKF9M2PVR3T" {
+		t.Errorf("Token = %q", info.Token)
+	}
+}
+
+func TestParsePairURLInvalid(t *testing.T) {
+	if _, err := ParsePairURL("bogus"); err == nil {
+		t.Error("expected error for invalid URL")
+	}
+	if _, err := ParsePairURL("edgesync-pair://v1/only-two"); err == nil {
+		t.Error("expected error for too few segments")
+	}
+}
+
+func TestRenderQR(t *testing.T) {
+	qr, err := RenderQR("edgesync-pair://v1/test/nats%3A%2F%2Flocalhost%3A4222/ABCD1234EFGH")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(qr) == 0 {
+		t.Error("QR output should not be empty")
+	}
+}
