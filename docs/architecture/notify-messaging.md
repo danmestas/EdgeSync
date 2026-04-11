@@ -125,17 +125,46 @@ Watch output format (machine-parseable):
 [2026-04-10T12:01:15Z] thread:a1b2c3d4 from:dan-iphone text:also bump the version
 ```
 
+## Device Pairing
+
+Three pairing methods for adding devices to the mesh:
+
+| Method | Mechanism | UX |
+|--------|-----------|-----|
+| QR Code (primary) | `edgesync notify pair --name "dan-iphone"` prints QR to terminal | Scan from app, connected in <5s |
+| Token paste (fallback) | 12-char base32 token (`AXKF-9M2P-VR3T`), no ambiguous chars | Type/paste in app |
+| Nearby discovery (future) | iroh mDNS on local network | Not in v1 |
+
+**Token format:** `edgesync-pair://v1/<hub-iroh-endpoint-id>/<nats-addr>/<one-time-secret>`
+
+**Security:** Single-use tokens, 10-minute expiry, hub stores only SHA-256 hash. Revocation via `edgesync notify unpair <name>`.
+
+**Storage:** `_notify/devices.json` (device registry) and `_notify/pending_tokens.json` (pending tokens) in notify.fossil.
+
+**Package structure:** `token.go` (generation, hashing, QR), `token_store.go` (`CreatePairingToken` deep function, `ValidateToken`), `device_registry.go` (`AddDevice`, `RemoveDevice`, `ListDevices`).
+
+## Expo App (separate repo: edgesync-notify-app)
+
+Go backend compiled via gomobile, localhost HTTP/SSE server, React Native (Expo) UI.
+
+**Architecture:** Go `.xcframework` starts an HTTP server on `127.0.0.1:<random-port>`. React Native talks to it via `fetch` (request/response) and `EventSource` (SSE for real-time messages). No custom native bridge.
+
+**Go server endpoints:** `/init`, `/status`, `/send`, `/threads`, `/thread/:id`, `/subscribe` (SSE), `/media/:filename`, `/pair`, `/stop`
+
+**Server design (Ousterhout):** `Server` struct (not singleton), `Bridge.Routes()` co-locates handlers with routes, pass-through JSON (never redefine `notify.Message` types), `api.ts` is a deep module (SSE reconnection, error normalization, connection status tracking).
+
 ## Planned Phases
 
 | Phase | Scope | Depends On |
 |-------|-------|-----------|
 | 1 — Go backend | CLI + repo + NATS pub/sub | **Done** |
-| 2 — Device pairing | `pair` command, token exchange, hub auto-add | Phase 1 |
-| 3 — Delivery receipts | Ack subject, `delivered` output, `trace` command | Phase 1 |
-| 4 — Sentry integration | Go SDK on CLI + hub | Phase 1 |
-| 5 — Claude Code skill | Teaches Claude the CLI grammar | Phase 1 |
-| 6 — Expo app | iOS + macOS, NATS-over-iroh, priority inbox | Phases 1-3 |
-| 7 — Sentry Expo | Crash reporting on devices | Phase 6 |
+| 2 — Device pairing | `pair`, `unpair`, `devices` commands + token infrastructure | **Done** |
+| 3 — Expo Go server | Localhost HTTP/SSE wrapping notify.Service | **Done** |
+| 4 — Delivery receipts | Ack subject, `delivered` output, `trace` command | Phase 1 |
+| 5 — Sentry integration | Go SDK on CLI + hub | Phase 1 |
+| 6 — Claude Code skill | Teaches Claude the CLI grammar | Phase 1 |
+| 7 — Expo app UI | gomobile + React Native screens + pairing flow | Phases 1-3 |
+| 8 — Sentry Expo | Crash reporting on devices | Phase 7 |
 
 ## Testing
 
