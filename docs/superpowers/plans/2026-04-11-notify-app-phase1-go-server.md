@@ -4,7 +4,7 @@
 
 **Goal:** Build a localhost HTTP + SSE server in Go that wraps `notify.Service` from EdgeSync. Testable entirely from CLI with `curl` — no iOS or React Native needed yet.
 
-**Architecture:** A thin HTTP bridge over `notify.Service`. The server never defines its own message types — all JSON is passed through from `notify.Message` and `notify.ThreadSummary` directly (Ousterhout: no pass-through wrappers). `server.go` owns lifecycle (random port, port file, graceful shutdown). `bridge.go` maps HTTP endpoints to `notify.Service` methods. `sse.go` manages a single SSE client connection with message queuing during disconnects and replay on reconnect.
+**Architecture:** A thin HTTP bridge over `notify.Service`. The server never defines its own message types — all JSON is passed through from `notify.Message` and `notify.ThreadSummary` directly (Ousterhout: no pass-through wrappers). `server.go` owns lifecycle via a `Server` struct (`New(dataDir)`, `Start()`, `Stop()`, `IsRunning()`) — no package-level globals. `bridge.go` maps HTTP endpoints to `notify.Service` methods and exposes a `Routes() *http.ServeMux` method that registers all routes; `server.go` just calls `bridge.Routes()` and serves it (Ousterhout: co-locate routes with handlers — adding an endpoint is one edit in bridge.go). `sse.go` manages a single SSE client connection with message queuing during disconnects and replay on reconnect. A thin `main.go` gomobile export layer holds the one acceptable package-level `*Server` instance.
 
 **Tech Stack:** Go 1.26, `github.com/danmestas/go-libfossil` v0.2.4, `github.com/dmestas/edgesync/leaf` (latest), stdlib `net/http`, `encoding/json`, `net/http/httptest`
 
@@ -25,8 +25,9 @@
 | File | Responsibility |
 |------|---------------|
 | `go/go.mod` | Module `github.com/danmestas/edgesync-notify-app/go`. Requires go-libfossil v0.2.4, edgesync/leaf latest. |
-| `go/server.go` | HTTP server lifecycle: `Start(dataDir string) (int, error)`, `Stop()`, `IsRunning() bool`. Picks random port, writes `dataDir/server.port`, composes mux from bridge handlers. |
-| `go/bridge.go` | HTTP handlers wrapping `notify.Service`. Each handler is a method on `Bridge` struct (holds `*notify.Service`). Never redefines `notify.Message` or `notify.ThreadSummary`. |
+| `go/server.go` | `Server` struct with `New(dataDir string) *Server`, `s.Start() (int, error)`, `s.Stop()`, `s.IsRunning() bool`. Picks random port, writes `dataDir/server.port`, calls `bridge.Routes()` to get the mux and serves it. No package-level globals. |
+| `go/bridge.go` | HTTP handlers wrapping `notify.Service`. Each handler is a method on `Bridge` struct (holds `*notify.Service`). Exposes `Routes() *http.ServeMux` that registers all routes — adding an endpoint is one edit here, not across files. Never redefines `notify.Message` or `notify.ThreadSummary`. |
+| `go/main.go` | Gomobile export layer. Holds a package-level `*Server` instance (the one acceptable singleton). Thin wrappers: `Start(dataDir) (int, error)` calls `New(dataDir).Start()`, `Stop()`, `IsRunning()`. |
 | `go/sse.go` | SSE streaming: `SSEManager` tracks one client connection, queues messages when disconnected, replays on reconnect. Sends `message`, `connected`, `disconnected` event types. |
 | `go/server_test.go` | `httptest`-based tests for all non-SSE endpoints. |
 | `go/sse_test.go` | SSE streaming tests: connection, message delivery, disconnect queuing, reconnect replay. |
@@ -38,6 +39,7 @@
 **Files:**
 - Create: `go/go.mod`
 - Create: `go/server.go`
+- Create: `go/main.go` (gomobile export layer)
 - Create: `go/server_test.go`
 
 - [ ] **Step 1: Initialize the Go module**
@@ -78,7 +80,8 @@ import (
 func TestStartStop(t *testing.T) {
 	dir := t.TempDir()
 
-	port, err := Start(dir)
+	s := New(dir)
+	port, err := s.Start()
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -96,13 +99,13 @@ func TestStartStop(t *testing.T) {
 		t.Errorf("port file = %d, want %d", got, port)
 	}
 
-	if !IsRunning() {
+	if !s.IsRunning() {
 		t.Error("IsRunning() = false after Start")
 	}
 
-	Stop()
+	s.Stop()
 
-	if IsRunning() {
+	if s.IsRunning() {
 		t.Error("IsRunning() = true after Stop")
 	}
 }
@@ -110,13 +113,14 @@ func TestStartStop(t *testing.T) {
 func TestStartDoubleStartFails(t *testing.T) {
 	dir := t.TempDir()
 
-	_, err := Start(dir)
+	s := New(dir)
+	_, err := s.Start()
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer Stop()
+	defer s.Stop()
 
-	_, err = Start(dir)
+	_, err = s.Start()
 	if err == nil {
 		t.Fatal("expected error on double Start")
 	}
@@ -133,18 +137,26 @@ cd go && go test -run TestStartStop -count=1 ./...
 Create `go/server.go` with:
 
 - Package `server`
-- `var` block: `mu sync.Mutex`, `srv *http.Server`, `running bool`
-- `Start(dataDir string) (int, error)`:
+- `Server` struct: `dataDir string`, `mu sync.Mutex`, `srv *http.Server`, `bridge *Bridge`, `running bool`
+- `New(dataDir string) *Server`: returns `&Server{dataDir: dataDir}`
+- `s.Start() (int, error)`:
   1. Lock mutex, check not already running
   2. `net.Listen("tcp", "127.0.0.1:0")` for random port
   3. Extract port from `listener.Addr().(*net.TCPAddr).Port`
-  4. Write port to `dataDir/server.port` via `os.WriteFile`
-  5. Create `http.ServeMux` (handlers added in Task 3)
+  4. Write port to `s.dataDir/server.port` via `os.WriteFile`
+  5. Create `Bridge{dataDir: s.dataDir}`, call `s.bridge.Routes()` to get mux
   6. Create `http.Server{Handler: mux}`
-  7. `go srv.Serve(listener)`
-  8. Set `running = true`, return port
-- `Stop()`: `srv.Shutdown(ctx)`, remove port file, set `running = false`
-- `IsRunning() bool`: return `running` under lock
+  7. `go s.srv.Serve(listener)`
+  8. Set `s.running = true`, return port
+- `s.Stop()`: `s.srv.Shutdown(ctx)`, remove port file, set `s.running = false`
+- `s.IsRunning() bool`: return `s.running` under lock
+
+Create `go/main.go` (gomobile export layer):
+
+- Package-level `var instance *Server` (the one acceptable singleton)
+- `Start(dataDir string) (int, error)`: creates `instance = New(dataDir)`, calls `instance.Start()`
+- `Stop()`: calls `instance.Stop()`
+- `IsRunning() bool`: calls `instance.IsRunning()`
 
 Run:
 ```bash
@@ -158,8 +170,7 @@ cd go && go test -run TestStart -count=1 -v ./...
 ## Task 2: Bridge Handlers — Init, Status, Stop
 
 **Files:**
-- Create: `go/bridge.go`
-- Modify: `go/server.go` (wire bridge into mux)
+- Create: `go/bridge.go` (handlers + `Routes()` method)
 - Modify: `go/server_test.go` (add handler tests)
 
 - [ ] **Step 1: Write failing tests for /init, /status, /stop**
@@ -169,11 +180,12 @@ Add to `go/server_test.go`:
 ```go
 func TestInitAndStatus(t *testing.T) {
 	dir := t.TempDir()
-	port, err := Start(dir)
+	s := New(dir)
+	port, err := s.Start()
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer Stop()
+	defer s.Stop()
 
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
 
@@ -192,8 +204,8 @@ func TestInitAndStatus(t *testing.T) {
 		t.Errorf("expected initialized=false before /init")
 	}
 
-	// Init.
-	initBody := fmt.Sprintf(`{"data_dir": %q, "project": "test-project"}`, dir)
+	// Init — data_dir omitted, defaults to the dataDir passed to New().
+	initBody := `{"project": "test-project"}`
 	resp, err = http.Post(base+"/init", "application/json", strings.NewReader(initBody))
 	if err != nil {
 		t.Fatalf("POST /init: %v", err)
@@ -226,15 +238,26 @@ cd go && go test -run TestInitAndStatus -count=1 ./...
 
 Create `go/bridge.go`:
 
-- `Bridge` struct: `svc *notify.Service`, `repo *libfossil.Repo`, `project string`, `initialized bool`, `mu sync.Mutex`
-- `InitRequest` struct (only for parsing init JSON): `DataDir string`, `Project string`, `NATSUrl string` (optional)
+- `Bridge` struct: `dataDir string`, `svc *notify.Service`, `repo *libfossil.Repo`, `project string`, `initialized bool`, `mu sync.Mutex`
+- `InitRequest` struct (only for parsing init JSON): `DataDir string` (optional — defaults to `b.dataDir`), `Project string`, `NATSUrl string` (optional)
+- `Routes() *http.ServeMux`: creates a new `http.ServeMux`, registers all routes, returns it. All route wiring lives here — adding an endpoint is one edit in bridge.go.
+  ```go
+  func (b *Bridge) Routes() *http.ServeMux {
+      mux := http.NewServeMux()
+      mux.HandleFunc("POST /init", b.handleInit)
+      mux.HandleFunc("GET /status", b.handleStatus)
+      mux.HandleFunc("POST /stop", b.handleStop)
+      return mux
+  }
+  ```
 - `handleInit(w, r)`:
   1. Decode `InitRequest` from body
-  2. Call `notify.InitNotifyRepo(dataDir + "/notify.fossil")` — creates or opens
-  3. Optionally connect NATS (best-effort — if NATS fails, log warning, continue)
-  4. Create `notify.NewService(notify.ServiceConfig{Repo: repo})`
-  5. Set `initialized = true`
-  6. Return `{"ok": true}`
+  2. If `DataDir` is empty, default to `b.dataDir`
+  3. Call `notify.InitNotifyRepo(dataDir + "/notify.fossil")` — creates or opens
+  4. Optionally connect NATS (best-effort — if NATS fails, log warning, continue)
+  5. Create `notify.NewService(notify.ServiceConfig{Repo: repo})`
+  6. Set `initialized = true`
+  7. Return `{"ok": true}`
 - `handleStatus(w, r)`:
   1. Return JSON: `{"initialized": bool, "nats_connected": bool}`
 - `handleStop(w, r)`:
@@ -242,12 +265,7 @@ Create `go/bridge.go`:
   2. Set `initialized = false`
   3. Return `{"ok": true}`
 
-Wire into mux in `server.go`:
-```go
-mux.HandleFunc("POST /init", bridge.handleInit)
-mux.HandleFunc("GET /status", bridge.handleStatus)
-mux.HandleFunc("POST /stop", bridge.handleStop)
-```
+`server.go` just calls `s.bridge.Routes()` — no route wiring there.
 
 Run:
 ```bash
@@ -260,11 +278,12 @@ Add test:
 ```go
 func TestInitSucceedsWithoutNATS(t *testing.T) {
 	dir := t.TempDir()
-	port, _ := Start(dir)
-	defer Stop()
+	s := New(dir)
+	port, _ := s.Start()
+	defer s.Stop()
 
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
-	body := fmt.Sprintf(`{"data_dir": %q, "project": "test", "nats_url": "nats://127.0.0.1:59999"}`, dir)
+	body := `{"project": "test", "nats_url": "nats://127.0.0.1:59999"}`
 	resp, _ := http.Post(base+"/init", "application/json", strings.NewReader(body))
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("POST /init should succeed even with bad NATS, got %d", resp.StatusCode)
@@ -284,8 +303,7 @@ cd go && go test -run TestInitSucceeds -count=1 -v ./...
 ## Task 3: Send and Read Handlers
 
 **Files:**
-- Modify: `go/bridge.go` (add handlers)
-- Modify: `go/server.go` (wire routes)
+- Modify: `go/bridge.go` (add handlers, add routes to `Routes()`)
 - Modify: `go/server_test.go` (add tests)
 
 - [ ] **Step 1: Write failing test for POST /send**
@@ -295,13 +313,14 @@ Add to `go/server_test.go`:
 ```go
 func TestSendAndReadThread(t *testing.T) {
 	dir := t.TempDir()
-	port, _ := Start(dir)
-	defer Stop()
+	s := New(dir)
+	port, _ := s.Start()
+	defer s.Stop()
 
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
 
-	// Init first.
-	initBody := fmt.Sprintf(`{"data_dir": %q, "project": "test"}`, dir)
+	// Init first — data_dir omitted, defaults to New(dir).
+	initBody := `{"project": "test"}`
 	http.Post(base+"/init", "application/json", strings.NewReader(initBody))
 
 	// Send a message.
@@ -347,7 +366,7 @@ Add to `go/bridge.go`:
   4. Marshal the returned `notify.Message` directly to response
   5. Content-Type: `application/json`
 
-Wire: `mux.HandleFunc("POST /send", bridge.handleSend)`
+Add to `Routes()`: `mux.HandleFunc("POST /send", b.handleSend)`
 
 Run:
 ```bash
@@ -361,13 +380,14 @@ Add to `go/server_test.go`:
 ```go
 func TestThreadsAndThreadRead(t *testing.T) {
 	dir := t.TempDir()
-	port, _ := Start(dir)
-	defer Stop()
+	s := New(dir)
+	port, _ := s.Start()
+	defer s.Stop()
 
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
 
-	// Init and send two messages.
-	initBody := fmt.Sprintf(`{"data_dir": %q, "project": "proj"}`, dir)
+	// Init and send two messages — data_dir omitted, defaults to New(dir).
+	initBody := `{"project": "proj"}`
 	http.Post(base+"/init", "application/json", strings.NewReader(initBody))
 
 	http.Post(base+"/send", "application/json",
@@ -419,10 +439,10 @@ Add to `go/bridge.go`:
   3. Call `notify.ReadThread(svc.Repo(), project, id)`
   4. Marshal `[]notify.Message` directly to response
 
-Wire:
+Add to `Routes()`:
 ```go
-mux.HandleFunc("GET /threads", bridge.handleThreads)
-mux.HandleFunc("GET /thread/{id}", bridge.handleThread)
+mux.HandleFunc("GET /threads", b.handleThreads)
+mux.HandleFunc("GET /thread/{id}", b.handleThread)
 ```
 
 Run:
@@ -437,8 +457,7 @@ cd go && go test -run TestThreads -count=1 -v ./...
 ## Task 4: Media Endpoint
 
 **Files:**
-- Modify: `go/bridge.go`
-- Modify: `go/server.go`
+- Modify: `go/bridge.go` (add handler, add route to `Routes()`)
 - Modify: `go/server_test.go`
 
 - [ ] **Step 1: Write failing test for GET /media/:filename**
@@ -448,11 +467,12 @@ Add to `go/server_test.go`:
 ```go
 func TestMediaEndpoint(t *testing.T) {
 	dir := t.TempDir()
-	port, _ := Start(dir)
-	defer Stop()
+	s := New(dir)
+	port, _ := s.Start()
+	defer s.Stop()
 
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
-	initBody := fmt.Sprintf(`{"data_dir": %q, "project": "proj"}`, dir)
+	initBody := `{"project": "proj"}`
 	http.Post(base+"/init", "application/json", strings.NewReader(initBody))
 
 	// Write a UV file to the repo.
@@ -484,7 +504,7 @@ Add to `go/bridge.go`:
   5. Set Content-Type from file extension (`mime.TypeByExtension`)
   6. Write content bytes to response
 
-Wire: `mux.HandleFunc("GET /media/{filename}", bridge.handleMedia)`
+Add to `Routes()`: `mux.HandleFunc("GET /media/{filename}", b.handleMedia)`
 
 Run:
 ```bash
@@ -520,13 +540,14 @@ import (
 
 func TestSSEReceivesMessages(t *testing.T) {
 	dir := t.TempDir()
-	port, _ := Start(dir)
-	defer Stop()
+	s := New(dir)
+	port, _ := s.Start()
+	defer s.Stop()
 
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
 
-	// Init.
-	initBody := fmt.Sprintf(`{"data_dir": %q, "project": "proj"}`, dir)
+	// Init — data_dir omitted, defaults to New(dir).
+	initBody := `{"project": "proj"}`
 	http.Post(base+"/init", "application/json", strings.NewReader(initBody))
 
 	// Connect SSE.
@@ -622,7 +643,7 @@ Modify `go/bridge.go`:
 
 - Add `sse *SSEManager` field to `Bridge`
 - In `handleInit`: after creating service, start a goroutine that calls `svc.Watch(ctx, WatchOpts{Project: project})` and broadcasts each message to `sse.Broadcast(sseEvent{Type: "message", Data: msgJSON})`
-- Wire: `mux.HandleFunc("GET /subscribe", bridge.sse.handleSubscribe)`
+- Add to `Routes()`: `mux.HandleFunc("GET /subscribe", b.sse.handleSubscribe)`
 
 Run:
 ```bash
@@ -745,8 +766,9 @@ Add to `go/server_test.go`:
 ```go
 func TestEndpointsRequireInit(t *testing.T) {
 	dir := t.TempDir()
-	port, _ := Start(dir)
-	defer Stop()
+	s := New(dir)
+	port, _ := s.Start()
+	defer s.Stop()
 
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
 
@@ -782,11 +804,12 @@ func TestEndpointsRequireInit(t *testing.T) {
 
 func TestSendBadJSON(t *testing.T) {
 	dir := t.TempDir()
-	port, _ := Start(dir)
-	defer Stop()
+	s := New(dir)
+	port, _ := s.Start()
+	defer s.Stop()
 
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
-	initBody := fmt.Sprintf(`{"data_dir": %q, "project": "test"}`, dir)
+	initBody := `{"project": "test"}`
 	http.Post(base+"/init", "application/json", strings.NewReader(initBody))
 
 	resp, _ := http.Post(base+"/send", "application/json", strings.NewReader("not json"))
@@ -831,13 +854,14 @@ Add to `go/server_test.go`:
 ```go
 func TestFullRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	port, _ := Start(dir)
-	defer Stop()
+	s := New(dir)
+	port, _ := s.Start()
+	defer s.Stop()
 
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
 
-	// 1. Init.
-	initBody := fmt.Sprintf(`{"data_dir": %q, "project": "demo"}`, dir)
+	// 1. Init — data_dir omitted, defaults to New(dir).
+	initBody := `{"project": "demo"}`
 	resp, _ := http.Post(base+"/init", "application/json", strings.NewReader(initBody))
 	assertStatus(t, resp, 200)
 
@@ -939,10 +963,10 @@ cd go && go run ./cmd/main.go &
 PORT=$(cat /tmp/notify-test/server.port)
 BASE="http://127.0.0.1:$PORT"
 
-# Init
+# Init (data_dir optional — defaults to the dataDir passed to New())
 curl -s -X POST "$BASE/init" \
   -H 'Content-Type: application/json' \
-  -d '{"data_dir": "/tmp/notify-test", "project": "demo"}' | jq .
+  -d '{"project": "demo"}' | jq .
 
 # Status
 curl -s "$BASE/status" | jq .
@@ -968,10 +992,10 @@ curl -s -X POST "$BASE/stop" | jq .
 
 | Task | Files | Commit |
 |------|-------|--------|
-| 1 | `go.mod`, `server.go`, `server_test.go` | `feat(server): scaffold Go module and server lifecycle with random port` |
-| 2 | `bridge.go`, `server.go`, `server_test.go` | `feat(bridge): POST /init, GET /status, POST /stop handlers` |
-| 3 | `bridge.go`, `server.go`, `server_test.go` | `feat(bridge): POST /send, GET /threads, GET /thread/:id handlers` |
-| 4 | `bridge.go`, `server.go`, `server_test.go` | `feat(bridge): GET /media/:filename serves UV file content` |
+| 1 | `go.mod`, `server.go`, `main.go`, `server_test.go` | `feat(server): scaffold Go module and server lifecycle with random port` |
+| 2 | `bridge.go`, `server_test.go` | `feat(bridge): POST /init, GET /status, POST /stop handlers` |
+| 3 | `bridge.go`, `server_test.go` | `feat(bridge): POST /send, GET /threads, GET /thread/:id handlers` |
+| 4 | `bridge.go`, `server_test.go` | `feat(bridge): GET /media/:filename serves UV file content` |
 | 5 | `sse.go`, `sse_test.go` | `feat(sse): SSE streaming with message delivery via notify.Watch` |
 | 6 | `sse.go`, `sse_test.go` | `feat(sse): disconnect queuing and reconnect replay` |
 | 7 | `bridge.go`, `server_test.go` | `feat(bridge): init guards and error handling on all endpoints` |

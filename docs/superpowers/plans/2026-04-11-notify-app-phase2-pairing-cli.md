@@ -4,7 +4,7 @@
 
 **Goal:** Add `edgesync notify pair`, `notify unpair`, and `notify devices` CLI commands. These let a hub generate one-time pairing tokens (displayed as QR + text), validate them from a connecting device, and manage a persistent device registry in `notify.fossil`.
 
-**Architecture:** A `leaf/agent/notify/pair.go` file provides token generation, validation, and device registry CRUD — all as free functions operating on `*libfossil.Repo` (consistent with Phase 1's store.go pattern). Tokens are 12-char base32 (no ambiguous chars), single-use, 10-minute expiry. The device registry is a JSON config file committed to `notify.fossil`. CLI commands in `cmd/edgesync/notify.go` wire it together via Kong. QR codes are rendered to the terminal using `github.com/skip2/go-qrcode`.
+**Architecture:** Three files in `leaf/agent/notify/` provide pairing functionality — `token.go` (generation, hashing, QR URL format), `token_store.go` (pending token storage/validation, `CreatePairingToken` entry point), and `device_registry.go` (device CRUD) — all as free functions operating on `*libfossil.Repo` (consistent with Phase 1's store.go pattern). Tokens are 12-char base32 (no ambiguous chars), single-use, 10-minute expiry. The device registry is a JSON config file committed to `notify.fossil`. CLI commands in `cmd/edgesync/notify.go` wire it together via Kong, reusing the existing `openNotifyRepo` helper. QR codes are rendered to the terminal using `github.com/skip2/go-qrcode`.
 
 **Tech Stack:** Go 1.26, go-libfossil v0.2.x, Kong CLI, `github.com/skip2/go-qrcode`, stdlib `crypto/rand`, `crypto/sha256`, `encoding/base32`
 
@@ -20,8 +20,12 @@
 
 | File | Responsibility |
 |------|---------------|
-| `leaf/agent/notify/pair.go` | Token generation (`GenerateToken`), token hashing (`HashToken`), token validation (`ValidateToken`), device registry CRUD (`AddDevice`, `RemoveDevice`, `ListDevices`), QR payload formatting |
-| `leaf/agent/notify/pair_test.go` | Unit tests for all pairing functions |
+| `leaf/agent/notify/token.go` | Token generation (`GenerateToken`), hashing (`HashToken`), base32 encoding, `RawToken`, QR URL format/parse (`FormatPairURL`, `ParsePairURL`), `RenderQR` |
+| `leaf/agent/notify/token_store.go` | `StorePendingToken`, `ValidateToken`, pending token JSON storage in repo (`_notify/pending_tokens.json`), `CreatePairingToken` |
+| `leaf/agent/notify/device_registry.go` | `Device` struct, `DeviceRegistry` struct, `AddDevice`, `RemoveDevice`, `ListDevices`, device JSON storage in repo (`_notify/devices.json`) |
+| `leaf/agent/notify/token_test.go` | Unit tests for token generation, hashing, QR URL formatting |
+| `leaf/agent/notify/token_store_test.go` | Unit tests for pending token storage and validation |
+| `leaf/agent/notify/device_registry_test.go` | Unit tests for device registry CRUD |
 
 ### Modified Files
 
@@ -97,12 +101,12 @@ type DeviceRegistry struct {
 ## Task 1: Token Generation and Hashing
 
 **Files:**
-- Create: `leaf/agent/notify/pair.go`
-- Create: `leaf/agent/notify/pair_test.go`
+- Create: `leaf/agent/notify/token.go`
+- Create: `leaf/agent/notify/token_test.go`
 
 - [ ] **Step 1: Write failing test for token generation**
 
-Create `leaf/agent/notify/pair_test.go`:
+Create `leaf/agent/notify/token_test.go`:
 
 ```go
 package notify
@@ -151,7 +155,7 @@ func TestGenerateToken(t *testing.T) {
 
 - [ ] **Step 2: Implement `GenerateToken` and `HashToken`**
 
-Create `leaf/agent/notify/pair.go`:
+Create `leaf/agent/notify/token.go`:
 
 ```go
 package notify
@@ -168,14 +172,22 @@ import (
 const tokenAlphabet = "23456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 // GenerateToken creates a 12-char alphanumeric token formatted as XXXX-XXXX-XXXX.
+// NOTE: The alphabet has 29 chars. 256 % 29 != 0, so naive modulo introduces bias.
+// Use rejection sampling: discard bytes >= 29 * (256/29) = 29*8 = 232 and re-draw,
+// or use math/big.Int to pick uniformly from [0, 29).
 func GenerateToken() (string, error) {
-    b := make([]byte, 12)
-    if _, err := rand.Read(b); err != nil {
-        return "", fmt.Errorf("generate token: %w", err)
-    }
     chars := make([]byte, 12)
-    for i, v := range b {
-        chars[i] = tokenAlphabet[int(v)%len(tokenAlphabet)]
+    for i := 0; i < 12; {
+        b := make([]byte, 1)
+        if _, err := rand.Read(b); err != nil {
+            return "", fmt.Errorf("generate token: %w", err)
+        }
+        // Rejection sampling: 256 - (256 % 29) = 232; reject >= 232.
+        if int(b[0]) >= 29*(256/29) {
+            continue
+        }
+        chars[i] = tokenAlphabet[int(b[0])%len(tokenAlphabet)]
+        i++
     }
     return fmt.Sprintf("%s-%s-%s", string(chars[0:4]), string(chars[4:8]), string(chars[8:12])), nil
 }
@@ -195,7 +207,7 @@ func HashToken(formatted string) string {
 
 - [ ] **Step 3: Write and pass test for `HashToken`**
 
-Add to `pair_test.go`:
+Add to `token_test.go`:
 
 ```go
 func TestHashToken(t *testing.T) {
@@ -231,13 +243,13 @@ func TestRawToken(t *testing.T) {
 ## Task 2: QR Payload Formatting
 
 **Files:**
-- Modify: `leaf/agent/notify/pair.go`
-- Modify: `leaf/agent/notify/pair_test.go`
+- Modify: `leaf/agent/notify/token.go`
+- Modify: `leaf/agent/notify/token_test.go`
 - Modify: `leaf/go.mod` (add `github.com/skip2/go-qrcode`)
 
 - [ ] **Step 1: Write failing test for QR payload**
 
-Add to `pair_test.go`:
+Add to `token_test.go`:
 
 ```go
 func TestFormatPairURL(t *testing.T) {
@@ -251,7 +263,7 @@ func TestFormatPairURL(t *testing.T) {
 
 - [ ] **Step 2: Implement `FormatPairURL` and `ParsePairURL`**
 
-Add to `pair.go`:
+Add to `token.go`:
 
 ```go
 import "net/url"
@@ -285,7 +297,7 @@ func ParsePairURL(raw string) (PairInfo, error) {
 cd /Users/dmestas/projects/EdgeSync/leaf && go get github.com/skip2/go-qrcode
 ```
 
-Add to `pair.go`:
+Add to `token.go`:
 
 ```go
 import qrcode "github.com/skip2/go-qrcode"
@@ -301,6 +313,8 @@ func RenderQR(content string) (string, error) {
 ```
 
 - [ ] **Step 4: Write and pass test for `ParsePairURL` round-trip**
+
+Add to `token_test.go`:
 
 ```go
 func TestPairURLRoundTrip(t *testing.T) {
@@ -328,8 +342,8 @@ func TestPairURLRoundTrip(t *testing.T) {
 ## Task 3: Device Registry — CRUD on notify.fossil
 
 **Files:**
-- Modify: `leaf/agent/notify/pair.go`
-- Modify: `leaf/agent/notify/pair_test.go`
+- Create: `leaf/agent/notify/device_registry.go`
+- Create: `leaf/agent/notify/device_registry_test.go`
 
 The device registry is a JSON file at `_notify/devices.json` in the notify repo. It uses the same `CommitMessage`-style pattern from `store.go` — read the current file, mutate, commit the new version.
 
@@ -442,8 +456,8 @@ func createTestNotifyRepo(t *testing.T) *libfossil.Repo {
 ## Task 4: Pending Token Storage and Validation
 
 **Files:**
-- Modify: `leaf/agent/notify/pair.go`
-- Modify: `leaf/agent/notify/pair_test.go`
+- Create: `leaf/agent/notify/token_store.go`
+- Create: `leaf/agent/notify/token_store_test.go`
 
 Pending tokens are stored as `_notify/pending_tokens.json` in the notify repo. Each token stores only the hash. Expired tokens are pruned on every read.
 
@@ -522,6 +536,27 @@ func StorePendingToken(r *libfossil.Repo, pt PendingToken) error {
 func ValidateToken(r *libfossil.Repo, formattedToken string) (PendingToken, error) {
     // Read pending, hash the input, find match, check expiry, remove, commit.
 }
+
+// CreatePairingToken generates a token, hashes it, stores the pending entry, and
+// returns the display-formatted token (XXXX-XXXX-XXXX). This is the single entry
+// point CLI commands should use — they must NOT manually construct PendingToken,
+// call HashToken, or know about expiry durations.
+func CreatePairingToken(r *libfossil.Repo, name string) (displayToken string, err error) {
+    tok, err := GenerateToken()
+    if err != nil {
+        return "", err
+    }
+    err = StorePendingToken(r, PendingToken{
+        TokenHash:  HashToken(tok),
+        DeviceName: name,
+        CreatedAt:  time.Now().UTC(),
+        ExpiresAt:  time.Now().UTC().Add(10 * time.Minute),
+    })
+    if err != nil {
+        return "", err
+    }
+    return tok, nil
+}
 ```
 
 **Verify:** `cd /Users/dmestas/projects/EdgeSync && go test ./leaf/agent/notify/ -run TestPendingToken -v && go test ./leaf/agent/notify/ -run TestExpiredToken -v`
@@ -563,28 +598,15 @@ type NotifyPairCmd struct {
 }
 
 func (c *NotifyPairCmd) Run(g *cli.Globals) error {
-    if g.Repo == "" {
-        return fmt.Errorf("repository required (use -R <path>)")
-    }
+    // Reuse the existing openNotifyRepo helper (cmd/edgesync/notify.go).
     r, err := openNotifyRepo(g)
     if err != nil {
         return err
     }
     defer r.Close()
 
-    // Generate token.
-    tok, err := notify.GenerateToken()
-    if err != nil {
-        return err
-    }
-
-    // Store pending token (hash only).
-    err = notify.StorePendingToken(r, notify.PendingToken{
-        TokenHash:  notify.HashToken(tok),
-        DeviceName: c.Name,
-        CreatedAt:  time.Now().UTC(),
-        ExpiresAt:  time.Now().UTC().Add(10 * time.Minute),
-    })
+    // Single call encapsulates generation, hashing, expiry, and storage.
+    tok, err := notify.CreatePairingToken(r, c.Name)
     if err != nil {
         return err
     }
@@ -616,9 +638,7 @@ type NotifyUnpairCmd struct {
 }
 
 func (c *NotifyUnpairCmd) Run(g *cli.Globals) error {
-    if g.Repo == "" {
-        return fmt.Errorf("repository required (use -R <path>)")
-    }
+    // Reuse the existing openNotifyRepo helper (cmd/edgesync/notify.go).
     r, err := openNotifyRepo(g)
     if err != nil {
         return err
@@ -640,9 +660,7 @@ func (c *NotifyUnpairCmd) Run(g *cli.Globals) error {
 type NotifyDevicesCmd struct{}
 
 func (c *NotifyDevicesCmd) Run(g *cli.Globals) error {
-    if g.Repo == "" {
-        return fmt.Errorf("repository required (use -R <path>)")
-    }
+    // Reuse the existing openNotifyRepo helper (cmd/edgesync/notify.go).
     r, err := openNotifyRepo(g)
     if err != nil {
         return err

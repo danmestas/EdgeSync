@@ -4,7 +4,7 @@
 
 **Goal:** Compile the Go HTTP server into an iOS/macOS framework via gomobile, then scaffold the Expo app with routing, native bridge, typed API client, and stub screens.
 
-**Architecture:** `go/main.go` exports `Start(dataDir) int`, `Stop()`, `IsRunning() bool` for gomobile bind. A build script produces `NotifyBridge.xcframework`. The Expo app uses file-based routing (Expo Router), a Swift native module to call Go's Start/Stop, and a deep `api.ts` module that handles all HTTP/SSE communication with the localhost Go server. Components never see raw HTTP.
+**Architecture:** `go/main.go` exports `Start(dataDir) int`, `Stop()`, `IsRunning() bool` for gomobile bind. On failure, `Start()` writes a human-readable error to `<dataDir>/server-error` so the native module can surface it. A build script produces `NotifyBridge.xcframework`. The Expo app uses file-based routing (Expo Router), a Swift native module to call Go's Start/Stop, and a deep `api.ts` module created via `createApi(port)` that handles all HTTP/SSE communication with the localhost Go server. The port is required at construction time -- screens access the API via a React context (`useApi()` hook), making the dependency explicit at the type level. Components never see raw HTTP.
 
 **Tech Stack:** Go 1.26, gomobile, Expo SDK 53, Expo Router, React Native, TypeScript, Swift
 
@@ -46,11 +46,10 @@
 | Create | `app/(screens)/settings.tsx` | Settings screen — hub status, device name, disconnect |
 | Create | `app/lib/types.ts` | TypeScript types matching Go JSON: Message, ThreadSummary, Action, Priority, SSE events |
 | Create | `app/lib/api.ts` | Deep module: typed fetch wrapper, EventSource with auto-reconnect, error normalization, connection status |
-| Create | `app/components/ThreadRow.tsx` | Single thread row for inbox list |
-| Create | `app/components/MessageBubble.tsx` | Message bubble (left/right aligned by sender) |
-| Create | `app/components/ActionButton.tsx` | Tappable action button below a message |
+| Create | `app/components/ConnectionStatus.tsx` | Shared `ConnectionStatusBar` component + `formatConnectionStatus()` utility |
+| Create | `app/components/ThreadRow.tsx` | Single thread row for inbox list (includes co-located PriorityBadge) |
+| Create | `app/components/MessageBubble.tsx` | Message bubble (left/right aligned by sender, includes co-located ActionButton) |
 | Create | `app/components/ReplyComposer.tsx` | Text input + send button pinned at bottom |
-| Create | `app/components/PriorityBadge.tsx` | Colored badge for urgent/action_required/info |
 | Create | `app/components/PairingScreen.tsx` | First-launch flow: scan QR or enter token |
 | Create | `ios/NotifyBridge.swift` | Native module: calls Go Start/Stop, exposes port to JS |
 
@@ -203,11 +202,18 @@ func Start(dataDir string) int {
 		return port
 	}
 
+	// Ensure data directory exists before anything else.
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		writeError(dataDir, fmt.Sprintf("mkdir: %v", err))
+		return 0
+	}
+
 	// Bind to a random available port.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		// gomobile exports can't return errors — return 0 to signal failure.
-		// The native module checks for port == 0.
+		// Write the error to <dataDir>/server-error so the native module can surface it.
+		writeError(dataDir, fmt.Sprintf("listen: %v", err))
 		return 0
 	}
 
@@ -215,12 +221,9 @@ func Start(dataDir string) int {
 
 	// Write port file so other processes can discover it.
 	portFile := filepath.Join(dataDir, "server-port")
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		ln.Close()
-		return 0
-	}
 	if err := os.WriteFile(portFile, []byte(fmt.Sprintf("%d", port)), 0o644); err != nil {
 		ln.Close()
+		writeError(dataDir, fmt.Sprintf("write port file: %v", err))
 		return 0
 	}
 
@@ -270,6 +273,13 @@ func IsRunning() bool {
 	mu.Lock()
 	defer mu.Unlock()
 	return running
+}
+
+// writeError writes an error string to <dataDir>/server-error so the native module
+// can read it and surface a meaningful message when Start() returns 0.
+func writeError(dataDir, msg string) {
+	errFile := filepath.Join(dataDir, "server-error")
+	_ = os.WriteFile(errFile, []byte(msg), 0o644)
 }
 ```
 
@@ -608,6 +618,9 @@ export type SSEEvent =
   | { type: "disconnected"; data: { reason: string } };
 
 export type ConnectionStatus = "connected" | "disconnected" | "connecting";
+
+// Default project — single constant, imported by screens that need it.
+export const DEFAULT_PROJECT = "edgesync";
 ```
 
 - [ ] **Step 2: Verify TypeScript compiles**
@@ -631,6 +644,8 @@ git commit -m "feat: TypeScript types matching Go JSON wire format"
 
 This is the deep module. It owns all HTTP communication, SSE reconnection, error normalization, and connection status tracking. Components never import `fetch` or `EventSource` directly.
 
+The module exports a `createApi(port)` factory that returns a typed API object. The port is required at construction time, so callers cannot invoke API methods without providing it. This makes the dependency explicit at the type level instead of a runtime error.
+
 - [ ] **Step 1: Create the API client**
 
 Create `app/lib/api.ts`:
@@ -638,9 +653,11 @@ Create `app/lib/api.ts`:
 ```ts
 // Deep module: all HTTP/SSE communication with the Go localhost server.
 //
-// Components call typed methods (getThreads, sendMessage, subscribe).
+// Usage: const api = createApi(port)
+// The port is required at construction — you can't call API methods without it.
+//
 // This module handles:
-//   - Base URL from native module port
+//   - Base URL from the port provided at creation
 //   - Error normalization (network errors, HTTP errors, JSON parse errors → ApiError)
 //   - SSE auto-reconnect with exponential backoff
 //   - Connection status tracking
@@ -674,46 +691,48 @@ export class ApiError extends Error {
   }
 }
 
-// --- Connection status ---
+// --- API interface ---
 
-type StatusListener = (status: ConnectionStatus) => void;
-
-let currentStatus: ConnectionStatus = "disconnected";
-const statusListeners = new Set<StatusListener>();
-
-function setStatus(status: ConnectionStatus) {
-  if (status === currentStatus) return;
-  currentStatus = status;
-  statusListeners.forEach((fn) => fn(status));
+export interface Api {
+  readonly port: number;
+  getConnectionStatus(): ConnectionStatus;
+  onConnectionStatusChange(listener: (status: ConnectionStatus) => void): () => void;
+  init(opts: InitRequest): Promise<void>;
+  getStatus(): Promise<StatusResponse>;
+  getThreads(project: string): Promise<ThreadSummary[]>;
+  getThread(project: string, threadId: string): Promise<Message[]>;
+  sendMessage(opts: SendRequest): Promise<SendResponse>;
+  pair(opts: PairRequest): Promise<PairResponse>;
+  stop(): Promise<void>;
+  mediaUrl(project: string, filename: string): string;
+  subscribe(project: string, onEvent: (event: SSEEvent) => void): Subscription;
 }
 
-export function getConnectionStatus(): ConnectionStatus {
-  return currentStatus;
-}
+// --- Factory ---
 
-export function onConnectionStatusChange(listener: StatusListener): () => void {
-  statusListeners.add(listener);
-  return () => statusListeners.delete(listener);
-}
+export function createApi(port: number): Api {
+  const baseUrl = `http://127.0.0.1:${port}`;
 
-// --- Base URL ---
+  // --- Connection status (scoped to this instance) ---
 
-let baseUrl = "";
+  type StatusListener = (status: ConnectionStatus) => void;
 
-export function setPort(port: number) {
-  baseUrl = `http://127.0.0.1:${port}`;
-}
+  let currentStatus: ConnectionStatus = "disconnected";
+  const statusListeners = new Set<StatusListener>();
 
-// --- HTTP helpers ---
-
-async function request<T>(
-  method: string,
-  path: string,
-  body?: unknown,
-): Promise<T> {
-  if (!baseUrl) {
-    throw new ApiError("Server not started — port not set", undefined, "NO_PORT");
+  function setStatus(status: ConnectionStatus) {
+    if (status === currentStatus) return;
+    currentStatus = status;
+    statusListeners.forEach((fn) => fn(status));
   }
+
+  // --- HTTP helpers ---
+
+  async function request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<T> {
 
   let resp: Response;
   try {
@@ -753,40 +772,52 @@ async function request<T>(
   }
 }
 
-// --- Public API ---
+// --- Build and return the API object ---
 
-export async function init(opts: InitRequest): Promise<void> {
-  await request<{ status: string }>("POST", "/init", opts);
-}
+  return {
+    port,
 
-export async function getStatus(): Promise<StatusResponse> {
-  return request<StatusResponse>("GET", "/status");
-}
+    getConnectionStatus(): ConnectionStatus {
+      return currentStatus;
+    },
 
-export async function getThreads(project: string): Promise<ThreadSummary[]> {
-  return request<ThreadSummary[]>("GET", `/threads?project=${encodeURIComponent(project)}`);
-}
+    onConnectionStatusChange(listener: StatusListener): () => void {
+      statusListeners.add(listener);
+      return () => statusListeners.delete(listener);
+    },
 
-export async function getThread(project: string, threadId: string): Promise<Message[]> {
-  return request<Message[]>("GET", `/thread/${encodeURIComponent(threadId)}?project=${encodeURIComponent(project)}`);
-}
+    async init(opts: InitRequest): Promise<void> {
+      await request<{ status: string }>("POST", "/init", opts);
+    },
 
-export async function sendMessage(opts: SendRequest): Promise<SendResponse> {
-  return request<SendResponse>("POST", "/send", opts);
-}
+    async getStatus(): Promise<StatusResponse> {
+      return request<StatusResponse>("GET", "/status");
+    },
 
-export async function pair(opts: PairRequest): Promise<PairResponse> {
-  return request<PairResponse>("POST", "/pair", opts);
-}
+    async getThreads(project: string): Promise<ThreadSummary[]> {
+      return request<ThreadSummary[]>("GET", `/threads?project=${encodeURIComponent(project)}`);
+    },
 
-export async function stop(): Promise<void> {
-  await request<{ status: string }>("POST", "/stop");
-  setStatus("disconnected");
-}
+    async getThread(project: string, threadId: string): Promise<Message[]> {
+      return request<Message[]>("GET", `/thread/${encodeURIComponent(threadId)}?project=${encodeURIComponent(project)}`);
+    },
 
-export function mediaUrl(project: string, filename: string): string {
-  return `${baseUrl}/media/${encodeURIComponent(filename)}?project=${encodeURIComponent(project)}`;
-}
+    async sendMessage(opts: SendRequest): Promise<SendResponse> {
+      return request<SendResponse>("POST", "/send", opts);
+    },
+
+    async pair(opts: PairRequest): Promise<PairResponse> {
+      return request<PairResponse>("POST", "/pair", opts);
+    },
+
+    async stop(): Promise<void> {
+      await request<{ status: string }>("POST", "/stop");
+      setStatus("disconnected");
+    },
+
+    mediaUrl(project: string, filename: string): string {
+      return `${baseUrl}/media/${encodeURIComponent(filename)}?project=${encodeURIComponent(project)}`;
+    },
 
 // --- SSE subscription with auto-reconnect ---
 
@@ -797,10 +828,10 @@ export interface Subscription {
   close(): void;
 }
 
-export function subscribe(
-  project: string,
-  onEvent: (event: SSEEvent) => void,
-): Subscription {
+    subscribe(
+      project: string,
+      onEvent: (event: SSEEvent) => void,
+    ): Subscription {
   let closed = false;
   let reconnectDelay = RECONNECT_BASE_MS;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -864,14 +895,16 @@ export function subscribe(
 
   connect();
 
-  return {
-    close() {
-      closed = true;
-      if (timeoutId) clearTimeout(timeoutId);
-      if (currentEventSource) {
-        currentEventSource.close();
-        currentEventSource = null;
-      }
+      return {
+        close() {
+          closed = true;
+          if (timeoutId) clearTimeout(timeoutId);
+          if (currentEventSource) {
+            currentEventSource.close();
+            currentEventSource = null;
+          }
+        },
+      };
     },
   };
 }
@@ -913,15 +946,16 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 
-import * as api from "../lib/api";
-import { ConnectionStatus, SSEEvent, ThreadSummary } from "../lib/types";
+import { useApi } from "../_layout";
+import { ApiError } from "../lib/api";
+import { ConnectionStatus, DEFAULT_PROJECT, SSEEvent, ThreadSummary } from "../lib/types";
 import { ThreadRow } from "../components/ThreadRow";
+import { ConnectionStatusBar } from "../components/ConnectionStatus";
 import { PairingScreen } from "../components/PairingScreen";
-
-const DEFAULT_PROJECT = "edgesync";
 
 export default function InboxScreen() {
   const router = useRouter();
+  const api = useApi();
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [connectionStatus, setConnectionStatus] =
@@ -994,15 +1028,7 @@ export default function InboxScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.statusBar}>
-        <Text style={styles.statusText}>
-          {connectionStatus === "connected"
-            ? "Connected"
-            : connectionStatus === "connecting"
-              ? "Connecting..."
-              : "Disconnected"}
-        </Text>
-      </View>
+      <ConnectionStatusBar status={connectionStatus} />
       <FlatList
         data={threads}
         keyExtractor={(item) => item.thread_short}
@@ -1033,13 +1059,6 @@ export default function InboxScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#ffffff" },
-  statusBar: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#e0e0e0",
-  },
-  statusText: { fontSize: 12, color: "#888888" },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
   muted: { fontSize: 16, color: "#888888" },
   emptyList: { flex: 1 },
@@ -1055,13 +1074,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FlatList, StyleSheet, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 
-import * as api from "../../lib/api";
-import { Message, SSEEvent } from "../../lib/types";
+import { useApi } from "../../_layout";
+import { DEFAULT_PROJECT, Message, SSEEvent } from "../../lib/types";
 import { MessageBubble } from "../../components/MessageBubble";
 import { ReplyComposer } from "../../components/ReplyComposer";
 
 export default function ThreadDetailScreen() {
-  const { id, project = "edgesync" } = useLocalSearchParams<{
+  const api = useApi();
+  const { id, project = DEFAULT_PROJECT } = useLocalSearchParams<{
     id: string;
     project?: string;
   }>();
@@ -1191,10 +1211,12 @@ import {
   View,
 } from "react-native";
 
-import * as api from "../lib/api";
+import { useApi } from "../_layout";
 import { ConnectionStatus, StatusResponse } from "../lib/types";
+import { formatConnectionStatus } from "../components/ConnectionStatus";
 
 export default function SettingsScreen() {
+  const api = useApi();
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [connectionStatus, setConnectionStatus] =
     useState<ConnectionStatus>("disconnected");
@@ -1252,11 +1274,7 @@ export default function SettingsScreen() {
                 : styles.disconnected,
             ]}
           >
-            {connectionStatus === "connected"
-              ? "Connected"
-              : connectionStatus === "connecting"
-                ? "Connecting..."
-                : "Disconnected"}
+            {formatConnectionStatus(connectionStatus)}
           </Text>
         </View>
         {status?.hub ? (
@@ -1348,16 +1366,61 @@ git commit -m "feat: stub screens — inbox, thread detail, settings"
 ## Task 7: UI Components
 
 **Files:**
+- Create: `edgesync-notify-app/app/components/ConnectionStatus.tsx`
 - Create: `edgesync-notify-app/app/components/ThreadRow.tsx`
 - Create: `edgesync-notify-app/app/components/MessageBubble.tsx`
-- Create: `edgesync-notify-app/app/components/ActionButton.tsx`
 - Create: `edgesync-notify-app/app/components/ReplyComposer.tsx`
-- Create: `edgesync-notify-app/app/components/PriorityBadge.tsx`
 - Create: `edgesync-notify-app/app/components/PairingScreen.tsx`
 
-- [ ] **Step 1: Create PriorityBadge**
+Note: `ActionButton` and `PriorityBadge` are trivial (~15 lines each) and only used by a single parent component. They are co-located inside `MessageBubble.tsx` and `ThreadRow.tsx` respectively, rather than forced into separate files. Extract to separate files only if they gain a second consumer.
 
-Create `app/components/PriorityBadge.tsx`:
+- [ ] **Step 1: Create ConnectionStatus**
+
+Create `app/components/ConnectionStatus.tsx`:
+
+```tsx
+import { StyleSheet, Text, View } from "react-native";
+import { ConnectionStatus } from "../lib/types";
+
+// Shared utility — used by both InboxScreen and SettingsScreen.
+export function formatConnectionStatus(status: ConnectionStatus): string {
+  switch (status) {
+    case "connected":
+      return "Connected";
+    case "connecting":
+      return "Connecting...";
+    case "disconnected":
+      return "Disconnected";
+  }
+}
+
+// Reusable status bar component for screens that show connection state.
+interface ConnectionStatusBarProps {
+  status: ConnectionStatus;
+}
+
+export function ConnectionStatusBar({ status }: ConnectionStatusBarProps) {
+  return (
+    <View style={styles.statusBar}>
+      <Text style={styles.statusText}>{formatConnectionStatus(status)}</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  statusBar: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#e0e0e0",
+  },
+  statusText: { fontSize: 12, color: "#888888" },
+});
+```
+
+- [ ] **Step 2: Create PriorityBadge (co-located in ThreadRow)**
+
+PriorityBadge is ~15 lines and only used by ThreadRow, so it is defined in the same file rather than a separate component file (see Step 3). Shown here for reference:
 
 ```tsx
 import { StyleSheet, Text, View } from "react-native";
@@ -1396,14 +1459,36 @@ const styles = StyleSheet.create({
 });
 ```
 
-- [ ] **Step 2: Create ThreadRow**
+- [ ] **Step 3: Create ThreadRow (includes PriorityBadge)**
 
 Create `app/components/ThreadRow.tsx`:
 
 ```tsx
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { ThreadSummary } from "../lib/types";
-import { PriorityBadge } from "./PriorityBadge";
+import { Priority, ThreadSummary } from "../lib/types";
+
+// Co-located — only used by ThreadRow. Extract if a second consumer appears.
+const BADGE_COLORS: Record<Priority, { bg: string; text: string }> = {
+  urgent: { bg: "#FF3B30", text: "#FFFFFF" },
+  action_required: { bg: "#FF9500", text: "#FFFFFF" },
+  info: { bg: "#E0E0E0", text: "#666666" },
+};
+
+function PriorityBadge({ priority }: { priority: Priority }) {
+  if (priority === "info") return null;
+  const colors = BADGE_COLORS[priority];
+  const label = priority === "urgent" ? "Urgent" : "Action";
+  return (
+    <View style={[badgeStyles.badge, { backgroundColor: colors.bg }]}>
+      <Text style={[badgeStyles.text, { color: colors.text }]}>{label}</Text>
+    </View>
+  );
+}
+
+const badgeStyles = StyleSheet.create({
+  badge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 },
+  text: { fontSize: 11, fontWeight: "600" },
+});
 
 interface ThreadRowProps {
   thread: ThreadSummary;
@@ -1477,27 +1562,26 @@ const styles = StyleSheet.create({
 });
 ```
 
-- [ ] **Step 3: Create ActionButton**
+- [ ] **Step 4: Create MessageBubble (includes ActionButton)**
 
-Create `app/components/ActionButton.tsx`:
+ActionButton is ~15 lines and only used by MessageBubble, so it is co-located here. Extract if a second consumer appears.
+
+Create `app/components/MessageBubble.tsx`:
 
 ```tsx
-import { StyleSheet, Text, TouchableOpacity } from "react-native";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Message } from "../lib/types";
 
-interface ActionButtonProps {
-  label: string;
-  onPress: () => void;
-}
-
-export function ActionButton({ label, onPress }: ActionButtonProps) {
+// Co-located — only used by MessageBubble. Extract if a second consumer appears.
+function ActionButton({ label, onPress }: { label: string; onPress: () => void }) {
   return (
-    <TouchableOpacity style={styles.button} onPress={onPress}>
-      <Text style={styles.label}>{label}</Text>
+    <TouchableOpacity style={actionStyles.button} onPress={onPress}>
+      <Text style={actionStyles.label}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
-const styles = StyleSheet.create({
+const actionStyles = StyleSheet.create({
   button: {
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -1509,16 +1593,6 @@ const styles = StyleSheet.create({
   },
   label: { fontSize: 14, fontWeight: "500", color: "#007AFF" },
 });
-```
-
-- [ ] **Step 4: Create MessageBubble**
-
-Create `app/components/MessageBubble.tsx`:
-
-```tsx
-import { StyleSheet, Text, View } from "react-native";
-import { Message } from "../lib/types";
-import { ActionButton } from "./ActionButton";
 
 interface MessageBubbleProps {
   message: Message;
@@ -1602,7 +1676,7 @@ const styles = StyleSheet.create({
 });
 ```
 
-- [ ] **Step 5: Create ReplyComposer**
+- [ ] **Step 5: Create ReplyComposer (unchanged)**
 
 Create `app/components/ReplyComposer.tsx`:
 
@@ -1705,13 +1779,15 @@ import {
   View,
 } from "react-native";
 
-import * as api from "../lib/api";
+import { useApi } from "../_layout";
+import { ApiError } from "../lib/api";
 
 interface PairingScreenProps {
   onPaired: () => void;
 }
 
 export function PairingScreen({ onPaired }: PairingScreenProps) {
+  const api = useApi();
   const [token, setToken] = useState("");
   const [pairing, setPairing] = useState(false);
 
@@ -1725,7 +1801,7 @@ export function PairingScreen({ onPaired }: PairingScreenProps) {
       onPaired();
     } catch (err) {
       const message =
-        err instanceof api.ApiError ? err.message : "Pairing failed";
+        err instanceof ApiError ? err.message : "Pairing failed";
       Alert.alert("Pairing Failed", message);
     } finally {
       setPairing(false);
@@ -1841,7 +1917,7 @@ Expected: No errors
 
 ```bash
 git add app/components/
-git commit -m "feat: UI components — thread row, message bubble, action button, reply composer, priority badge, pairing screen"
+git commit -m "feat: UI components — connection status, thread row, message bubble, reply composer, pairing screen"
 ```
 
 ---
@@ -1864,6 +1940,7 @@ import NotifyBridge  // gomobile-generated xcframework
 
 public class NotifyBridgeModule: Module {
   private var serverPort: Int = 0
+  private var startError: String? = nil
 
   public func definition() -> ModuleDefinition {
     Name("NotifyBridge")
@@ -1873,8 +1950,13 @@ public class NotifyBridgeModule: Module {
       let dataDir = self.appDataDirectory()
       self.serverPort = Int(NotifyappStart(dataDir))
       if self.serverPort == 0 {
-        NSLog("NotifyBridge: Failed to start Go server")
+        // Read the error file written by Go's writeError() for a meaningful message.
+        let errorFile = (dataDir as NSString).appendingPathComponent("server-error")
+        let errorMsg = (try? String(contentsOfFile: errorFile, encoding: .utf8)) ?? "unknown error"
+        self.startError = errorMsg
+        NSLog("NotifyBridge: Failed to start Go server: \(errorMsg)")
       } else {
+        self.startError = nil
         NSLog("NotifyBridge: Go server started on port \(self.serverPort)")
       }
     }
@@ -1885,9 +1967,12 @@ public class NotifyBridgeModule: Module {
       NSLog("NotifyBridge: Go server stopped")
     }
 
-    // Expose the port to JavaScript as a constant.
+    // Expose port and startup error to JavaScript as constants.
     Constants {
-      return ["port": self.serverPort]
+      return [
+        "port": self.serverPort,
+        "startError": self.startError as Any,
+      ]
     }
 
     // Expose functions callable from JS.
@@ -1941,42 +2026,63 @@ Note: The exact integration depends on `npx expo prebuild` generating the iOS pr
 
 - [ ] **Step 3: Wire the port into the API client**
 
-The port from the native module must be passed to `api.setPort()` at app startup. Add this to `app/_layout.tsx`:
+The port from the native module must be passed to `createApi(port)` at app startup, exposed to screens via React context. Replace `app/_layout.tsx`:
 
 Replace the content of `app/_layout.tsx`:
 
 ```tsx
-import { useEffect } from "react";
+import { createContext, useContext, useMemo } from "react";
 import { Stack } from "expo-router";
+import { Text, View } from "react-native";
 import { requireNativeModule } from "expo-modules-core";
 
-import { setPort } from "./lib/api";
+import { Api, createApi } from "./lib/api";
 
-// Get port from native module constant (set during app launch by Go server).
+// Get port and startup error from native module constants (set during app launch by Go server).
 const NotifyBridge = requireNativeModule("NotifyBridge");
 const port: number = NotifyBridge.port ?? 0;
+const startError: string | null = NotifyBridge.startError ?? null;
+
+// React context so screens can access the API instance.
+const ApiContext = createContext<Api | null>(null);
+
+export function useApi(): Api {
+  const api = useContext(ApiContext);
+  if (!api) throw new Error("useApi() called but Go server failed to start (port=0)");
+  return api;
+}
 
 export default function RootLayout() {
-  useEffect(() => {
-    if (port > 0) {
-      setPort(port);
-    }
-  }, []);
+  const api = useMemo(() => (port > 0 ? createApi(port) : null), []);
+
+  if (!api) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+        <Text style={{ color: "#FF3B30" }}>
+          Go server failed to start{startError ? `: ${startError}` : ""}
+        </Text>
+      </View>
+    );
+  }
 
   return (
-    <Stack
-      screenOptions={{
-        headerStyle: { backgroundColor: "#ffffff" },
-        headerTintColor: "#000000",
-        headerTitleStyle: { fontWeight: "600" },
-        contentStyle: { backgroundColor: "#ffffff" },
-      }}
-    >
-      <Stack.Screen name="(screens)" options={{ headerShown: false }} />
-    </Stack>
+    <ApiContext.Provider value={api}>
+      <Stack
+        screenOptions={{
+          headerStyle: { backgroundColor: "#ffffff" },
+          headerTintColor: "#000000",
+          headerTitleStyle: { fontWeight: "600" },
+          contentStyle: { backgroundColor: "#ffffff" },
+        }}
+      >
+        <Stack.Screen name="(screens)" options={{ headerShown: false }} />
+      </Stack>
+    </ApiContext.Provider>
   );
 }
 ```
+
+Screens access the API via `useApi()` from `../_layout`. This makes the port dependency explicit at the type level: you cannot call API methods without a valid `Api` instance, and the instance cannot exist without a port.
 
 - [ ] **Step 4: Verify TypeScript compiles**
 

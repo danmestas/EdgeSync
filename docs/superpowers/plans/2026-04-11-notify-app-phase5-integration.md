@@ -69,10 +69,11 @@
 | File | Change |
 |------|--------|
 | `ios/<AppName>/AppDelegate.mm` | Register `BGAppRefreshTask` identifier in `didFinishLaunchingWithOptions` |
-| `go/server.go` | Add `GET /sync` endpoint (triggers Fossil sync, returns new message count) and `GET /missed` endpoint (returns queued messages since last SSE disconnect) |
+| `go/server.go` | Add `GET /sync` endpoint (triggers Fossil sync, returns new message count), `GET /missed` endpoint (returns queued messages since last SSE disconnect), and `GET /notification-content?msg_id=X` endpoint (single source of truth for notification title/body/sound) |
 | `go/bridge.go` | Track SSE client state: `connected` (SSE active) vs `disconnected` (no SSE client). Queue messages when disconnected. Replay on reconnect. |
 | `app/lib/api.ts` | Add `syncNow()` and `getMissedMessages()` calls. SSE `onopen` handler calls `/missed` to replay queued messages. |
-| `app/(screens)/index.tsx` | Merge replayed messages into thread list on SSE reconnect |
+| `app/lib/types.ts` | Add `threadShortId(threadId: string): string` utility — single definition of thread ID format (`thread-` prefix + first 8 hex chars) |
+| `app/(screens)/index.tsx` | Merge replayed messages into thread list on SSE reconnect (uses `threadShortId` from `types.ts`) |
 
 ### Phase 7 — New Files
 
@@ -627,7 +628,41 @@ mux.HandleFunc("GET /missed", func(w http.ResponseWriter, r *http.Request) {
 })
 ```
 
-- [ ] **Step 3: Add /sync endpoint to server.go**
+- [ ] **Step 3: Add /notification-content endpoint to server.go**
+
+In `go/server.go`, register `GET /notification-content`. This is the **single source of truth** for notification content construction (priority-to-sound mapping, body truncation). Both the React Native foreground handler (`notifications.ts`) and the Swift background handler (`BackgroundSync.swift`) consume this endpoint.
+
+```go
+mux.HandleFunc("GET /notification-content", func(w http.ResponseWriter, r *http.Request) {
+    msgID := r.URL.Query().Get("msg_id")
+    if msgID == "" {
+        http.Error(w, "msg_id required", http.StatusBadRequest)
+        return
+    }
+    msg, ok := sse.findMessage(msgID)
+    if !ok {
+        http.Error(w, "message not found", http.StatusNotFound)
+        return
+    }
+    body := msg.Body
+    if len(body) > 200 {
+        body = body[:200] + "..."
+    }
+    sound := msg.Priority == "urgent" || msg.Priority == "action_required"
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]any{
+        "title":    msg.FromName,
+        "body":     body,
+        "sound":    sound,
+        "threadId": msg.Thread,
+        "project":  msg.Project,
+    })
+})
+```
+
+> **Design note:** `notifications.ts` can also call this endpoint instead of using its local `buildNotificationContent()` function for full single-source-of-truth purity. The local TS function is kept as an optimization (avoids a round-trip for foreground notifications where the `Message` object is already in memory), but its logic must stay in sync with the Go endpoint. If this drift risk is unacceptable, remove `buildNotificationContent()` from `notifications.ts` and always call the Go endpoint.
+
+- [ ] **Step 4: Add /sync endpoint to server.go**
 
 In `go/server.go`, register `GET /sync`:
 
@@ -646,7 +681,7 @@ mux.HandleFunc("GET /sync", func(w http.ResponseWriter, r *http.Request) {
 })
 ```
 
-- [ ] **Step 4: Update SSE handler to set connected state**
+- [ ] **Step 5: Update SSE handler to set connected state**
 
 In the existing `/subscribe` handler, add:
 
@@ -665,7 +700,7 @@ for _, msg := range sse.drain() {
 }
 ```
 
-- [ ] **Step 5: Write tests for SSE state tracking**
+- [ ] **Step 6: Write tests for SSE state tracking**
 
 In `go/bridge_test.go`, add:
 
@@ -695,12 +730,12 @@ func TestSSEStateQueueAndDrain(t *testing.T) {
 }
 ```
 
-- [ ] **Step 6: Run tests**
+- [ ] **Step 7: Run tests**
 
 Run: `cd /path/to/edgesync-notify-app/go && go test ./... -v -count=1`
 Expected: PASS
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add go/bridge.go go/server.go go/bridge_test.go
@@ -751,17 +786,39 @@ eventSource.onopen = async () => {
 
 - [ ] **Step 3: Merge replayed messages in Inbox**
 
-In `app/(screens)/index.tsx`, ensure the `onMessage` callback merges into the existing thread list without duplicates. Use message `id` for deduplication:
+In `app/lib/types.ts`, add the `threadShortId` utility alongside the type definitions. This documents the thread ID format (`thread-` prefix + first 8 hex chars) in one place:
 
 ```typescript
+/**
+ * Extract the short display ID from a full thread ID.
+ * Thread IDs have the format "thread-<hex>"; this returns the first 8 hex chars.
+ *
+ * Example: "thread-a1b2c3d4e5f6" → "a1b2c3d4"
+ */
+export function threadShortId(threadId: string): string {
+  const PREFIX = "thread-";
+  const SHORT_LEN = 8;
+  if (threadId.startsWith(PREFIX)) {
+    return threadId.substring(PREFIX.length, PREFIX.length + SHORT_LEN);
+  }
+  return threadId.substring(0, SHORT_LEN);
+}
+```
+
+In `app/(screens)/index.tsx`, import `threadShortId` and use it for deduplication. Ensure the `onMessage` callback merges into the existing thread list without duplicates (use message `id` for deduplication):
+
+```typescript
+import { threadShortId } from "../lib/types";
+
 function handleIncomingMessage(msg: Message) {
+  const shortId = threadShortId(msg.thread);
   setThreads((prev) => {
     // Check if thread already exists.
-    const existing = prev.find((t) => t.threadShort === msg.thread.substring(7, 15));
+    const existing = prev.find((t) => t.threadShort === shortId);
     if (existing) {
       // Update the existing thread's last message.
       return prev.map((t) =>
-        t.threadShort === msg.thread.substring(7, 15)
+        t.threadShort === shortId
           ? { ...t, lastMessage: msg, lastActivity: msg.timestamp }
           : t
       ).sort(threadSortComparator);
@@ -769,7 +826,7 @@ function handleIncomingMessage(msg: Message) {
     // New thread — add it.
     return [
       {
-        threadShort: msg.thread.substring(7, 15),
+        threadShort: shortId,
         project: msg.project,
         lastActivity: msg.timestamp,
         messageCount: 1,
@@ -837,37 +894,32 @@ export async function requestPermissions(): Promise<boolean> {
 }
 
 /**
- * Fire a local notification for a message received in the background.
+ * Build notification content from a Message.
+ *
+ * This is the SINGLE place that maps priority → sound and truncates body.
+ * Both the foreground TS handler and BackgroundSync.swift call this
+ * (BackgroundSync calls the Go equivalent — see GET /notification-content).
  */
-export async function notifyMessage(msg: Message): Promise<void> {
-  const sound = notificationSound(msg.priority);
-
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: msg.from_name,
-      body: msg.body.length > 200 ? msg.body.substring(0, 200) + "..." : msg.body,
-      data: { threadId: msg.thread, messageId: msg.id, project: msg.project },
-      sound,
-    },
-    trigger: null, // Fire immediately.
-  });
+function buildNotificationContent(msg: Message) {
+  return {
+    title: msg.from_name,
+    body: msg.body.length > 200 ? msg.body.substring(0, 200) + "..." : msg.body,
+    data: { threadId: msg.thread, messageId: msg.id, project: msg.project },
+    sound: msg.priority === "urgent" || msg.priority === "action_required",
+  };
 }
 
 /**
- * Returns the notification sound based on priority.
- * - urgent: persistent alert sound
- * - action_required: default sound
- * - info: no sound (silent)
+ * Fire a local notification for a message received in the foreground layer.
+ * Uses buildNotificationContent() for content construction.
  */
-function notificationSound(priority?: Priority): boolean {
-  switch (priority) {
-    case "urgent":
-      return true;
-    case "action_required":
-      return true;
-    default:
-      return false;
-  }
+export async function notifyMessage(msg: Message): Promise<void> {
+  const content = buildNotificationContent(msg);
+
+  await Notifications.scheduleNotificationAsync({
+    content,
+    trigger: null, // Fire immediately.
+  });
 }
 
 /**
@@ -1004,27 +1056,36 @@ class BackgroundSync {
       }
 
       // Fetch missed messages and fire notifications.
+      // We use GET /missed to get message IDs, then GET /notification-content
+      // for each message. The Go server owns the notification content logic
+      // (priority-to-sound mapping, body truncation) — no duplication in Swift.
       let missedURL = URL(string: "\(baseURL)/missed")!
       let missedTask = URLSession.shared.dataTask(with: missedURL) { data, _, _ in
         defer { task.setTaskCompleted(success: true) }
 
         guard let data = data,
-              let messages = try? JSONDecoder().decode([BGMessage].self, from: data),
+              let messages = try? JSONDecoder().decode([MissedMessage].self, from: data),
               !messages.isEmpty else {
           return
         }
 
-        // Fire a local notification for each message.
+        // Fire a local notification for each message using Go-provided content.
         for msg in messages {
+          let contentURL = URL(string: "\(baseURL)/notification-content?msg_id=\(msg.id)")!
+          // Synchronous fetch is acceptable here — BGTask runs off main thread.
+          guard let contentData = try? Data(contentsOf: contentURL),
+                let nc = try? JSONDecoder().decode(NotificationContent.self, from: contentData) else {
+            continue
+          }
+
           let content = UNMutableNotificationContent()
-          content.title = msg.from_name
-          content.body = String(msg.body.prefix(200))
-          content.sound = msg.priority == "urgent" || msg.priority == "action_required"
-            ? .default : nil
+          content.title = nc.title
+          content.body = nc.body
+          content.sound = nc.sound ? .default : nil
           content.userInfo = [
-            "threadId": msg.thread,
+            "threadId": nc.threadId,
             "messageId": msg.id,
-            "project": msg.project,
+            "project": nc.project,
           ]
 
           let request = UNNotificationRequest(
@@ -1041,14 +1102,22 @@ class BackgroundSync {
   }
 }
 
-/// Minimal message struct for decoding in BGTask context.
-private struct BGMessage: Decodable {
+/// Decode /missed response — only need the id to call /notification-content.
+/// Uses the JSON returned by Go's notify.Message directly (Codable decode),
+/// not a parallel struct mirroring Go fields.
+private struct MissedMessage: Decodable {
   let id: String
-  let thread: String
-  let project: String
-  let from_name: String
+}
+
+/// Decode GET /notification-content response.
+/// The Go server owns priority-to-sound mapping and body truncation —
+/// this struct just carries the pre-built values.
+private struct NotificationContent: Decodable {
+  let title: String
   let body: String
-  let priority: String?
+  let sound: Bool
+  let threadId: String
+  let project: String
 }
 ```
 
