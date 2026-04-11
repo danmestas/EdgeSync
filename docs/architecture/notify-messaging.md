@@ -147,28 +147,217 @@ Three pairing methods for adding devices to the mesh:
 
 Go backend compiled via gomobile, localhost HTTP/SSE server, React Native (Expo) UI.
 
-**Architecture:** Go `.xcframework` starts an HTTP server on `127.0.0.1:<random-port>`. React Native talks to it via `fetch` (request/response) and `EventSource` (SSE for real-time messages). No custom native bridge.
+**Architecture:** Go `.xcframework` starts an HTTP server on `127.0.0.1:<random-port>`. React Native talks to it via `fetch` (request/response) and `EventSource` (SSE for real-time messages). No custom native bridge — standard HTTP only.
 
-**Go server endpoints:** `/init`, `/status`, `/send`, `/threads`, `/thread/:id`, `/subscribe` (SSE), `/media/:filename`, `/pair`, `/stop`
+```
+┌─────────────────────────────┐
+│  React Native (Expo)        │  UI layer — screens, components, gestures
+│  fetch + EventSource        │
+├────── localhost HTTP ────────┤
+│  Go Framework (gomobile)    │  Logic layer — notify.Service, NATS, iroh
+│  HTTP server + SSE          │
+│  go-libfossil + nats.go     │
+└─────────────────────────────┘
+```
 
-**Server design (Ousterhout):** `Server` struct (not singleton), `Bridge.Routes()` co-locates handlers with routes, pass-through JSON (never redefine `notify.Message` types), `api.ts` is a deep module (SSE reconnection, error normalization, connection status tracking).
+### Go HTTP Server Endpoints
+
+| Method | Path | Request | Response | Purpose |
+|--------|------|---------|----------|---------|
+| `POST` | `/init` | `{"hub","iroh_peers","device_name"}` | `{"status":"ok"}` | Configure and connect to hub |
+| `GET` | `/status` | — | `{"connected":bool,"hub","peer_id"}` | Connection state |
+| `POST` | `/send` | `{"project","body","priority","actions","thread"}` | `{"message":{...}}` | Send a message |
+| `GET` | `/threads?project=X` | — | `[{thread summaries}]` | List threads |
+| `GET` | `/thread/:id?project=X` | — | `[{messages}]` | Read thread history |
+| `GET` | `/subscribe?project=X` | — | SSE stream | Real-time incoming messages |
+| `GET` | `/media/:filename?project=X` | — | binary | Serve UV attachment |
+| `POST` | `/pair` | `{"token":"AXKF-9M2P-VR3T"}` | `{"status":"ok","hub":"..."}` | Complete device pairing |
+| `POST` | `/stop` | — | `{"status":"ok"}` | Disconnect and clean up |
+
+### SSE Events
+
+```
+event: message
+data: {"v":1,"id":"msg-abc","thread":"thread-xyz","body":"hello","priority":"urgent",...}
+
+event: connected
+data: {"hub":"nats://...","peer_id":"endpoint-abc"}
+
+event: disconnected
+data: {"reason":"hub unreachable"}
+```
+
+`SSEManager` tracks one client connection, queues messages when disconnected, replays on reconnect.
+
+### Framework Initialization
+
+gomobile exports three top-level functions callable from Swift:
+
+| Function | Signature | Behavior |
+|----------|-----------|----------|
+| `Start` | `Start(dataDir string) int` | Starts HTTP server on random port, writes port to `<dataDir>/server-port`, returns port. Writes error to `<dataDir>/server-error` on failure. |
+| `Stop` | `Stop()` | Shuts down HTTP server, disconnects NATS/iroh |
+| `IsRunning` | `IsRunning() bool` | Health check |
+
+`Start` is called in `AppDelegate.didFinishLaunchingWithOptions`; port returned to React Native as native constant. `Stop` called in `applicationWillTerminate`. Random port avoids hard-coded cross-language dependencies.
+
+`/init` opens/creates `notify.fossil` in the app's document directory. Succeeds if repo opens even if NATS/iroh is temporarily unreachable — connection retries in background. `GET /status` reflects actual state. (Define errors out of existence — don't fail the whole app because the hub is unreachable.)
+
+### Server Design (Ousterhout)
+
+- `Server` struct (not singleton) — `New(dataDir)`, `Start()`, `Stop()`, `IsRunning()`
+- `Bridge.Routes()` co-locates handlers with routes — adding an endpoint is one edit in `bridge.go`
+- Pass-through JSON: never redefine `notify.Message`/`notify.ThreadSummary` — struct tags on those types ARE the wire format
+- `api.ts` is a deep module: SSE auto-reconnect, error normalization, connection status tracking — components never see raw HTTP; accessed via `useApi()` React context
+
+### Repo Structure
+
+```
+edgesync-notify-app/
+  go/
+    go.mod              # imports go-libfossil + edgesync/leaf/agent/notify
+    server.go           # localhost HTTP + SSE server
+    bridge.go           # wraps notify.Service for HTTP handlers
+    bridge_test.go      # httptest-based tests
+    sse.go              # SSEManager: queuing, reconnect replay
+    pair.go             # pairing token decode + hub connection
+    main.go             # gomobile exports: Start, Stop, IsRunning
+  app/
+    (screens)/
+      index.tsx         # Inbox
+      thread/[id].tsx   # Thread detail
+      settings.tsx      # Hub config, device name
+    lib/
+      api.ts            # Deep module: SSE reconnect, error normalization, connection status
+      types.ts          # TypeScript types matching Go JSON
+      native.ts         # Typed wrapper around NativeModules.NotifyBridge
+    components/
+      ThreadRow.tsx
+      MessageBubble.tsx
+      ActionButton.tsx
+      ReplyComposer.tsx
+      PriorityBadge.tsx
+      PairingScreen.tsx
+      ConnectionStatus.tsx
+  ios/
+    NotifyBridge.swift       # Native module: calls Go Start/Stop, exposes port
+    NotifyBridgeModule.m     # ObjC macro to register Swift module with RN
+  app.json
+  package.json
+  .github/workflows/ci.yml
+```
+
+### Screens
+
+**Inbox (`index.tsx`):** Flat thread list sorted by priority (urgent > action_required > info), then last activity. Each row: thread short ID, last message preview, sender name, timestamp, priority badge. Pull-to-refresh calls `GET /threads`. SSE events update list in real-time. Shows `PairingScreen` when no hub configured.
+
+**Thread Detail (`thread/[id].tsx`):** Message bubbles oldest-at-top, scroll to bottom on open. Sender name + body + timestamp per bubble. Self messages (matching device peer ID) right-aligned, others left-aligned. Action buttons below their message; tap sends reply with `action_response: true`. Media rendered inline via `<Image source={{uri: "http://localhost:PORT/media/..."}}/>`. Reply composer pinned at bottom.
+
+**Settings (`settings.tsx`):** Hub address, live connection status from `GET /status`, device name (editable), project subscriptions, paired hub info with "Disconnect" option, app version.
+
+### State Model
+
+Minimal — Go server is source of truth. No local database, no Redux.
+
+```typescript
+connectionStatus: "connected" | "disconnected" | "connecting"
+activeProject: string
+threads: ThreadSummary[]     // from GET /threads + SSE updates
+currentThread: Message[]     // from GET /thread/:id when viewing
+replyText: string            // composer input buffer
+```
+
+Everything else derived from Go server: thread list = `GET /threads`, message list = `GET /thread/:id`, unread state inferred from SSE events.
+
+### Background Behavior
+
+| App State | NATS | Delivery | Notification |
+|-----------|------|----------|-------------|
+| Foreground | Connected (SSE live) | Real-time via SSE | None — UI updates directly |
+| Background | Disconnected | Fossil sync via BGTask | Local notification if new messages |
+| Killed | Dead | None until next open | None |
+
+`expo-notifications` fires local notifications when BGTask finds new messages. No APNs — no remote push server. BGTask gives ~30 seconds every 15+ minutes (iOS-controlled). Go server queues messages missed while SSE was disconnected; replays on reconnect.
+
+### Build Flow
+
+```bash
+# Go framework
+cd go/
+gomobile bind -target ios -o ../ios/NotifyBridge.xcframework .
+gomobile bind -target macos -o ../macos/NotifyBridge.xcframework .
+
+# Expo
+npx expo prebuild
+npx expo run:ios
+```
+
+CI runs `go test ./go/` and `npx tsc --noEmit`. Full iOS build is local only. CI requires `GO_MODULE_TOKEN` for private module access.
+
+### Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| `go-libfossil` | Fossil repo operations |
+| `edgesync/leaf/agent/notify` | Message types, store, pub/sub, Service |
+| `nats.go` | NATS client |
+| `gomobile` | Compile Go to iOS/macOS framework |
+| `expo` / `expo-router` | React Native framework + file-based routing |
+| `expo-notifications` | Local push notifications |
+| `expo-camera` | QR code scanning for pairing |
+| `@sentry/react-native` | Error tracking |
+
+## Delivery Receipts
+
+NATS-only ephemeral signals. Not committed to Fossil — if sender is offline when ack is published, it simply doesn't see it. Fossil sync is the durability guarantee; receipts are a convenience.
+
+**Subject:** `notify.<project>.ack`
+
+**Ack payload:**
+```json
+{"msg_id": "msg-<uuid>", "received_by": "<iroh-endpoint-id>", "received_at": "2026-04-10T12:01:02Z"}
+```
+
+`watch`/`ask` output prints a `delivered` line when an ack is seen:
+```
+[2026-04-10T12:01:20Z] thread:a1b2c3d4 from:dan-iphone delivered
+```
+
+## Message Tracing
+
+`edgesync notify trace <msg-id>` — diagnostic tool showing pipeline status:
+
+```
+Message: msg-a1b2c3d4
+Thread:  thread-f5e6d7c8
+Project: edgesync
+
+Pipeline:
+  ✓ Committed to notify.fossil    2026-04-10T12:00:00Z
+  ✓ NATS published                2026-04-10T12:00:00Z
+  ✓ Hub received                  2026-04-10T12:00:01Z
+  ✓ Delivered to dan-iphone       2026-04-10T12:00:01Z
+  ✗ Delivered to dan-macbook      (not yet)
+```
+
+Reads from local repo (committed?), checks delivery receipts for NATS delivery events.
 
 ## Planned Phases
 
-| Phase | Scope | Depends On |
-|-------|-------|-----------|
+| Phase | Scope | Status |
+|-------|-------|--------|
 | 1 — Go backend | CLI + repo + NATS pub/sub | **Done** |
 | 2 — Device pairing | `pair`, `unpair`, `devices` commands + token infrastructure | **Done** |
-| 3 — Expo Go server | Localhost HTTP/SSE wrapping notify.Service | **Done** |
-| 4 — Delivery receipts | Ack subject, `delivered` output, `trace` command | Phase 1 |
-| 5 — Sentry integration | Go SDK on CLI + hub | Phase 1 |
-| 6 — Claude Code skill | Teaches Claude the CLI grammar | Phase 1 |
-| 7 — Expo app UI | gomobile + React Native screens + pairing flow | Phases 1-3 |
-| 8 — Sentry Expo | Crash reporting on devices | Phase 7 |
+| 3 — Expo Go server | Localhost HTTP/SSE wrapping notify.Service in `edgesync-notify-app` | **Done** |
+| 4 — gomobile + Expo scaffold | `gomobile bind`, Expo Router, native module, screens, `api.ts` deep module | Planned |
+| 5 — Integration | Wire xcframework into iOS app, `PairingFlow`, e2e tests | Planned |
+| 6 — Notifications | `expo-notifications` local push, BGTask background refresh | Planned |
+| 7 — Sentry | Go SDK on CLI + hub; `@sentry/react-native` on devices | Planned |
+| 8 — Claude Code skill | Teaches Claude the CLI grammar and `ask`/`watch` patterns | Planned |
 
 ## Testing
 
-26 tests across 4 test files + CLI end-to-end:
+### EdgeSync backend (26 tests)
 
 | Category | Count | What |
 |----------|-------|------|
@@ -179,6 +368,27 @@ Go backend compiled via gomobile, localhost HTTP/SSE server, React Native (Expo)
 | Service | 6 | Nil repo error, send, existing thread, watch, watch formatter |
 | CLI e2e | 2 | Init, send + threads + status |
 
+### Expo app layers
+
+| Layer | Tool | What |
+|-------|------|------|
+| Go HTTP server | `go test` + `httptest` | Endpoint responses, SSE streaming, pairing token decode, reconnect replay |
+| Go notify logic | Already tested (EdgeSync) | Message format, store, pub/sub, dedup |
+| React Native | Expo test runner | Screens render, SSE events update state, action taps send replies |
+| Integration | iOS Simulator | Full loop: Go server → SSE → UI → tap reply → Go sends |
+
+### Integration + sim tests (planned)
+
+- Two leaf agents exchange messages via hub — NATS real-time + Fossil catch-up after NATS miss
+- CLI `ask` round-trip through real hub; timeout exits code 2
+- Pairing flow: generate token → accept on new peer → hub auto-adds
+- Fault injection (sim): drop NATS messages, verify Fossil sync recovers; hub restart; concurrent sends + dedup
+
 ## Error Tracking
 
-Sentry (Phase 4) — Go SDK on CLI and hub, Expo SDK on devices. Additive to existing Honeycomb OTel traces for sync operations.
+Sentry (Phase 7) — additive to existing Honeycomb OTel traces for sync operations.
+
+| Component | SDK | Captures |
+|-----------|-----|---------|
+| Go CLI + hub | `github.com/getsentry/sentry-go` | Panics, sync failures, NATS connection errors; tags: `project`, `peer_id`, `component` (cli/hub) |
+| Expo app | `@sentry/react-native` | JS exceptions, native crashes, navigation breadcrumbs; tags: `project`, `device`, `peer_id` |
