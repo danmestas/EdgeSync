@@ -59,7 +59,7 @@ func RemoveDevice(r *libfossil.Repo, name string) error {
 		return err
 	}
 	found := false
-	filtered := devices[:0]
+	filtered := make([]Device, 0, len(devices))
 	for _, d := range devices {
 		if d.Name == name {
 			found = true

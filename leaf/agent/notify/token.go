@@ -10,15 +10,15 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 )
 
-// tokenAlphabet is 29 chars: no 0/O/1/I/l to avoid ambiguity.
+// tokenAlphabet is 30 chars: no 0/O/1/I/l to avoid ambiguity.
 const tokenAlphabet = "23456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 // tokenRejectThreshold is the largest multiple of len(tokenAlphabet) that fits in a byte.
 // Bytes >= this value are rejected to avoid modulo bias.
-const tokenRejectThreshold = 29 * (256 / 29) // 29 * 8 = 232
+const tokenRejectThreshold = 30 * (256 / 30) // 30 * 8 = 240
 
 // GenerateToken creates a 12-char alphanumeric token formatted as XXXX-XXXX-XXXX.
-// Uses rejection sampling to avoid modulo bias from the 29-char alphabet.
+// Uses rejection sampling to avoid modulo bias from the 30-char alphabet.
 func GenerateToken() (string, error) {
 	chars := make([]byte, 12)
 	for i := 0; i < 12; {
