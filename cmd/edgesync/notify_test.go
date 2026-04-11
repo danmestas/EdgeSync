@@ -64,6 +64,63 @@ func TestNotifyCLIInit(t *testing.T) {
 	}
 }
 
+func TestNotifyCLIPairAndDevices(t *testing.T) {
+	bin := buildBinary(t)
+	tmp := t.TempDir()
+	fakeRepo := filepath.Join(tmp, "project.fossil")
+
+	// Init.
+	cmd := exec.Command(bin, "-R", fakeRepo, "notify", "init")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("init: %s\n%s", err, out)
+	}
+
+	// Pair (no endpoint/NATS = text token only, no QR).
+	cmd = exec.Command(bin, "-R", fakeRepo, "notify", "pair", "--name", "dan-iphone")
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pair: %s\n%s", err, out)
+	}
+	pairOutput := string(out)
+
+	// Should contain a token in XXXX-XXXX-XXXX format.
+	if !strings.Contains(pairOutput, "-") {
+		t.Errorf("pair output should contain token with dashes, got: %q", pairOutput)
+	}
+	if !strings.Contains(pairOutput, "expires") {
+		t.Errorf("pair output should mention expiry, got: %q", pairOutput)
+	}
+
+	// Devices — should be empty (token pending, not yet validated).
+	cmd = exec.Command(bin, "-R", fakeRepo, "notify", "devices")
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("devices: %s\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "no paired devices") {
+		t.Errorf("devices should be empty before validation, got: %q", string(out))
+	}
+}
+
+func TestNotifyCLIUnpair(t *testing.T) {
+	bin := buildBinary(t)
+	tmp := t.TempDir()
+	fakeRepo := filepath.Join(tmp, "project.fossil")
+
+	// Init.
+	cmd := exec.Command(bin, "-R", fakeRepo, "notify", "init")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("init: %s\n%s", err, out)
+	}
+
+	// Unpair a device that doesn't exist = error.
+	cmd = exec.Command(bin, "-R", fakeRepo, "notify", "unpair", "nonexistent")
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("unpair nonexistent should fail, got: %s", out)
+	}
+}
+
 func TestNotifyCLISendAndThreads(t *testing.T) {
 	bin := buildBinary(t)
 	tmp := t.TempDir()

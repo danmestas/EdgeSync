@@ -23,6 +23,9 @@ type NotifyCmd struct {
 	Threads NotifyThreadsCmd `cmd:"" help:"List active threads"`
 	Log     NotifyLogCmd     `cmd:"" help:"Show thread message history"`
 	Status  NotifyStatusCmd  `cmd:"" help:"Show connection state and unread counts"`
+	Pair    NotifyPairCmd    `cmd:"" help:"Generate a one-time pairing token and QR code"`
+	Unpair  NotifyUnpairCmd  `cmd:"" help:"Revoke a paired device"`
+	Devices NotifyDevicesCmd `cmd:"" help:"List paired devices"`
 }
 
 // notifyRepoPath returns the path to notify.fossil next to the -R repo.
@@ -365,6 +368,101 @@ func (c *NotifyStatusCmd) Run(g *cli.Globals) error {
 
 	fmt.Printf("notify repo: %s\n", path)
 	fmt.Printf("connection: repo-only (no NATS)\n")
+	return nil
+}
+
+// --- Pair ---
+
+type NotifyPairCmd struct {
+	Name     string `help:"Device name for the pairing" required:""`
+	NATS     string `help:"NATS server URL for the QR payload" env:"EDGESYNC_NATS"`
+	Endpoint string `help:"Hub iroh endpoint ID for the QR payload" env:"EDGESYNC_IROH_ENDPOINT"`
+}
+
+func (c *NotifyPairCmd) Run(g *cli.Globals) error {
+	if g.Repo == "" {
+		return fmt.Errorf("repository required (use -R <path>)")
+	}
+	r, err := openNotifyRepo(g)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	tok, err := notify.CreatePairingToken(r, c.Name)
+	if err != nil {
+		return err
+	}
+
+	// Build QR payload only if both endpoint and NATS provided.
+	if c.Endpoint != "" && c.NATS != "" {
+		pairURL := notify.FormatPairURL(c.Endpoint, c.NATS, tok)
+		qr, err := notify.RenderQR(pairURL)
+		if err != nil {
+			return err
+		}
+		fmt.Print(qr)
+		fmt.Fprintf(os.Stderr, "pair-url:%s\n", pairURL)
+	}
+
+	fmt.Println(tok)
+	fmt.Fprintf(os.Stderr, "expires: 10 minutes\n")
+	fmt.Fprintf(os.Stderr, "device: %s\n", c.Name)
+	return nil
+}
+
+// --- Unpair ---
+
+type NotifyUnpairCmd struct {
+	Name string `arg:"" help:"Device name to unpair"`
+}
+
+func (c *NotifyUnpairCmd) Run(g *cli.Globals) error {
+	if g.Repo == "" {
+		return fmt.Errorf("repository required (use -R <path>)")
+	}
+	r, err := openNotifyRepo(g)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	if err := notify.RemoveDevice(r, c.Name); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "unpaired: %s\n", c.Name)
+	return nil
+}
+
+// --- Devices ---
+
+type NotifyDevicesCmd struct{}
+
+func (c *NotifyDevicesCmd) Run(g *cli.Globals) error {
+	if g.Repo == "" {
+		return fmt.Errorf("repository required (use -R <path>)")
+	}
+	r, err := openNotifyRepo(g)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	devices, err := notify.ListDevices(r)
+	if err != nil {
+		return err
+	}
+
+	if len(devices) == 0 {
+		fmt.Println("no paired devices")
+		return nil
+	}
+
+	for _, d := range devices {
+		fmt.Printf("%s  endpoint:%s  paired:%s\n",
+			d.Name, d.EndpointID, d.PairedAt.UTC().Format(time.RFC3339))
+	}
 	return nil
 }
 
