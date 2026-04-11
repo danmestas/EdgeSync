@@ -62,16 +62,18 @@ data: {"reason":"hub unreachable"}
 
 The server wraps `notify.Service` — same `Send`, `Watch`, `ListThreads`, `ReadThread` functions from the EdgeSync backend. No new logic.
 
+**Type pass-through (Ousterhout: avoid change amplification):** `bridge.go` never defines its own message types. It marshals `notify.Message` directly to JSON — the existing JSON struct tags on `Message` ARE the wire format. Adding a field to `Message` in go-libfossil automatically appears in the HTTP API.
+
 ### Framework Initialization
 
 The gomobile framework exports three top-level functions callable from Swift:
-- `Start(port int, dataDir string)` — starts the HTTP server on `127.0.0.1:<port>`, uses `dataDir` for `notify.fossil` and iroh keys
+- `Start(dataDir string) int` — starts the HTTP server on `127.0.0.1:<random-port>`, writes port to `<dataDir>/server-port`, returns the port number. Uses `dataDir` for `notify.fossil` and iroh keys.
 - `Stop()` — shuts down the HTTP server and disconnects NATS/iroh
 - `IsRunning() bool` — health check
 
-In the Expo native module (`ios/NotifyBridge.swift`), `Start` is called in `AppDelegate.didFinishLaunchingWithOptions`. `Stop` is called in `applicationWillTerminate`. The port is fixed (e.g., 8273) and stored in a constant shared between Swift and TypeScript.
+In the Expo native module (`ios/NotifyBridge.swift`), `Start` is called in `AppDelegate.didFinishLaunchingWithOptions`. The returned port is passed to React Native as a native constant. `Stop` is called in `applicationWillTerminate`. No fixed port — Go picks a random available port to avoid conflicts (Ousterhout: eliminate obscure cross-language dependencies).
 
-- `Init` opens/creates `notify.fossil` in the app's document directory, connects via NATS-over-iroh
+- `Init` opens/creates `notify.fossil` in the app's document directory. Succeeds if the repo opens, even if NATS/iroh connection fails — connection retries happen in background. `GET /status` reflects actual connection state. (Ousterhout: define errors out of existence — don't fail the whole app because the hub is temporarily unreachable.)
 - `Subscribe` endpoint calls `svc.Watch()` and streams messages as SSE events
 - `Media` endpoint reads UV files via `r.UVRead()`
 - Server tracks whether the SSE client is connected. If disconnected (app backgrounded), queues messages for replay on reconnect.
@@ -193,7 +195,7 @@ edgesync-notify-app/
       thread/[id].tsx         # Thread detail
       settings.tsx            # Hub config, device name
     lib/
-      api.ts                  # fetch + EventSource wrapper
+      api.ts                  # Deep module: SSE reconnection, error normalization, connection status tracking. Components never see raw HTTP.
       types.ts                # TypeScript types matching Go JSON
     components/
       ThreadRow.tsx
