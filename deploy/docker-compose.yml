@@ -19,7 +19,6 @@ services:
       - --nats=nats://nats:4222
       - --serve-http=:8080
       - --serve-nats
-      - --notify
       - --uv
       - --poll=5s
     environment:
