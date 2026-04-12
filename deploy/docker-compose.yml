@@ -4,6 +4,7 @@ services:
     command: ["-js", "-c", "/etc/nats/nats.conf"]
     ports:
       - "100.78.32.45:4222:4222"
+      - "100.78.32.45:7422:7422"
     volumes:
       - ./nats.conf:/etc/nats/nats.conf:ro
       - nats-data:/data
@@ -18,6 +19,7 @@ services:
       - --nats=nats://nats:4222
       - --serve-http=:8080
       - --serve-nats
+      - --notify
       - --uv
       - --poll=5s
     environment:
