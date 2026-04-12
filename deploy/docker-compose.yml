@@ -3,8 +3,8 @@ services:
     image: nats:latest
     command: ["-js", "-c", "/etc/nats/nats.conf"]
     ports:
-      - "100.78.32.45:4222:4222"
-      - "100.78.32.45:7422:7422"
+      - "4222:4222"
+      - "7422:7422"
     volumes:
       - ./nats.conf:/etc/nats/nats.conf:ro
       - nats-data:/data
