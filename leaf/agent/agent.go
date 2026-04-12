@@ -490,6 +490,9 @@ func (a *Agent) Stop() error {
 // NotifyService returns the notify messaging service, or nil if notify is not enabled.
 func (a *Agent) NotifyService() *notify.Service { return a.notifySvc }
 
+// NotifyRepo returns the notify repository, or nil if notify is not enabled.
+func (a *Agent) NotifyRepo() *libfossil.Repo { return a.notifyRepo }
+
 // IrohEndpointID returns the local iroh endpoint ID, or "" if iroh is not enabled
 // or the sidecar hasn't started yet.
 func (a *Agent) IrohEndpointID() string { return a.irohEndpointID }
