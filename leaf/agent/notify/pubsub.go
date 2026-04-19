@@ -81,8 +81,29 @@ func (s *Subscriber) SubscribeThread(project, threadShort string, cb func(Messag
 	return s.subscribe("notify."+project+"."+threadShort, cb)
 }
 
+// subscribeForWatch is the Watch-path variant that returns the nats.Subscription
+// handle so Service.Watch can Unsubscribe precisely that subscription before
+// closing its output channel (preventing send-on-closed-channel panics when
+// a NATS message arrives during ctx-cancel teardown).
+func (s *Subscriber) subscribeForWatch(subject string, cb func(Message)) (*nats.Subscription, error) {
+	return s.subscribeReturn(subject, cb)
+}
+
 // subscribe wires up a NATS subscription with JSON decoding and dedup.
 func (s *Subscriber) subscribe(subject string, cb func(Message)) error {
+	_, err := s.subscribeReturn(subject, cb)
+	return err
+}
+
+// subscribeReturn is subscribe's variant that returns the nats.Subscription
+// handle so the caller can Unsubscribe it independently. Used by Watch so
+// per-Watch teardown can drop ONE subscription without killing every other
+// active watcher. The returned handle is also appended to s.subs so that
+// Service.Close (which calls Subscriber.Unsubscribe) still tears down
+// everything for callers that do not manage handles individually.
+func (s *Subscriber) subscribeReturn(
+	subject string, cb func(Message),
+) (*nats.Subscription, error) {
 	sub, err := s.conn.Subscribe(subject, func(natsMsg *nats.Msg) {
 		var msg Message
 		if err := json.Unmarshal(natsMsg.Data, &msg); err != nil {
@@ -94,10 +115,13 @@ func (s *Subscriber) subscribe(subject string, cb func(Message)) error {
 		cb(msg)
 	})
 	if err != nil {
-		return fmt.Errorf("notify: subscribe %s: %w", subject, err)
+		return nil, fmt.Errorf("notify: subscribe %s: %w", subject, err)
 	}
 	s.subs = append(s.subs, sub)
-	return s.conn.Flush()
+	if err := s.conn.Flush(); err != nil {
+		return sub, err
+	}
+	return sub, nil
 }
 
 // Unsubscribe removes all active subscriptions.
