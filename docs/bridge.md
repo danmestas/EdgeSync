@@ -141,7 +141,7 @@ All leaves for the same project share the same NATS subject. The bridge handles 
 
 ## Dependencies
 
-- `go-libfossil` — xfer codec, sync.HTTPTransport
+- `libfossil` — xfer codec, sync.HTTPTransport
 - `github.com/nats-io/nats.go` — NATS client
 - `github.com/nats-io/nats-server/v2` — embedded NATS server (test only)
 

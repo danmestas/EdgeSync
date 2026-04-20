@@ -1,7 +1,7 @@
 # EdgeSync Memory
 
 ## Project Structure
-- Go workspace (`go.work`) with 5 modules: root, `go-libfossil/`, `leaf/`, `bridge/`, `dst/`
+- Go workspace (`go.work`) with 5 modules: root, `libfossil/`, `leaf/`, `bridge/`, `dst/`
 - `sim/` is a package in the root module (not its own module)
 - Dual VCS: git + fossil checkout — use `-buildvcs=false` for all builds
 - Git repo: github.com/danmestas/EdgeSync (private)
@@ -54,8 +54,8 @@
 ## Config Locations
 - agent.Config in `leaf/agent/config.go` — includes ServeHTTPAddr, ServeNATSEnabled
 - bridge.Config in `bridge/bridge/config.go`
-- SyncOpts in `go-libfossil/sync/session.go` — has BuggifyChecker field
-- HandleOpts in `go-libfossil/sync/handler.go` — has BuggifyChecker field
+- SyncOpts in `libfossil/sync/session.go` — has BuggifyChecker field
+- HandleOpts in `libfossil/sync/handler.go` — has BuggifyChecker field
 
 ## Key Patterns
 - `simio.CryptoRand{}` for production callsites of `repo.Create` and `db.SeedConfig`

@@ -2,7 +2,7 @@
 
 ## Checkout Architecture
 
-The `go-libfossil/checkout/` package is a clean-room port of libfossil's 43 public checkout functions into ~30 methods on `*Checkout`. All filesystem I/O goes through `simio.Env` (Storage, Clock, Rand) -- no build tags, platform-agnostic, WASM-ready.
+The `libfossil/checkout/` package is a clean-room port of libfossil's 43 public checkout functions into ~30 methods on `*Checkout`. All filesystem I/O goes through `simio.Env` (Storage, Clock, Rand) -- no build tags, platform-agnostic, WASM-ready.
 
 ```go
 type Checkout struct {
@@ -20,7 +20,7 @@ Key accessors: `Version()` returns current RID + UUID. `Dir()` returns root path
 
 **`simio.Storage` extension** -- `ReadDir(path string) ([]fs.DirEntry, error)` added for `ScanChanges` directory walking.
 
-**Observer** -- separate `checkout.Observer` interface (extract/scan/commit lifecycle hooks). OTel implementation in `leaf/telemetry/checkout_observer.go`. go-libfossil stays OTel-free.
+**Observer** -- separate `checkout.Observer` interface (extract/scan/commit lifecycle hooks). OTel implementation in `leaf/telemetry/checkout_observer.go`. libfossil stays OTel-free.
 
 ## Checkout Operations
 
@@ -122,30 +122,30 @@ Sequence: pre-pull with ci-lock request, check lock result, inject `WouldFork` a
 
 ## Stash, Undo, Annotate, Bisect
 
-### Stash (`go-libfossil/stash/`)
+### Stash (`libfossil/stash/`)
 
 Schema: `stash` + `stashfile` tables in checkout DB. `stash.hash` = checkout manifest UUID at save time. `stashfile.delta` = delta from baseline to working content. Save computes deltas via `delta/` package, reverts working dir. Pop/apply call `undoSave()` first.
 
-### Undo (`go-libfossil/undo/`)
+### Undo (`libfossil/undo/`)
 
 Single-level undo/redo via `undo`, `undo_vfile`, `undo_vmerge` tables. State machine: `undo_available` in vvar (0=none, 1=undo, 2=redo). Swap mechanism: vfile <-> undo_vfile, vmerge <-> undo_vmerge, restore file content. Called before: checkout, revert, add, rm, rename, stash pop/apply.
 
-### Annotate (`go-libfossil/annotate/`)
+### Annotate (`libfossil/annotate/`)
 
 Walk parent chain via `plink` + `mlink`, diff each ancestor with Myers, push `iVers` markers back. Track renames via `mlink.fnid` + `filename.name`. Options: `--limit`, `--origin`, `--version`.
 
-### Bisect (`go-libfossil/bisect/`)
+### Bisect (`libfossil/bisect/`)
 
 State in vvar: `bisect-good`, `bisect-bad`, `bisect-log`. BFS path-finding over `plink` (unweighted, matches Fossil's `path_shortest()`). Auto-next on good/bad/skip. Converges when good and bad are adjacent.
 
-### Branch (`go-libfossil/tag/`)
+### Branch (`libfossil/tag/`)
 
 Branches are propagating `sym-<name>` tags. Creation = checkin with `sym-<name>` (propagating) + `branch=<name>` (singleton) via `CheckinOpts.Tags`. Closing = control artifact cancelling the sym tag + adding `closed`.
 
 ## Key Constraints
 
-- **go-libfossil is transport-agnostic** -- no transport imports, no operational endpoints. Fork detection and PreCommitCheck are primitives; the agent owns the workflow.
+- **libfossil is transport-agnostic** -- no transport imports, no operational endpoints. Fork detection and PreCommitCheck are primitives; the agent owns the workflow.
 - **Fossil-compatible schema** -- vfile, vmerge, vvar, stash, undo tables match Fossil's layout for interoperability.
 - **simio.Env everywhere** -- all I/O through Storage/Clock/Rand. No build tags in checkout package.
 - **TigerStyle assertions** -- precondition panics for nil/invalid arguments on all public methods.
-- **Observer pattern** -- lifecycle hooks in go-libfossil, OTel implementation in leaf/telemetry.
+- **Observer pattern** -- lifecycle hooks in libfossil, OTel implementation in leaf/telemetry.

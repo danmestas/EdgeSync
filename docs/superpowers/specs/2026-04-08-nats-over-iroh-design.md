@@ -1,7 +1,7 @@
 # NATS-over-iroh: P2P Presence and Messaging
 
 **Date:** 2026-04-08
-**Target repo:** EdgeSync (agent + sidecar), no go-libfossil changes
+**Target repo:** EdgeSync (agent + sidecar), no libfossil changes
 **Linear:** EDG-59
 
 ## Problem
@@ -186,7 +186,7 @@ Stop():
 
 ## What Does NOT Change
 
-- **go-libfossil** — transport-agnostic, no changes
+- **libfossil** — transport-agnostic, no changes
 - **NATSTransport** (`leaf/agent/nats.go`) — still does request/reply on subjects, connects to localhost
 - **ServeNATS** (`leaf/agent/serve_nats.go`) — still subscribes and handles sync requests
 - **IrohTransport** (`leaf/agent/iroh.go`) — kept for backwards compat with peers that don't have embedded NATS. Deprecate once NATS-over-iroh is stable (follow-up ticket) — having two paths to reach iroh peers increases cognitive load

@@ -1,5 +1,5 @@
-// Copy this file to go.work for local development against a local go-libfossil checkout.
-// Assumes go-libfossil is cloned at ../go-libfossil relative to this repo.
+// Copy this file to go.work for local development against a local libfossil checkout.
+// Assumes libfossil is cloned at ../libfossil relative to this repo.
 // Do NOT commit go.work — it is gitignored.
 
 go 1.26.0
@@ -12,7 +12,7 @@ use (
 )
 
 replace (
-	github.com/danmestas/go-libfossil => ../go-libfossil
-	github.com/danmestas/go-libfossil/db/driver/modernc => ../go-libfossil/db/driver/modernc
-	github.com/danmestas/go-libfossil/db/driver/ncruces => ../go-libfossil/db/driver/ncruces
+	github.com/danmestas/libfossil => ../libfossil
+	github.com/danmestas/libfossil/db/driver/modernc => ../libfossil/db/driver/modernc
+	github.com/danmestas/libfossil/db/driver/ncruces => ../libfossil/db/driver/ncruces
 )

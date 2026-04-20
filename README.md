@@ -73,7 +73,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4318 bin/leaf --repo my.fossil --nats nats
 ```
 cmd/edgesync/          Unified CLI binary (50 subcommands)
 
-go-libfossil/          Core library — Go port of Fossil internals
+libfossil/             Core library — Go port of Fossil internals
   annotate/            Line-level blame/annotate
   bisect/              Binary search for regressions
   blob/                Blob compression (Fossil's 4-byte prefix + zlib)
@@ -119,7 +119,7 @@ docs/                  Documentation
 | Module | Path | Purpose |
 |--------|------|---------|
 | `github.com/dmestas/edgesync` | `.` | Root: CLI, sim/, soak runner |
-| `github.com/dmestas/edgesync/go-libfossil` | `go-libfossil/` | Core library |
+| `github.com/danmestas/libfossil` | `libfossil/` | Core library (public, v0.1.x) |
 | `github.com/dmestas/edgesync/leaf` | `leaf/` | Leaf agent |
 | `github.com/dmestas/edgesync/bridge` | `bridge/` | Bridge |
 | `github.com/dmestas/edgesync/dst` | `dst/` | Deterministic sim tests |

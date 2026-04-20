@@ -10,7 +10,7 @@ Three components, phased delivery:
 
 | Component | Stack | Status |
 |-----------|-------|--------|
-| Go CLI (`edgesync notify`) | go-libfossil, nats.go, Kong | **Shipped (Phase 1)** |
+| Go CLI (`edgesync notify`) | libfossil, nats.go, Kong | **Shipped (Phase 1)** |
 | Hetzner hub relay | Existing leaf agent + new NATS subjects | Planned (Phase 2) |
 | Expo app (iOS + macOS) | React Native, NATS-over-iroh | Planned (Phase 3) |
 
@@ -78,7 +78,7 @@ notify.>                        # Firehose
 <project>/media/           # UV files (Phase 2)
 ```
 
-`notify.fossil` is a dedicated Fossil repo created via `InitNotifyRepo()`. Managed entirely by go-libfossil — no `fossil` binary dependency. Messages are versioned checkins; media attachments use UV (unversioned files).
+`notify.fossil` is a dedicated Fossil repo created via `InitNotifyRepo()`. Managed entirely by libfossil — no `fossil` binary dependency. Messages are versioned checkins; media attachments use UV (unversioned files).
 
 ## Identity & Trust
 
@@ -103,7 +103,7 @@ cmd/edgesync/
 - No `NewActionReply` — callers use `NewReply` + set `ActionResponse = true`
 - Service holds `*libfossil.Repo` and `*nats.Conn` directly, doesn't own their lifecycle
 
-**Store internals:** `store.go` queries Fossil's `filename`, `mlink`, `blob` tables directly and decompresses the blob format (4-byte BE size + zlib). This bypasses go-libfossil's public API because `r.ReadFile()` doesn't exist yet. If added, migrate.
+**Store internals:** `store.go` queries Fossil's `filename`, `mlink`, `blob` tables directly and decompresses the blob format (4-byte BE size + zlib). This bypasses libfossil's public API because `r.ReadFile()` doesn't exist yet. If added, migrate.
 
 ## CLI Interface
 
@@ -156,7 +156,7 @@ Go backend compiled via gomobile, localhost HTTP/SSE server, React Native (Expo)
 ├────── localhost HTTP ────────┤
 │  Go Framework (gomobile)    │  Logic layer — notify.Service, NATS, iroh
 │  HTTP server + SSE          │
-│  go-libfossil + nats.go     │
+│  libfossil + nats.go        │
 └─────────────────────────────┘
 ```
 
@@ -215,7 +215,7 @@ gomobile exports three top-level functions callable from Swift:
 ```
 edgesync-notify-app/
   go/
-    go.mod              # imports go-libfossil + edgesync/leaf/agent/notify
+    go.mod              # imports libfossil + edgesync/leaf/agent/notify
     server.go           # localhost HTTP + SSE server
     bridge.go           # wraps notify.Service for HTTP handlers
     bridge_test.go      # httptest-based tests
@@ -292,13 +292,13 @@ npx expo prebuild
 npx expo run:ios
 ```
 
-CI runs `go test ./go/` and `npx tsc --noEmit`. Full iOS build is local only. CI requires `GO_MODULE_TOKEN` for private module access.
+CI runs `go test ./go/` and `npx tsc --noEmit`. Full iOS build is local only. libfossil is a public module, so no `GO_MODULE_TOKEN` or GOPRIVATE plumbing is required.
 
 ### Dependencies
 
 | Package | Purpose |
 |---------|---------|
-| `go-libfossil` | Fossil repo operations |
+| `libfossil` | Fossil repo operations |
 | `edgesync/leaf/agent/notify` | Message types, store, pub/sub, Service |
 | `nats.go` | NATS client |
 | `gomobile` | Compile Go to iOS/macOS framework |

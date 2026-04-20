@@ -5,7 +5,7 @@ Fossil sync engine — replace Fossil's HTTP sync with NATS messaging or direct 
 See `MEMORY.md` for detailed project history, patterns, and decisions across sessions.
 
 See `docs/architecture/` for condensed architectural decision records (ARDs):
-- `core-library.md` — go-libfossil package architecture, blob format, xfer wire format, SQLite drivers
+- `core-library.md` — libfossil package architecture, blob format, xfer wire format, SQLite drivers
 - `sync-protocol.md` — xfer card protocol, client/server flow, clone, UV, config sync, private artifacts
 - `agent-deployment.md` — leaf agent, bridge, Docker, WASM targets, observability
 - `checkout-merge.md` — checkout/checkin, merge strategies, fork prevention, autosync, ci-lock
@@ -31,7 +31,7 @@ make setup-hooks        # Install pre-commit hook (~8s before each commit)
 go build -buildvcs=false ./cmd/edgesync/   # Dual VCS needs -buildvcs=false
 ```
 
-**CI:** GitHub Actions (`.github/workflows/ci.yml`) runs on push to main and PRs. Steps: `go vet`, unit tests (leaf + bridge in parallel), CLI build, CLI tests. Uses `GOWORK=off` and `GO_MODULE_TOKEN` secret for private go-libfossil access.
+**CI:** GitHub Actions (`.github/workflows/ci.yml`) runs on push to main and PRs. Steps: `go vet`, unit tests (leaf + bridge in parallel), CLI build, CLI tests. Uses `GOWORK=off`. All Go deps are public — no private-module auth needed.
 
 ## Go Modules (go.work)
 
@@ -40,23 +40,23 @@ Four modules in a workspace:
 - `leaf/` — leaf agent module
 - `bridge/` — bridge module
 - `dst/` — deterministic simulation tests
-- External dependency: `github.com/danmestas/go-libfossil` v0.2.x (standalone repo)
+- External dependency: `github.com/danmestas/libfossil` v0.1.x (public, standalone repo)
 
-For local go-libfossil development, copy `go.work.example` to `go.work` and clone go-libfossil at `../go-libfossil`.
+For local libfossil development, copy `go.work.example` to `go.work` and clone libfossil at `../libfossil`.
 
-**Important:** go-libfossil v0.2.0+ hides all implementation packages under `internal/`. EdgeSync imports only the root package handle API (`libfossil.Repo`, `libfossil.Transport`, etc.), plus `db/`, `simio/`, and `testutil/` which remain public.
+**Important:** libfossil hides all implementation packages under `internal/`. EdgeSync imports only the root package handle API (`libfossil.Repo`, `libfossil.Transport`, etc.), plus `db/`, `simio/`, and `testutil/` which remain public.
 
 ## Project Structure
 
 ### Entry Points
-- `cmd/edgesync/` — Unified CLI binary (embeds go-libfossil's `cli.RepoCmd` + EdgeSync-specific commands)
+- `cmd/edgesync/` — Unified CLI binary (embeds libfossil's `cli.RepoCmd` + EdgeSync-specific commands)
 - `leaf/cmd/leaf/` — Standalone leaf agent daemon
 - `bridge/cmd/bridge/` — Standalone bridge daemon
 - `sim/cmd/soak/` — Continuous soak test runner
 
-### Core Library: go-libfossil (external: github.com/danmestas/go-libfossil v0.2.x)
+### Core Library: libfossil (external: github.com/danmestas/libfossil v0.1.x)
 
-go-libfossil exposes an opaque `Repo` handle — all operations are methods on it. Implementation packages (blob, content, manifest, sync, xfer, etc.) are under `internal/` and not importable.
+libfossil exposes an opaque `Repo` handle — all operations are methods on it. Implementation packages (blob, content, manifest, sync, xfer, etc.) are under `internal/` and not importable.
 
 **Public API surface:**
 
@@ -80,7 +80,7 @@ go-libfossil exposes an opaque `Repo` handle — all operations are methods on i
 - `cli/` — Embeddable kong CLI commands (38 Fossil-compatible subcommands)
 - `observer/otel/` — Optional OTel observer (separate go.mod)
 
-**EdgeSync-specific commands (not in go-libfossil):**
+**EdgeSync-specific commands (not in libfossil):**
 - `sync start` / `sync now` — NATS agent daemon
 - `bridge serve` — NATS-to-HTTP bridge
 - `doctor` — Environment health check
@@ -88,7 +88,7 @@ go-libfossil exposes an opaque `Repo` handle — all operations are methods on i
 ### Agent/Bridge
 - `leaf/agent/` — `Config` (config.go), `New()`, `Start()`, `Stop()`, `SyncNow()`
   - `nats_mesh.go` — `NATSMesh` module: embedded NATS server + iroh tunnel establishment
-  - `serve_http.go` — composes mux with `/healthz` + `r.XferHandler()` (operational endpoints live here, not in go-libfossil)
+  - `serve_http.go` — composes mux with `/healthz` + `r.XferHandler()` (operational endpoints live here, not in libfossil)
   - `serve_nats.go` — NATS request/reply listener for leaf-to-leaf sync
   - Config fields: `NATSRole` (peer/hub/leaf), `NATSUpstream` (optional external NATS), `ServeHTTPAddr`, `ServeNATSEnabled`, `IrohEnabled`, `IrohPeers`, `IrohKeyPath`
   - CLI flags: `--repo`, `--nats`, `--nats-role`, `--poll`, `--serve-http`, `--serve-nats`, `--uv`, `--push`, `--pull`, `--user`, `--password`, `--iroh`, `--iroh-peer`, `--iroh-key`
@@ -102,7 +102,7 @@ go-libfossil exposes an opaque `Repo` handle — all operations are methods on i
   - `notify.go` — `Service` (Send, Watch, FormatWatchLine)
 - `cmd/edgesync/notify.go` — 7 CLI commands: init, send, ask, watch, threads, log, status
 - NATS subjects: `notify.<project>.<thread-short>` (separate from sync subjects)
-- Storage: dedicated `notify.fossil` repo, managed by go-libfossil (no `fossil` binary)
+- Storage: dedicated `notify.fossil` repo, managed by libfossil (no `fossil` binary)
 
 ### Simulation Testing
 - `dst/` — Deterministic single-threaded sim. `SimNetwork` (bridge mode), `PeerNetwork` (leaf-to-leaf). `MockFossil` delegates to `HandleSyncWithOpts`.
@@ -134,7 +134,7 @@ make test                                  # CI tests never need Doppler
 
 ### Observer Pattern
 
-`libfossil.SyncObserver` and `libfossil.CheckoutObserver` interfaces — lifecycle hooks for sync sessions, rounds, errors, server-side handling, and checkout operations. `leaf/telemetry/observer.go` implements them with OTel spans and metrics. go-libfossil's root package has **no OTel dependency** — the optional `observer/otel/` sub-module provides an OTel implementation with its own go.mod.
+`libfossil.SyncObserver` and `libfossil.CheckoutObserver` interfaces — lifecycle hooks for sync sessions, rounds, errors, server-side handling, and checkout operations. `leaf/telemetry/observer.go` implements them with OTel spans and metrics. libfossil's root package has **no OTel dependency** — the optional `observer/otel/` sub-module provides an OTel implementation with its own go.mod.
 
 ### Honeycomb Dashboard
 
@@ -159,7 +159,7 @@ cd ~/EdgeSync && git pull && cd deploy && sudo docker compose up -d --build
 | Tailscale HTTP | `http://100.78.32.45:9000` | Tailnet only |
 | Tailscale NATS | `nats://100.78.32.45:4222` | Tailnet only |
 
-- `deploy/Dockerfile` — multi-stage build, uses `GOWORK=off` (copies leaf/, depends on published go-libfossil)
+- `deploy/Dockerfile` — multi-stage build, uses `GOWORK=off` (copies leaf/, depends on published libfossil)
 - `deploy/docker-compose.yml` — NATS on Tailscale IP, leaf on port 9000 (8080/8090 occupied by Coolify/Caddy)
 - Cloudflare Tunnel config: `~/.cloudflared/config.yml` on VPS, service `cloudflared-fossil`
 - Repo files: `deploy/data/*.fossil` (host volume mount)
@@ -174,7 +174,7 @@ cd ~/EdgeSync && git pull && cd deploy && sudo docker compose up -d --build
 - **simio.CryptoRand{}**: Use for production callsites of `repo.Create` and `db.SeedConfig`
 - **Pre-commit hook**: `make setup-hooks` installs ~8s test gate
 - **HandleSync vs HandleSyncWithOpts**: Use `r.HandleSync()` in production, `r.HandleSyncWithOpts(ctx, req, HandleOpts{Buggify})` for DST
-- **go-libfossil is transport-agnostic**: No operational endpoints (healthz, metrics) in go-libfossil. Use `XferHandler()` to compose custom muxes. Operational concerns live in `leaf/agent/serve_http.go`.
+- **libfossil is transport-agnostic**: No operational endpoints (healthz, metrics) in libfossil. Use `XferHandler()` to compose custom muxes. Operational concerns live in `leaf/agent/serve_http.go`.
 
 ## Fossil Sync Protocol
 
