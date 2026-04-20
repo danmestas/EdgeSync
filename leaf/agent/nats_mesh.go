@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"time"
 
 	natsserver "github.com/nats-io/nats-server/v2/server"
@@ -42,6 +44,7 @@ type NATSMesh struct {
 	upstream   string   // optional external NATS URL
 	irohPeers  []string // remote EndpointIds
 	clientPort int      // optional fixed client port; 0 means random
+	storeDir   string   // JetStream on-disk store dir; empty falls back to ./.nats-store under CWD
 
 	// Set internally during Start.
 	reservedLeafPort int
@@ -193,6 +196,10 @@ func (m *NATSMesh) buildServerOpts() *natsserver.Options {
 		Port:   -1, // random client port
 		NoLog:  true,
 		NoSigs: true,
+		// JetStream is always on so callers (notably agent-infra's task KV)
+		// can open streams and KV buckets without extra handshaking.
+		JetStream: true,
+		StoreDir:  jetStreamStoreDir(m.storeDir),
 	}
 	if m.clientPort > 0 {
 		opts.Port = m.clientPort
@@ -233,6 +240,22 @@ func (m *NATSMesh) buildServerOpts() *natsserver.Options {
 	}
 
 	return opts
+}
+
+// jetStreamStoreDir resolves the on-disk path where JetStream will persist
+// streams and KV buckets. When configured is non-empty it is used verbatim.
+// Otherwise we fall back to "<cwd>/.nats-store" — intentionally not /tmp,
+// since stale JetStream state from a prior run in /tmp would silently
+// corrupt a later workspace that reused the same bucket names.
+func jetStreamStoreDir(configured string) string {
+	if configured != "" {
+		return configured
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "."
+	}
+	return filepath.Join(cwd, ".nats-store")
 }
 
 // shouldSolicit determines whether we should initiate a NATS tunnel to a peer.

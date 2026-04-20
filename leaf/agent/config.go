@@ -36,6 +36,12 @@ type Config struct {
 	// lets NATS choose a random localhost port.
 	NATSClientPort int
 
+	// NATSStoreDir is where JetStream persists streams and KV buckets.
+	// Empty falls back to "<cwd>/.nats-store". Callers that want isolated
+	// per-workspace state should pass an absolute path under the workspace
+	// (e.g. "<workspace>/.agent-infra/nats-store").
+	NATSStoreDir string
+
 	// NATSRole determines how the embedded NATS server participates in the
 	// mesh (peer, hub, or leaf). Default: peer.
 	NATSRole NATSRole

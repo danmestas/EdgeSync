@@ -25,6 +25,7 @@ func main() {
 	repoPath := flag.String("repo", envOrDefault("LEAF_REPO", ""), "path to Fossil repository file (required)")
 	natsURL := flag.String("nats", envOrDefault("LEAF_NATS_URL", "nats://localhost:4222"), "NATS server URL")
 	natsClientPort := flag.Int("nats-client-port", envInt("LEAF_NATS_CLIENT_PORT", 0), "embedded NATS client listener port (0 means random)")
+	natsStoreDir := flag.String("nats-store-dir", envOrDefault("LEAF_NATS_STORE_DIR", ""), "JetStream on-disk store directory (default <cwd>/.nats-store)")
 	poll := flag.Duration("poll", 5*time.Second, "poll interval")
 	user := flag.String("user", envOrDefault("LEAF_USER", ""), "Fossil user name")
 	password := flag.String("password", envOrDefault("LEAF_PASSWORD", ""), "Fossil user password")
@@ -94,6 +95,7 @@ func main() {
 		RepoPath:         *repoPath,
 		NATSUpstream:     *natsURL,
 		NATSClientPort:   *natsClientPort,
+		NATSStoreDir:     *natsStoreDir,
 		PollInterval:     *poll,
 		User:             *user,
 		Password:         *password,

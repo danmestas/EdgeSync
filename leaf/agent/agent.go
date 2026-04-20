@@ -110,6 +110,7 @@ func New(cfg Config) (*Agent, error) {
 		upstream:   cfg.NATSUpstream,
 		irohPeers:  cfg.IrohPeers,
 		clientPort: cfg.NATSClientPort,
+		storeDir:   cfg.NATSStoreDir,
 	}
 
 	a := &Agent{
