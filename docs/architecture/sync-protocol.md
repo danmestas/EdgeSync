@@ -2,7 +2,7 @@
 
 ## Transport-Agnostic Design
 
-The sync engine (`go-libfossil/sync/`) operates entirely through a `Transport` interface with a single method:
+The sync engine (`libfossil/sync/`) operates entirely through a `Transport` interface with a single method:
 
 ```go
 type Transport interface {
@@ -114,7 +114,7 @@ Mirrors Fossil's per-request `onremote` temp table (xfer.c:1011-1012, 1056-1057)
 
 **Implementation:** `remoteHas map[string]remoteHasEntry` on the handler struct, where `remoteHasEntry{isPrivate bool}` records the client's announced private status. Lazily initialized (nil until first igot received). Lifecycle is per-request -- no cross-request persistence.
 
-**Private-status-aware filtering (divergence from Fossil):** Fossil's `onremote` is a simple `rid INTEGER PRIMARY KEY` -- no private flag. Fossil doesn't need one because its server-side igot handler calls `content_make_public(rid)` / `content_make_private(rid)` to synchronize private status during igot processing (xfer.c:1472-1476). go-libfossil deliberately does NOT mutate server private status from client igots ("server is authoritative"). This means private/public transitions must propagate through igot *emission*: the filter only skips when the client's announced status matches the server's current status.
+**Private-status-aware filtering (divergence from Fossil):** Fossil's `onremote` is a simple `rid INTEGER PRIMARY KEY` -- no private flag. Fossil doesn't need one because its server-side igot handler calls `content_make_public(rid)` / `content_make_private(rid)` to synchronize private status during igot processing (xfer.c:1472-1476). libfossil deliberately does NOT mutate server private status from client igots ("server is authoritative"). This means private/public transitions must propagate through igot *emission*: the filter only skips when the client's announced status matches the server's current status.
 
 - `emitIGots()` (public blobs): skip when `ok && !e.isPrivate` -- client has it as public
 - `emitPrivateIGots()` (private blobs): skip when `ok && e.isPrivate` -- client has it as private
@@ -232,6 +232,6 @@ Two-pass architecture matching Fossil's `manifest_crosslink_begin`/`manifest_cro
 - **SHA3 UUIDs:** 64-char = SHA3-256 (Fossil 2.0+), 40-char = SHA1 (legacy).
 - **Performance targets:** Compute within 3x of C, I/O within 5x.
 - **No CGo:** Pure Go, behavioral equivalence validated by Fossil CLI as test oracle.
-- **go-libfossil is transport-agnostic:** No operational endpoints (healthz, metrics). Operational concerns live in `leaf/agent/serve_http.go`.
+- **libfossil is transport-agnostic:** No operational endpoints (healthz, metrics). Operational concerns live in `leaf/agent/serve_http.go`.
 - **Stale phantom eviction:** After 3 consecutive unresolved rounds, phantoms are evicted to prevent convergence deadlock.
 - **Auth contract:** User + Password both set = login card with SHA1 auth. Either empty = no login card (unauthenticated "nobody").

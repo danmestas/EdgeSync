@@ -2,7 +2,7 @@
 
 ## Leaf Agent Architecture
 
-The leaf agent is a Go daemon in its own module (`leaf/`) that opens a Fossil repo via go-libfossil, connects to NATS, and syncs artifacts on a poll loop. It acts as both sync client and server.
+The leaf agent is a Go daemon in its own module (`leaf/`) that opens a Fossil repo via libfossil, connects to NATS, and syncs artifacts on a poll loop. It acts as both sync client and server.
 
 **Lifecycle:** `New(Config)` -> `Start()` -> `Stop()`. A single poll goroutine is the sole executor of `doSync()`. `SyncNow()` is a non-blocking signal (buffered channel, size 1) that coalesces if a sync is already running. This avoids concurrent SQLite access.
 
@@ -82,7 +82,7 @@ Third transport option alongside NATS and HTTP. Enables direct peer-to-peer sync
 
 ## HTTP Serving
 
-`serve_http.go` in `leaf/agent/` composes an HTTP mux with `/healthz` (200 OK, JSON status) and `sync.XferHandler()` for Fossil's `/xfer` endpoint. Operational endpoints live in the agent, not in go-libfossil (which is transport-agnostic).
+`serve_http.go` in `leaf/agent/` composes an HTTP mux with `/healthz` (200 OK, JSON status) and `sync.XferHandler()` for Fossil's `/xfer` endpoint. Operational endpoints live in the agent, not in libfossil (which is transport-agnostic).
 
 Stock `fossil clone` and `fossil sync` work against the leaf's HTTP endpoint.
 
@@ -90,7 +90,7 @@ Stock `fossil clone` and `fossil sync` work against the leaf's HTTP endpoint.
 
 Stack lives in `deploy/`. Two containers: NATS + leaf agent.
 
-**Dockerfile:** Multi-stage build. Build stage: `golang:1.25-alpine` with CGO (modernc SQLite). Run stage: `alpine:3.20` (~20-30MB). Uses `GOWORK=off`, copies only `go-libfossil/` and `leaf/`.
+**Dockerfile:** Multi-stage build. Build stage: `golang:1.26-alpine` with CGO (modernc SQLite). Run stage: `alpine:3.20` (~20-30MB). Uses `GOWORK=off`, copies only `libfossil/` and `leaf/`.
 
 **Compose services:**
 
@@ -132,7 +132,7 @@ Two targets, same agent API (`New` -> `Start` -> `Stop`):
 
 ### Observer Pattern
 
-`sync.Observer` interface in go-libfossil -- zero OTel dependency. Lifecycle hooks injected via `SyncOpts.Observer` and `CloneOpts.Observer`. Nil observer uses `nopObserver` (zero-cost, ~2ns indirect call).
+`sync.Observer` interface in libfossil -- zero OTel dependency. Lifecycle hooks injected via `SyncOpts.Observer` and `CloneOpts.Observer`. Nil observer uses `nopObserver` (zero-cost, ~2ns indirect call).
 
 ```go
 type Observer interface {
@@ -150,7 +150,7 @@ type Observer interface {
 
 ### OTel Integration
 
-All OTel code lives in `leaf/telemetry/` (build-tagged `!wasip1 && !js`). WASM gets no-op stubs. go-libfossil and bridge modules have zero OTel dependencies.
+All OTel code lives in `leaf/telemetry/` (build-tagged `!wasip1 && !js`). WASM gets no-op stubs. libfossil and bridge modules have zero OTel dependencies.
 
 **Setup:** `telemetry.Setup()` initializes TracerProvider + MeterProvider with OTLP exporters. Falls back to standard `OTEL_*` env vars. No endpoint = no-op (zero overhead).
 
@@ -188,4 +188,4 @@ Four modules in EdgeSync's `go.work`:
 | `bridge/` | No | Yes | NATS-HTTP translator |
 | `dst/` | No | No | Deterministic simulation |
 
-go-libfossil is an external dependency at `github.com/danmestas/go-libfossil` (standalone repo). For local development, copy `go.work.example` to `go.work` and clone go-libfossil at `../go-libfossil`.
+libfossil is an external dependency at `github.com/danmestas/libfossil` (public, standalone repo). For local development, copy `go.work.example` to `go.work` and clone libfossil at `../libfossil`.

@@ -70,7 +70,7 @@ Start broad, go deep as needed:
 2. **[docs/leaf-agent.md](leaf-agent.md)** -- Leaf agent usage, flags, config
 3. **[docs/bridge.md](bridge.md)** -- Bridge usage and deployment
 4. **Architecture docs** (in `docs/architecture/`):
-   - `core-library.md` -- go-libfossil package design, blob format, SQLite drivers
+   - `core-library.md` -- libfossil package design, blob format, SQLite drivers
    - `sync-protocol.md` -- xfer card protocol, client/server flow, UV sync
    - `testing-strategy.md` -- test tiers (unit, DST, sim, interop), BUGGIFY
    - `agent-deployment.md` -- Docker, Hetzner VPS, Cloudflare Tunnel
@@ -80,7 +80,7 @@ Start broad, go deep as needed:
 ## Things to Know
 
 - **`-buildvcs=false`** is required for raw `go build` (dual VCS: git + fossil). The Makefile handles this for you.
-- **Five Go modules** in a workspace (`go.work`): root, go-libfossil, leaf, bridge, dst. Use `go test ./go-libfossil/...` etc.
+- **Five Go modules** in a workspace (`go.work`): root, libfossil, leaf, bridge, dst. Use `go test ./libfossil/...` etc.
 - **Three SQLite drivers**: modernc (default, pure Go), ncruces (WASM-based), mattn (CGo). Switch via build tags.
 - **`fossil/` and `libfossil/`** directories are gitignored -- upstream C reference checkouts for porting. They exist on some dev machines but aren't tracked.
 - **Pre-commit hook** runs ~8s of tests. Skip with `git commit --no-verify` (emergency only).

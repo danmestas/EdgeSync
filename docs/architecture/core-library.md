@@ -1,6 +1,6 @@
-# go-libfossil Core Library
+# libfossil Core Library
 
-Pure-Go reimplementation of Fossil's core operations. Standalone repo at `github.com/danmestas/go-libfossil` (private, v0.2.x). No CGo in the default build. Every operation must produce `.fossil` files that `fossil rebuild --verify` accepts.
+Pure-Go reimplementation of Fossil's core operations. Standalone repo at `github.com/danmestas/libfossil` (public, v0.1.x). No CGo in the default build. Every operation must produce `.fossil` files that `fossil rebuild --verify` accepts.
 
 ## Repository & Module Structure
 
@@ -8,13 +8,13 @@ Extracted from EdgeSync monorepo (April 2026) via `git filter-repo` with history
 
 | Module | Purpose |
 |---|---|
-| `github.com/danmestas/go-libfossil` | Root — opaque handle API, CLI, tests |
-| `github.com/danmestas/go-libfossil/db/driver/modernc` | Default SQLite driver |
-| `github.com/danmestas/go-libfossil/db/driver/ncruces` | WASM-compatible SQLite driver |
+| `github.com/danmestas/libfossil` | Root — opaque handle API, CLI, tests |
+| `github.com/danmestas/libfossil/db/driver/modernc` | Default SQLite driver |
+| `github.com/danmestas/libfossil/db/driver/ncruces` | WASM-compatible SQLite driver |
 
 Optional sub-module: `observer/otel/` — OTel observer implementation (separate go.mod, zero OTel deps in root).
 
-Versioning: lockstep `v0.x` tags across all sub-modules. Tags: `v0.2.5`, `db/driver/modernc/v0.2.5`, `db/driver/ncruces/v0.2.5`.
+Versioning: lockstep `v0.x` tags across all sub-modules. Tags: `v0.1.0`, `db/driver/modernc/v0.1.0`, `db/driver/ncruces/v0.1.0`.
 
 ## Encapsulation & Public API
 
@@ -127,7 +127,7 @@ GOWORK=off go test -tags test_ncruces ./...           # ncruces
 
 ## TigerStyle Conventions
 
-Applied across all 20 go-libfossil packages. Zero new features -- hardening only.
+Applied across all 20 libfossil packages. Zero new features -- hardening only.
 
 ### Assertions
 

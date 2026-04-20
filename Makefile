@@ -64,7 +64,7 @@ setup-hooks:
 	@echo "Skip with: git commit --no-verify"
 
 # --- Sim (Integration Simulation) — run locally, requires fossil ---
-# Note: DST tests now live in go-libfossil (github.com/danmestas/go-libfossil/dst)
+# Note: DST tests now live in libfossil (github.com/danmestas/libfossil/dst)
 
 # Quick: 1 seed, normal severity
 sim:
@@ -93,7 +93,7 @@ test-iroh: iroh-sidecar
 # --- Dependency update ---
 
 update-libfossil:
-	GOPRIVATE=github.com/danmestas/go-libfossil go get github.com/danmestas/go-libfossil@latest
-	GOPRIVATE=github.com/danmestas/go-libfossil go get github.com/danmestas/go-libfossil/db/driver/modernc@latest
-	GOPRIVATE=github.com/danmestas/go-libfossil go get github.com/danmestas/go-libfossil/db/driver/ncruces@latest
+	go get github.com/danmestas/libfossil@latest
+	go get github.com/danmestas/libfossil/db/driver/modernc@latest
+	go get github.com/danmestas/libfossil/db/driver/ncruces@latest
 	go mod tidy

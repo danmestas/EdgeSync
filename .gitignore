@@ -37,4 +37,4 @@ go.work
 go.work.sum
 
 # Temporary clones for development
-.tmp-go-libfossil/
+.tmp-libfossil/

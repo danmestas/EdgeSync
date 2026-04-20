@@ -2,7 +2,7 @@
 
 ## Unified CLI
 
-Single binary `edgesync` built with [kong](https://github.com/alecthomas/kong) struct-tag dispatch. Replaces the need for the `fossil` binary for basic repo operations. One file per command in `cmd/edgesync/`, each delegating to go-libfossil packages.
+Single binary `edgesync` built with [kong](https://github.com/alecthomas/kong) struct-tag dispatch. Replaces the need for the `fossil` binary for basic repo operations. One file per command in `cmd/edgesync/`, each delegating to libfossil packages.
 
 Global flags: `-R <path>` (repo file), `-C <path>` (checkout dir), `-v` (verbose). Repo discovery walks parent directories for `.fslckout` / `_FOSSIL_` when `-R` is omitted.
 
@@ -57,7 +57,7 @@ Special case: `bgcolor` tag also updates `event.bgcolor` at each descendant.
 
 ## Full-Text Search
 
-Package `go-libfossil/search/` with FTS5 trigram index stored inside the repo DB.
+Package `libfossil/search/` with FTS5 trigram index stored inside the repo DB.
 
 | Decision | Choice |
 |----------|--------|
@@ -73,7 +73,7 @@ Indexing expands delta chains via `content.Expand()`, skips phantoms and binarie
 
 ## Verify & Rebuild
 
-Package `go-libfossil/verify/` with two entry points:
+Package `libfossil/verify/` with two entry points:
 
 - **`Verify(r)`** -- read-only, report-all (never stops early), returns structured `Report` with typed `Issue` values.
 - **`Rebuild(r)`** -- drop-and-recompute all derived tables in a single transaction. Rollback on any error.
@@ -100,7 +100,7 @@ Existing `repo.Verify()` is deprecated and delegates to `verify.Verify()`, retur
 
 ## Auth & Capabilities
 
-Package `go-libfossil/auth/`. Repo-sovereign authentication using Fossil's existing `user` table and HMAC login scheme. No wire protocol changes.
+Package `libfossil/auth/`. Repo-sovereign authentication using Fossil's existing `user` table and HMAC login scheme. No wire protocol changes.
 
 ### Login Verification
 
@@ -140,7 +140,7 @@ Compact JSON base64url-encoded: `{"url","login","password","caps"}`. Password is
 
 ## Shun & Purge
 
-Package `go-libfossil/shun/`. Shunning is **local state** -- does not propagate via sync. Shunned artifacts are already excluded from igot/gimme exchanges in `sync/client.go` and `sync/handler.go`.
+Package `libfossil/shun/`. Shunning is **local state** -- does not propagate via sync. Shunned artifacts are already excluded from igot/gimme exchanges in `sync/client.go` and `sync/handler.go`.
 
 ### API
 

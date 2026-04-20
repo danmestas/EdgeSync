@@ -4,7 +4,7 @@
 
 | Tier | Location | Infrastructure | Speed | What It Proves |
 |------|----------|---------------|-------|----------------|
-| Unit | `go-libfossil/*/` | None | <1s | Package-level correctness |
+| Unit | `libfossil/*/` | None | <1s | Package-level correctness |
 | DST (deterministic sim) | `dst/` | In-process only | Fast (thousands of seeds in CI) | Protocol logic, convergence, message ordering |
 | Integration sim | `sim/` | Real NATS + fault proxy + real Fossil | ~15-60s per run | NATS integration, HTTP encoding, production code paths |
 | Equivalence | `sim/equivalence_test.go` | Fossil CLI | <15s | Round-trip: Checkin -> sync -> fossil open -> verify files |

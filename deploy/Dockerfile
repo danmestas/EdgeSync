@@ -1,12 +1,12 @@
 FROM golang:1.26-alpine AS build
 RUN apk add --no-cache gcc musl-dev git
 WORKDIR /src
-COPY go-libfossil/ go-libfossil/
+COPY libfossil/ libfossil/
 COPY leaf/ leaf/
 RUN cd leaf && \
-    go mod edit -replace github.com/danmestas/go-libfossil=/src/go-libfossil \
-                -replace github.com/danmestas/go-libfossil/db/driver/modernc=/src/go-libfossil/db/driver/modernc \
-                -replace github.com/danmestas/go-libfossil/db/driver/ncruces=/src/go-libfossil/db/driver/ncruces && \
+    go mod edit -replace github.com/danmestas/libfossil=/src/libfossil \
+                -replace github.com/danmestas/libfossil/db/driver/modernc=/src/libfossil/db/driver/modernc \
+                -replace github.com/danmestas/libfossil/db/driver/ncruces=/src/libfossil/db/driver/ncruces && \
     GOWORK=off go build -buildvcs=false -o /leaf ./cmd/leaf/
 
 FROM alpine:3.20
