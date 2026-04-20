@@ -13,6 +13,7 @@ The leaf agent is a Go daemon in its own module (`leaf/`) that opens a Fossil re
 | `RepoPath` | (required) | `--repo` | `LEAF_REPO` |
 | `NATSRole` | `"peer"` | `--nats-role` | |
 | `NATSUpstream` | `""` (embedded only) | `--nats` | `LEAF_NATS_URL` |
+| `NATSClientPort` | `0` (random) | `--nats-client-port` | `LEAF_NATS_CLIENT_PORT` |
 | `PollInterval` | `5s` | `--poll` | |
 | `User` | `""` (anonymous) | `--user` | |
 | `Password` | `""` | `--password` | |

@@ -40,19 +40,23 @@ func TestConfigDefaults(t *testing.T) {
 
 func TestConfigDefaultsPreserveExplicit(t *testing.T) {
 	c := Config{
-		RepoPath:      "/tmp/test.fossil",
-		NATSUpstream:  "nats://custom:4223",
-		NATSRole:      NATSRoleHub,
-		PollInterval:  10 * time.Second,
-		User:          "alice",
-		Push:          true,
-		Pull:          false,
-		SubjectPrefix: "edgesync",
+		RepoPath:       "/tmp/test.fossil",
+		NATSUpstream:   "nats://custom:4223",
+		NATSClientPort: 5222,
+		NATSRole:       NATSRoleHub,
+		PollInterval:   10 * time.Second,
+		User:           "alice",
+		Push:           true,
+		Pull:           false,
+		SubjectPrefix:  "edgesync",
 	}
 	c.applyDefaults()
 
 	if c.NATSUpstream != "nats://custom:4223" {
 		t.Errorf("NATSUpstream = %q, want %q", c.NATSUpstream, "nats://custom:4223")
+	}
+	if c.NATSClientPort != 5222 {
+		t.Errorf("NATSClientPort = %d, want 5222", c.NATSClientPort)
 	}
 	if c.NATSRole != NATSRoleHub {
 		t.Errorf("NATSRole = %q, want %q", c.NATSRole, NATSRoleHub)
@@ -95,6 +99,16 @@ func TestConfigValidateOK(t *testing.T) {
 	}
 }
 
+func TestConfigValidateRejectsInvalidNATSClientPort(t *testing.T) {
+	for _, port := range []int{-1, 65536} {
+		c := Config{RepoPath: "/tmp/test.fossil", NATSClientPort: port}
+		c.applyDefaults()
+		if err := c.validate(); err == nil {
+			t.Fatalf("validate with NATSClientPort=%d returned nil", port)
+		}
+	}
+}
+
 // createTestRepo creates a temporary Fossil repo and returns its path.
 // The repo is cleaned up when the test ends.
 func createTestRepo(t *testing.T) string {
@@ -134,8 +148,8 @@ func TestAgentNewAndStop(t *testing.T) {
 	natsURL := startEmbeddedNATS(t)
 
 	a, err := New(Config{
-		RepoPath: repoPath,
-		NATSUpstream:  natsURL,
+		RepoPath:     repoPath,
+		NATSUpstream: natsURL,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -159,7 +173,7 @@ func TestAgentStartAndStop(t *testing.T) {
 
 	a, err := New(Config{
 		RepoPath:     repoPath,
-		NATSUpstream:      natsURL,
+		NATSUpstream: natsURL,
 		PollInterval: 50 * time.Millisecond,
 	})
 	if err != nil {
@@ -182,8 +196,8 @@ func TestAgentNewBadRepoPath(t *testing.T) {
 	natsURL := startEmbeddedNATS(t)
 
 	_, err := New(Config{
-		RepoPath: "/nonexistent/path/to/repo.fossil",
-		NATSUpstream:  natsURL,
+		RepoPath:     "/nonexistent/path/to/repo.fossil",
+		NATSUpstream: natsURL,
 	})
 	if err == nil {
 		t.Fatal("expected error for bad repo path, got nil")
@@ -197,7 +211,7 @@ func TestAgentSyncNowNonBlocking(t *testing.T) {
 
 	a, err := New(Config{
 		RepoPath:     repoPath,
-		NATSUpstream:      natsURL,
+		NATSUpstream: natsURL,
 		PollInterval: 10 * time.Second, // long interval so only SyncNow triggers
 	})
 	if err != nil {

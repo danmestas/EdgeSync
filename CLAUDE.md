@@ -91,7 +91,7 @@ libfossil exposes an opaque `Repo` handle — all operations are methods on it. 
   - `serve_http.go` — composes mux with `/healthz` + `r.XferHandler()` (operational endpoints live here, not in libfossil)
   - `serve_nats.go` — NATS request/reply listener for leaf-to-leaf sync
   - Config fields: `NATSRole` (peer/hub/leaf), `NATSUpstream` (optional external NATS), `ServeHTTPAddr`, `ServeNATSEnabled`, `IrohEnabled`, `IrohPeers`, `IrohKeyPath`
-  - CLI flags: `--repo`, `--nats`, `--nats-role`, `--poll`, `--serve-http`, `--serve-nats`, `--uv`, `--push`, `--pull`, `--user`, `--password`, `--iroh`, `--iroh-peer`, `--iroh-key`
+  - CLI flags: `--repo`, `--nats`, `--nats-client-port`, `--nats-role`, `--poll`, `--serve-http`, `--serve-nats`, `--uv`, `--push`, `--pull`, `--user`, `--password`, `--iroh`, `--iroh-peer`, `--iroh-key`
 - `bridge/bridge/` — `Config` (config.go), `New()`, `Start()`, `Stop()`
 
 ### Notify Messaging
