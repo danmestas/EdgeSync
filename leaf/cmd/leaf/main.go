@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -23,6 +24,7 @@ var version = "dev"
 func main() {
 	repoPath := flag.String("repo", envOrDefault("LEAF_REPO", ""), "path to Fossil repository file (required)")
 	natsURL := flag.String("nats", envOrDefault("LEAF_NATS_URL", "nats://localhost:4222"), "NATS server URL")
+	natsClientPort := flag.Int("nats-client-port", envInt("LEAF_NATS_CLIENT_PORT", 0), "embedded NATS client listener port (0 means random)")
 	poll := flag.Duration("poll", 5*time.Second, "poll interval")
 	user := flag.String("user", envOrDefault("LEAF_USER", ""), "Fossil user name")
 	password := flag.String("password", envOrDefault("LEAF_PASSWORD", ""), "Fossil user password")
@@ -90,7 +92,8 @@ func main() {
 
 	cfg := agent.Config{
 		RepoPath:         *repoPath,
-		NATSUpstream:          *natsURL,
+		NATSUpstream:     *natsURL,
+		NATSClientPort:   *natsClientPort,
 		PollInterval:     *poll,
 		User:             *user,
 		Password:         *password,
@@ -199,6 +202,18 @@ func envBool(key string) bool {
 		return true
 	}
 	return false
+}
+
+func envInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	i, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return i
 }
 
 // stringSlice implements flag.Value for repeatable string flags.

@@ -32,6 +32,10 @@ type Config struct {
 	// joins as a leaf node. Empty means standalone mesh (no upstream).
 	NATSUpstream string
 
+	// NATSClientPort is the local embedded NATS client listener port. Zero
+	// lets NATS choose a random localhost port.
+	NATSClientPort int
+
 	// NATSRole determines how the embedded NATS server participates in the
 	// mesh (peer, hub, or leaf). Default: peer.
 	NATSRole NATSRole
@@ -181,6 +185,9 @@ func (c *Config) validate() error {
 		// valid
 	default:
 		return fmt.Errorf("agent: config: invalid NATSRole %q (must be peer, hub, or leaf)", c.NATSRole)
+	}
+	if c.NATSClientPort < 0 || c.NATSClientPort > 65535 {
+		return fmt.Errorf("agent: config: NATSClientPort %d out of range", c.NATSClientPort)
 	}
 	return nil
 }

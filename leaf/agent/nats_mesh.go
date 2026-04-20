@@ -38,9 +38,10 @@ type SidecarInfo struct {
 // to tell the sidecar where NATS will listen, establishes tunnels to get
 // remote ports, then starts NATS with all ports configured.
 type NATSMesh struct {
-	role      NATSRole
-	upstream  string   // optional external NATS URL
-	irohPeers []string // remote EndpointIds
+	role       NATSRole
+	upstream   string   // optional external NATS URL
+	irohPeers  []string // remote EndpointIds
+	clientPort int      // optional fixed client port; 0 means random
 
 	// Set internally during Start.
 	reservedLeafPort int
@@ -192,6 +193,9 @@ func (m *NATSMesh) buildServerOpts() *natsserver.Options {
 		Port:   -1, // random client port
 		NoLog:  true,
 		NoSigs: true,
+	}
+	if m.clientPort > 0 {
+		opts.Port = m.clientPort
 	}
 
 	switch m.role {

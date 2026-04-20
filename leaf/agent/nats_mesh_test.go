@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"fmt"
+	"net"
 	"testing"
 	"time"
 
@@ -30,6 +32,40 @@ func TestNATSMeshStartStop(t *testing.T) {
 	}
 	nc.Flush()
 	t.Logf("mesh started at %s, publish OK", clientURL)
+}
+
+func TestNATSMeshUsesConfiguredClientPort(t *testing.T) {
+	port := freeTCPPort(t)
+	mesh := &NATSMesh{
+		role:       NATSRolePeer,
+		clientPort: port,
+	}
+	clientURL, err := mesh.Start(nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer mesh.Stop()
+
+	want := fmt.Sprintf("nats://127.0.0.1:%d", port)
+	if clientURL != want {
+		t.Fatalf("clientURL = %q, want %q", clientURL, want)
+	}
+
+	nc, err := nats.Connect(clientURL, nats.Timeout(2*time.Second))
+	if err != nil {
+		t.Fatalf("nats.Connect: %v", err)
+	}
+	nc.Close()
+}
+
+func freeTCPPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
 }
 
 func TestNATSMeshRoleConfig(t *testing.T) {

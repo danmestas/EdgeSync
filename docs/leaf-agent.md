@@ -21,6 +21,7 @@ The leaf agent opens a Fossil repository, runs an embedded NATS server, and sync
 |------|---------|---------|-------------|
 | `--repo` | `LEAF_REPO` | (required) | Path to `.fossil` repo file |
 | `--nats` | `LEAF_NATS_URL` | `""` | Optional upstream NATS URL (embedded server joins as leaf) |
+| `--nats-client-port` | `LEAF_NATS_CLIENT_PORT` | `0` | Embedded NATS client listener port (`0` chooses a random localhost port) |
 | `--nats-role` | | `peer` | Mesh role: `peer`, `hub`, or `leaf` |
 | `--poll` | | `5s` | Poll interval |
 | `--user` | `LEAF_USER` | (anonymous) | Sync user |

@@ -106,9 +106,10 @@ func New(cfg Config) (*Agent, error) {
 	// startIrohSidecar (which establishes tunnels and populates
 	// tunnelPorts) before starting the NATS server.
 	mesh := &NATSMesh{
-		role:      cfg.NATSRole,
-		upstream:  cfg.NATSUpstream,
-		irohPeers: cfg.IrohPeers,
+		role:       cfg.NATSRole,
+		upstream:   cfg.NATSUpstream,
+		irohPeers:  cfg.IrohPeers,
+		clientPort: cfg.NATSClientPort,
 	}
 
 	a := &Agent{
