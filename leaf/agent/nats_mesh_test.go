@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,6 +67,73 @@ func freeTCPPort(t *testing.T) int {
 	}
 	defer ln.Close()
 	return ln.Addr().(*net.TCPAddr).Port
+}
+
+func TestNATSMeshJetStreamEnabled(t *testing.T) {
+	storeDir := t.TempDir()
+	mesh := &NATSMesh{
+		role:     NATSRolePeer,
+		storeDir: storeDir,
+	}
+	opts := mesh.buildServerOpts()
+
+	if !opts.JetStream {
+		t.Errorf("opts.JetStream = false, want true")
+	}
+	if opts.StoreDir != storeDir {
+		t.Errorf("opts.StoreDir = %q, want %q", opts.StoreDir, storeDir)
+	}
+	if opts.JetStreamDomain != "" {
+		t.Errorf("opts.JetStreamDomain = %q, want empty", opts.JetStreamDomain)
+	}
+}
+
+func TestNATSMeshJetStreamRequiresStoreDir(t *testing.T) {
+	// When storeDir is empty, buildServerOpts should still enable JetStream
+	// but point it at a sensible fallback beneath the CWD so the caller
+	// doesn't accidentally share state with other workspaces via /tmp.
+	mesh := &NATSMesh{role: NATSRolePeer}
+	opts := mesh.buildServerOpts()
+
+	if !opts.JetStream {
+		t.Errorf("opts.JetStream = false, want true (always on)")
+	}
+	if opts.StoreDir == "" {
+		t.Errorf("opts.StoreDir is empty; want a non-empty fallback path")
+	}
+	if strings.HasPrefix(opts.StoreDir, "/tmp") || strings.HasPrefix(opts.StoreDir, "/var/folders") {
+		// Fallback should not live in a shared tmp dir that could collide
+		// with other workspaces or leave stale state behind.
+		t.Errorf("opts.StoreDir = %q; fallback must not live under /tmp or /var/folders", opts.StoreDir)
+	}
+}
+
+func TestNATSMeshJetStreamStartStop(t *testing.T) {
+	storeDir := t.TempDir()
+	mesh := &NATSMesh{
+		role:     NATSRolePeer,
+		storeDir: storeDir,
+	}
+	clientURL, err := mesh.Start(nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer mesh.Stop()
+
+	nc, err := nats.Connect(clientURL, nats.Timeout(2*time.Second))
+	if err != nil {
+		t.Fatalf("nats.Connect: %v", err)
+	}
+	defer nc.Close()
+
+	// Confirm JetStream is actually reachable by creating a KV bucket.
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("JetStream: %v", err)
+	}
+	if _, err := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "smoke"}); err != nil {
+		t.Fatalf("CreateKeyValue: %v", err)
+	}
 }
 
 func TestNATSMeshRoleConfig(t *testing.T) {
