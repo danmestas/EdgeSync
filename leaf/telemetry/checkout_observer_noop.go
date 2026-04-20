@@ -3,7 +3,7 @@
 package telemetry
 
 import (
-	libfossil "github.com/danmestas/go-libfossil"
+	libfossil "github.com/danmestas/libfossil"
 )
 
 // CheckoutOTelObserver is a no-op on WASM builds.

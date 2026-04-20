@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	libfossil "github.com/danmestas/go-libfossil"
-	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
+	libfossil "github.com/danmestas/libfossil"
+	_ "github.com/danmestas/libfossil/db/driver/modernc"
 	"github.com/dmestas/edgesync/leaf/agent"
 	"github.com/dmestas/edgesync/leaf/telemetry"
 )
@@ -115,7 +115,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Content cache metrics are now handled internally by go-libfossil.
+	// Content cache metrics are now handled internally by libfossil.
 	telemetry.RegisterCacheMetrics(nil, nil)
 
 	if err := a.Start(); err != nil {

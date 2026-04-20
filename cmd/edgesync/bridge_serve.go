@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/danmestas/go-libfossil/cli"
+	"github.com/danmestas/libfossil/cli"
 	"github.com/dmestas/edgesync/bridge/bridge"
 )
 

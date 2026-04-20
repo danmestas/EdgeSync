@@ -11,7 +11,7 @@ import (
 	"github.com/dmestas/edgesync/leaf/agent"
 	"github.com/dmestas/edgesync/leaf/telemetry"
 
-	_ "github.com/danmestas/go-libfossil/db/driver/ncruces"
+	_ "github.com/danmestas/libfossil/db/driver/ncruces"
 )
 
 var (

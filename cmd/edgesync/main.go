@@ -2,7 +2,7 @@ package main
 
 import (
 	"github.com/alecthomas/kong"
-	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
+	_ "github.com/danmestas/libfossil/db/driver/modernc"
 )
 
 func main() {

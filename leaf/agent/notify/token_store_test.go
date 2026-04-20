@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
+	_ "github.com/danmestas/libfossil/db/driver/modernc"
 )
 
 func TestPendingTokenLifecycle(t *testing.T) {

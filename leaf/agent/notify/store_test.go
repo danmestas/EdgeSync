@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	libfossil "github.com/danmestas/go-libfossil"
-	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
+	libfossil "github.com/danmestas/libfossil"
+	_ "github.com/danmestas/libfossil/db/driver/modernc"
 )
 
 func createTestRepo(t *testing.T) *libfossil.Repo {

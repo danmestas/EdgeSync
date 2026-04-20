@@ -13,13 +13,13 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
-	libfossil "github.com/danmestas/go-libfossil"
+	libfossil "github.com/danmestas/libfossil"
 )
 
 const instrumentationName = "edgesync-bridge"
 
 // Bridge subscribes to a NATS subject and proxies sync requests to a Fossil
-// HTTP server via go-libfossil's Transport.
+// HTTP server via libfossil's Transport.
 type Bridge struct {
 	config   Config
 	upstream libfossil.Transport

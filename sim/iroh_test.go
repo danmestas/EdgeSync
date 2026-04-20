@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	libfossil "github.com/danmestas/go-libfossil"
-	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
-	"github.com/danmestas/go-libfossil/simio"
+	libfossil "github.com/danmestas/libfossil"
+	_ "github.com/danmestas/libfossil/db/driver/modernc"
+	"github.com/danmestas/libfossil/simio"
 	"github.com/dmestas/edgesync/leaf/agent"
 )
 

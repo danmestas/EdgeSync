@@ -6,7 +6,7 @@ import (
 	"context"
 	"time"
 
-	libfossil "github.com/danmestas/go-libfossil"
+	libfossil "github.com/danmestas/libfossil"
 )
 
 // TelemetryConfig is a stub for WASM builds.

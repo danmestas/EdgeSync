@@ -3,8 +3,8 @@ package agent
 import (
 	"testing"
 
-	libfossil "github.com/danmestas/go-libfossil"
-	"github.com/danmestas/go-libfossil/simio"
+	libfossil "github.com/danmestas/libfossil"
+	"github.com/danmestas/libfossil/simio"
 )
 
 func TestPeerRegistryEnsureAndSeed(t *testing.T) {

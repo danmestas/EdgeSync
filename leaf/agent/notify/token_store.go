@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	libfossil "github.com/danmestas/go-libfossil"
+	libfossil "github.com/danmestas/libfossil"
 )
 
 const pendingTokensFilePath = "_notify/pending_tokens.json"

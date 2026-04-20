@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	libfossil "github.com/danmestas/go-libfossil"
+	libfossil "github.com/danmestas/libfossil"
 	"github.com/nats-io/nats.go"
 )
 

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	libfossil "github.com/danmestas/go-libfossil"
-	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
+	libfossil "github.com/danmestas/libfossil"
+	_ "github.com/danmestas/libfossil/db/driver/modernc"
 	"github.com/dmestas/edgesync/leaf/agent/notify"
 	"github.com/nats-io/nats.go"
 )

@@ -11,9 +11,9 @@ import (
 
 	leafagent "github.com/dmestas/edgesync/leaf/agent"
 
-	libfossil "github.com/danmestas/go-libfossil"
-	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
-	"github.com/danmestas/go-libfossil/testutil"
+	libfossil "github.com/danmestas/libfossil"
+	_ "github.com/danmestas/libfossil/db/driver/modernc"
+	"github.com/danmestas/libfossil/testutil"
 )
 
 // startFossilServer starts a fossil server on a free port and returns the URL

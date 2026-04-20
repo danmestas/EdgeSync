@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/danmestas/go-libfossil/cli"
+	"github.com/danmestas/libfossil/cli"
 )
 
 type CLI struct {

@@ -1,7 +1,7 @@
 package agent
 
 // TODO(v0.2.0): AutosyncCommit requires checkout.Checkout which is now internal
-// to go-libfossil. The public API needs a Checkout handle or the autosync workflow
+// to libfossil. The public API needs a Checkout handle or the autosync workflow
 // needs to be reimplemented using libfossil.Repo methods.
 //
 // The autosync workflow is: pull -> ci-lock -> fork-check -> commit -> push.

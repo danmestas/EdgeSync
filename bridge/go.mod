@@ -3,8 +3,8 @@ module github.com/dmestas/edgesync/bridge
 go 1.26.0
 
 require (
-	github.com/danmestas/go-libfossil v0.2.4
-	github.com/danmestas/go-libfossil/db/driver/modernc v0.2.4
+	github.com/danmestas/libfossil v0.1.0
+	github.com/danmestas/libfossil/db/driver/modernc v0.1.0
 	github.com/dmestas/edgesync/leaf v0.0.0
 	github.com/nats-io/nats-server/v2 v2.12.6
 	github.com/nats-io/nats.go v1.49.0

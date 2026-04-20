@@ -4,7 +4,7 @@ import (
 	"flag"
 	"time"
 
-	libfossil "github.com/danmestas/go-libfossil"
+	libfossil "github.com/danmestas/libfossil"
 )
 
 // Level controls fault injection severity.

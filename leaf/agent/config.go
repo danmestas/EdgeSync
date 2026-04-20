@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
-	libfossil "github.com/danmestas/go-libfossil"
-	"github.com/danmestas/go-libfossil/simio"
+	libfossil "github.com/danmestas/libfossil"
+	"github.com/danmestas/libfossil/simio"
 	"github.com/nats-io/nats.go"
 )
 
@@ -112,7 +112,7 @@ type Config struct {
 	IrohBinaryPath string
 
 	// ContentCacheSize is kept for config compatibility but is no longer
-	// used directly — content caching is handled internally by go-libfossil.
+	// used directly — content caching is handled internally by libfossil.
 	ContentCacheSize int64
 
 	// NotifyEnabled starts the notify messaging service alongside sync.

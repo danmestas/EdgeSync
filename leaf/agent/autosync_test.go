@@ -1,7 +1,7 @@
 package agent
 
 // TODO(v0.2.0): Autosync tests require checkout.Checkout and manifest.Checkin
-// which are now internal to go-libfossil. These tests will be re-enabled when
+// which are now internal to libfossil. These tests will be re-enabled when
 // the public API exposes checkout operations.
 //
 // Skipped tests:
@@ -17,9 +17,9 @@ import (
 	"bytes"
 	"testing"
 
-	libfossil "github.com/danmestas/go-libfossil"
-	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
-	"github.com/danmestas/go-libfossil/simio"
+	libfossil "github.com/danmestas/libfossil"
+	_ "github.com/danmestas/libfossil/db/driver/modernc"
+	"github.com/danmestas/libfossil/simio"
 )
 
 func TestEnsureClientID(t *testing.T) {

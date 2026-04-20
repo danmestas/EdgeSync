@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	libfossil "github.com/danmestas/go-libfossil"
+	libfossil "github.com/danmestas/libfossil"
 )
 
 // VerboseObserver wraps another SyncObserver and logs human-readable sync

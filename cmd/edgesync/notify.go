@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	libfossil "github.com/danmestas/go-libfossil"
-	"github.com/danmestas/go-libfossil/cli"
+	libfossil "github.com/danmestas/libfossil"
+	"github.com/danmestas/libfossil/cli"
 	"github.com/dmestas/edgesync/leaf/agent/notify"
 	"github.com/nats-io/nats.go"
 )

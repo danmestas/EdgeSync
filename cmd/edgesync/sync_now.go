@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"syscall"
 
-	"github.com/danmestas/go-libfossil/cli"
+	"github.com/danmestas/libfossil/cli"
 )
 
 type SyncNowCmd struct {

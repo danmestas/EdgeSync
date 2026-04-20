@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	libfossil "github.com/danmestas/go-libfossil"
+	libfossil "github.com/danmestas/libfossil"
 	"github.com/nats-io/nats.go"
 	natsserver "github.com/nats-io/nats-server/v2/server"
 )

@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/danmestas/go-libfossil/cli"
+	"github.com/danmestas/libfossil/cli"
 	"github.com/dmestas/edgesync/leaf/agent"
 )
 
