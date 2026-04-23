@@ -118,11 +118,11 @@ docs/                  Documentation
 
 | Module | Path | Purpose |
 |--------|------|---------|
-| `github.com/dmestas/edgesync` | `.` | Root: CLI, sim/, soak runner |
-| `github.com/danmestas/libfossil` | `libfossil/` | Core library (public, v0.1.x) |
-| `github.com/dmestas/edgesync/leaf` | `leaf/` | Leaf agent |
-| `github.com/dmestas/edgesync/bridge` | `bridge/` | Bridge |
-| `github.com/dmestas/edgesync/dst` | `dst/` | Deterministic sim tests |
+| `github.com/danmestas/EdgeSync` | `.` | Root: CLI, sim/, soak runner |
+| `github.com/danmestas/libfossil` | `libfossil/` | Core library (public, v0.3.x) |
+| `github.com/danmestas/EdgeSync/leaf` | `leaf/` | Leaf agent |
+| `github.com/danmestas/EdgeSync/bridge` | `bridge/` | Bridge |
+| `github.com/danmestas/EdgeSync/dst` | `dst/` | Deterministic sim tests |
 
 ## SQLite Drivers
 
