@@ -12,7 +12,7 @@ import (
 	libfossil "github.com/danmestas/libfossil"
 	_ "github.com/danmestas/libfossil/db/driver/modernc"
 	"github.com/danmestas/libfossil/simio"
-	"github.com/dmestas/edgesync/leaf/agent"
+	"github.com/danmestas/EdgeSync/leaf/agent"
 )
 
 func TestIrohPeerSync(t *testing.T) {

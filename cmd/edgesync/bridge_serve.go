@@ -8,7 +8,7 @@ import (
 	"syscall"
 
 	"github.com/danmestas/libfossil/cli"
-	"github.com/dmestas/edgesync/bridge/bridge"
+	"github.com/danmestas/EdgeSync/bridge/bridge"
 )
 
 type BridgeServeCmd struct {

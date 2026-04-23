@@ -1,4 +1,4 @@
-module github.com/dmestas/edgesync
+module github.com/danmestas/EdgeSync
 
 go 1.26.0
 
@@ -6,8 +6,8 @@ require (
 	github.com/alecthomas/kong v1.15.0
 	github.com/danmestas/libfossil v0.1.0
 	github.com/danmestas/libfossil/db/driver/modernc v0.1.0
-	github.com/dmestas/edgesync/bridge v0.0.0-00010101000000-000000000000
-	github.com/dmestas/edgesync/leaf v0.0.0
+	github.com/danmestas/EdgeSync/bridge v0.0.0-00010101000000-000000000000
+	github.com/danmestas/EdgeSync/leaf v0.0.0
 	github.com/nats-io/nats-server/v2 v2.12.6
 	github.com/nats-io/nats.go v1.49.0
 )
@@ -47,6 +47,6 @@ require (
 )
 
 replace (
-	github.com/dmestas/edgesync/bridge => ./bridge
-	github.com/dmestas/edgesync/leaf => ./leaf
+	github.com/danmestas/EdgeSync/bridge => ./bridge
+	github.com/danmestas/EdgeSync/leaf => ./leaf
 )

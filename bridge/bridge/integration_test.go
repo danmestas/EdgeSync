@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	leafagent "github.com/dmestas/edgesync/leaf/agent"
+	leafagent "github.com/danmestas/EdgeSync/leaf/agent"
 
 	libfossil "github.com/danmestas/libfossil"
 	_ "github.com/danmestas/libfossil/db/driver/modernc"

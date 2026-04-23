@@ -11,6 +11,7 @@ libfossil/
 /bin/
 /soak
 /edgesync
+/leaf/leaf
 .worktrees/
 iroh-sidecar/target/
 
@@ -33,6 +34,7 @@ skills-lock.json
 .DS_Store
 .gitnexus
 .claude/worktrees/
+.claude/skills/
 go.work
 go.work.sum
 

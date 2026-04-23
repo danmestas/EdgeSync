@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/danmestas/libfossil/cli"
-	"github.com/dmestas/edgesync/leaf/agent"
+	"github.com/danmestas/EdgeSync/leaf/agent"
 )
 
 type SyncStartCmd struct {

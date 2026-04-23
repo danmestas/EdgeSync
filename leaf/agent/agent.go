@@ -14,7 +14,7 @@ import (
 
 	libfossil "github.com/danmestas/libfossil"
 	"github.com/danmestas/libfossil/simio"
-	"github.com/dmestas/edgesync/leaf/agent/notify"
+	"github.com/danmestas/EdgeSync/leaf/agent/notify"
 	"github.com/nats-io/nats.go"
 )
 

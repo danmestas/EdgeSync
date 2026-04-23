@@ -8,7 +8,7 @@ import (
 
 	libfossil "github.com/danmestas/libfossil"
 	_ "github.com/danmestas/libfossil/db/driver/modernc"
-	"github.com/dmestas/edgesync/leaf/agent/notify"
+	"github.com/danmestas/EdgeSync/leaf/agent/notify"
 	"github.com/nats-io/nats.go"
 )
 

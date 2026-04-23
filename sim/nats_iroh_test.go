@@ -11,7 +11,7 @@ import (
 	libfossil "github.com/danmestas/libfossil"
 	_ "github.com/danmestas/libfossil/db/driver/modernc"
 	"github.com/danmestas/libfossil/simio"
-	"github.com/dmestas/edgesync/leaf/agent"
+	"github.com/danmestas/EdgeSync/leaf/agent"
 )
 
 // TestNATSOverIrohSync proves two peer agents created via agent.New() (with

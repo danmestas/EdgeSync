@@ -8,8 +8,8 @@ import (
 	"syscall/js"
 	"time"
 
-	"github.com/dmestas/edgesync/leaf/agent"
-	"github.com/dmestas/edgesync/leaf/telemetry"
+	"github.com/danmestas/EdgeSync/leaf/agent"
+	"github.com/danmestas/EdgeSync/leaf/telemetry"
 
 	_ "github.com/danmestas/libfossil/db/driver/ncruces"
 )

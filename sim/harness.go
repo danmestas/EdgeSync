@@ -13,10 +13,10 @@ import (
 
 	natsserver "github.com/nats-io/nats-server/v2/server"
 
-	"github.com/dmestas/edgesync/bridge/bridge"
+	"github.com/danmestas/EdgeSync/bridge/bridge"
 	libfossil "github.com/danmestas/libfossil"
 	"github.com/danmestas/libfossil/simio"
-	"github.com/dmestas/edgesync/leaf/agent"
+	"github.com/danmestas/EdgeSync/leaf/agent"
 )
 
 // Harness manages the full lifecycle of a simulation environment:

@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/dmestas/edgesync/bridge/bridge"
+	"github.com/danmestas/EdgeSync/bridge/bridge"
 )
 
 func main() {

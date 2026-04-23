@@ -1,4 +1,4 @@
-module github.com/dmestas/edgesync/leaf
+module github.com/danmestas/EdgeSync/leaf
 
 go 1.26.0
 

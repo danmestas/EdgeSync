@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/dmestas/edgesync/sim"
+	"github.com/danmestas/EdgeSync/sim"
 )
 
 func main() {
