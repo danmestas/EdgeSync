@@ -128,7 +128,7 @@ func Setup(ctx context.Context, cfg TelemetryConfig) (shutdown func(context.Cont
 	// drops, slog.Error lines disappear and failures become invisible.
 	stderrH := slog.NewTextHandler(stderrSink, nil)
 	otelH := otelslog.NewHandler("edgesync-leaf", otelslog.WithLoggerProvider(lp))
-	slog.SetDefault(slog.New(teeHandler{primary: stderrH, secondary: otelH}))
+	slog.SetDefault(slog.New(NewCtxHandler(teeHandler{primary: stderrH, secondary: otelH})))
 
 	return func(ctx context.Context) error {
 		var errs []error
