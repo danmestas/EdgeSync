@@ -27,6 +27,9 @@ type CtxHandler struct {
 	inner slog.Handler
 }
 
+// NewCtxHandler wraps inner in a CtxHandler so context-carried agent_id
+// attributes surface on every log record without the caller threading
+// the field through each call.
 func NewCtxHandler(inner slog.Handler) *CtxHandler {
 	return &CtxHandler{inner: inner}
 }
