@@ -4,67 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"strings"
 	"sync"
 
+	"github.com/danmestas/EdgeSync/leaf/agent/internal/natshdr"
 	"github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/propagation"
 )
-
-// natsHeaderCarrier adapts nats.Header to propagation.TextMapCarrier so
-// OpenTelemetry propagators can read/write trace context directly on a
-// NATS message's headers. Duplicates the sibling carrier in the agent
-// package; notify is a subpackage and the type is private there, so
-// copying 15 lines is cheaper than exporting and re-routing a shared
-// helper at this stage.
-//
-// NATS preserves header case on the send side but delivers headers
-// lower-cased on the receive side, so Get must be case-insensitive.
-// Set writes the canonical form so both pub and sub end up converging
-// on the same key regardless of direction.
-type natsHeaderCarrier nats.Header
-
-func (c natsHeaderCarrier) Get(key string) string {
-	// Try canonical form first (matches what Set writes on the send side
-	// when the message has not crossed the wire yet).
-	if v := http.Header(c).Get(key); v != "" {
-		return v
-	}
-	// Fall back to literal lookups to tolerate case changes introduced
-	// by the NATS wire protocol or other writers.
-	if vs, ok := c[key]; ok && len(vs) > 0 {
-		return vs[0]
-	}
-	lower := strings.ToLower(key)
-	if vs, ok := c[lower]; ok && len(vs) > 0 {
-		return vs[0]
-	}
-	// Last resort: case-insensitive scan. Header maps are tiny (≤ a few
-	// entries), so this is O(n) over a small n.
-	for k, vs := range c {
-		if strings.EqualFold(k, key) && len(vs) > 0 {
-			return vs[0]
-		}
-	}
-	return ""
-}
-
-func (c natsHeaderCarrier) Set(key, value string) {
-	http.Header(c).Set(key, value)
-}
-
-func (c natsHeaderCarrier) Keys() []string {
-	keys := make([]string, 0, len(c))
-	for k := range c {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
-// Verify natsHeaderCarrier implements TextMapCarrier at compile time.
-var _ propagation.TextMapCarrier = natsHeaderCarrier(nil)
 
 // PublishCtx marshals msg and publishes it on its NATS subject with any
 // W3C trace context in ctx injected into the message headers. Subscribers
@@ -83,7 +28,7 @@ func PublishCtx(ctx context.Context, conn *nats.Conn, msg Message) error {
 		Data:    data,
 		Header:  nats.Header{},
 	}
-	otel.GetTextMapPropagator().Inject(ctx, natsHeaderCarrier(natsMsg.Header))
+	otel.GetTextMapPropagator().Inject(ctx, natshdr.Carrier(natsMsg.Header))
 	if err := conn.PublishMsg(natsMsg); err != nil {
 		return fmt.Errorf("notify: publish to %s: %w", natsMsg.Subject, err)
 	}
@@ -179,7 +124,7 @@ func ExtractFromMsg(ctx context.Context, m *nats.Msg) context.Context {
 	if m == nil || m.Header == nil {
 		return ctx
 	}
-	return otel.GetTextMapPropagator().Extract(ctx, natsHeaderCarrier(m.Header))
+	return otel.GetTextMapPropagator().Extract(ctx, natshdr.Carrier(m.Header))
 }
 
 // subscribeReturn is subscribe's variant that returns the nats.Subscription

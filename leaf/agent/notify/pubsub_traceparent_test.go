@@ -97,7 +97,7 @@ func TestPublishCtx_InjectsTraceparent(t *testing.T) {
 	}
 
 	// Use the same public extraction helper subscribers will use. This also
-	// exercises natsHeaderCarrier's case-insensitive Get path, since NATS
+	// exercises natshdr.Carrier's case-insensitive Get path, since NATS
 	// delivers header keys in lowercase on the wire regardless of send case.
 	ext := notify.ExtractFromMsg(context.Background(), got)
 	sc := trace.SpanContextFromContext(ext)

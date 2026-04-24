@@ -3,14 +3,12 @@ package agent
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"strings"
 	"time"
 
+	"github.com/danmestas/EdgeSync/leaf/agent/internal/natshdr"
 	"github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -82,8 +80,7 @@ func injectTraceContext(ctx context.Context, msg *nats.Msg) {
 	if msg.Header == nil {
 		msg.Header = nats.Header{}
 	}
-	carrier := natsHeaderCarrier(msg.Header)
-	otel.GetTextMapPropagator().Inject(ctx, carrier)
+	otel.GetTextMapPropagator().Inject(ctx, natshdr.Carrier(msg.Header))
 }
 
 // extractTraceContext extracts W3C trace context from NATS message headers.
@@ -91,49 +88,5 @@ func extractTraceContext(ctx context.Context, msg *nats.Msg) context.Context {
 	if msg.Header == nil {
 		return ctx
 	}
-	carrier := natsHeaderCarrier(msg.Header)
-	return otel.GetTextMapPropagator().Extract(ctx, carrier)
+	return otel.GetTextMapPropagator().Extract(ctx, natshdr.Carrier(msg.Header))
 }
-
-// natsHeaderCarrier adapts nats.Header to propagation.TextMapCarrier.
-//
-// NATS preserves header case on the send side but delivers headers
-// lower-cased on the receive side, so Get must be case-insensitive;
-// otherwise subscribers miss injected "traceparent" because the wire
-// delivers it as "traceparent" while http.Header.Get canonicalizes the
-// lookup key to "Traceparent".
-type natsHeaderCarrier nats.Header
-
-func (c natsHeaderCarrier) Get(key string) string {
-	if v := http.Header(c).Get(key); v != "" {
-		return v
-	}
-	if vs, ok := c[key]; ok && len(vs) > 0 {
-		return vs[0]
-	}
-	lower := strings.ToLower(key)
-	if vs, ok := c[lower]; ok && len(vs) > 0 {
-		return vs[0]
-	}
-	for k, vs := range c {
-		if strings.EqualFold(k, key) && len(vs) > 0 {
-			return vs[0]
-		}
-	}
-	return ""
-}
-
-func (c natsHeaderCarrier) Set(key, value string) {
-	http.Header(c).Set(key, value)
-}
-
-func (c natsHeaderCarrier) Keys() []string {
-	keys := make([]string, 0, len(c))
-	for k := range c {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
-// Verify natsHeaderCarrier implements TextMapCarrier at compile time.
-var _ propagation.TextMapCarrier = natsHeaderCarrier(nil)
