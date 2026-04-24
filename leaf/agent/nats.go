@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -95,10 +96,31 @@ func extractTraceContext(ctx context.Context, msg *nats.Msg) context.Context {
 }
 
 // natsHeaderCarrier adapts nats.Header to propagation.TextMapCarrier.
+//
+// NATS preserves header case on the send side but delivers headers
+// lower-cased on the receive side, so Get must be case-insensitive;
+// otherwise subscribers miss injected "traceparent" because the wire
+// delivers it as "traceparent" while http.Header.Get canonicalizes the
+// lookup key to "Traceparent".
 type natsHeaderCarrier nats.Header
 
 func (c natsHeaderCarrier) Get(key string) string {
-	return http.Header(c).Get(key)
+	if v := http.Header(c).Get(key); v != "" {
+		return v
+	}
+	if vs, ok := c[key]; ok && len(vs) > 0 {
+		return vs[0]
+	}
+	lower := strings.ToLower(key)
+	if vs, ok := c[lower]; ok && len(vs) > 0 {
+		return vs[0]
+	}
+	for k, vs := range c {
+		if strings.EqualFold(k, key) && len(vs) > 0 {
+			return vs[0]
+		}
+	}
+	return ""
 }
 
 func (c natsHeaderCarrier) Set(key, value string) {
