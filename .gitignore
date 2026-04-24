@@ -1,0 +1,42 @@
+# Fossil reference checkouts (local only, read-only reference for porting)
+fossil/
+libfossil/
+.fossil-settings/
+
+# Fossil SQLite databases (binary, should never be in git)
+*.fossil
+.fslckout
+
+# Build artifacts
+/bin/
+/soak
+/edgesync
+/leaf/leaf
+.worktrees/
+iroh-sidecar/target/
+
+# Merge test artifacts
+*.LOCAL
+*.REMOTE
+*.BASE
+*.BASELINE
+*.MERGE
+f.txt
+
+# Secrets / environment
+.env
+.env.*
+
+# Agent/skill tool files
+.agents/
+AGENTS.md
+skills-lock.json
+.DS_Store
+.gitnexus
+.claude/worktrees/
+.claude/skills/
+go.work
+go.work.sum
+
+# Temporary clones for development
+.tmp-libfossil/

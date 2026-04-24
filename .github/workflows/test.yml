@@ -1,0 +1,50 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: leaf
+        run: cd leaf && go test ./... -short -count=1
+      - name: bridge
+        run: cd bridge && go test ./... -short -count=1
+
+  sim:
+    name: Sim & Interop
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install Fossil
+        run: sudo apt-get update && sudo apt-get install -y fossil
+      - name: Sim unit tests
+        run: cd sim && go test . -run 'TestFaultProxy|TestGenerateSchedule|TestBuggify' -count=1
+      - name: Sim serve tests
+        run: cd sim && go test . -run 'TestServeHTTP|TestLeafToLeaf|TestAgentServe' -count=1 -timeout=120s
+      - name: Interop (short)
+        run: cd sim && go test . -run 'TestInterop' -count=1 -short -timeout=60s
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build all binaries
+        run: make build
+      - name: Vet
+        run: make vet

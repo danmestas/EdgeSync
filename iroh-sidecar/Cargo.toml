@@ -1,0 +1,22 @@
+[package]
+name = "iroh-sidecar"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "iroh-sidecar"
+path = "src/main.rs"
+
+[dependencies]
+iroh = "0.97"
+axum = "0.8"
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+anyhow = "1"
+rand = "0.9"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
