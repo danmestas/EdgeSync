@@ -389,6 +389,7 @@ footer a { color: inherit; border-bottom-color: var(--mute); }
 <header class="topbar">
   <div class="name">edgesync</div>
   <div class="meta">
+    <span>v <b>{{ .Site.Params.version }}</b></span>
     <span>status <b>alpha</b></span>
     <span><a href="https://github.com/danmestas/EdgeSync">github</a></span>
     <span><a href="/docs/">docs</a></span>
@@ -406,7 +407,7 @@ footer a { color: inherit; border-bottom-color: var(--mute); }
       <tr><td>Language</td>     <td>Go (modules <code>github.com/danmestas/EdgeSync/{leaf,bridge}</code>)</td></tr>
       <tr><td>Built on</td>     <td><a href="https://github.com/danmestas/libfossil">libfossil</a> &middot; <a href="https://nats.io">NATS</a> embedded &middot; <a href="https://iroh.computer">iroh</a> (optional)</td></tr>
       <tr><td>Binaries</td>     <td>3 (edgesync &middot; leaf &middot; bridge)</td></tr>
-      <tr><td>Status</td>       <td>alpha &middot; pre-release &middot; wire protocol stable, CLI may shift</td></tr>
+      <tr><td>Status</td>       <td>v{{ .Site.Params.version }} &middot; alpha &middot; pre-release &middot; wire protocol stable, CLI may shift</td></tr>
     </tbody>
   </table>
 </section>
@@ -571,7 +572,7 @@ $ edgesync notify init --project my-project    # enable messaging</pre>
 </main>
 
 <footer>
-  <div>edgesync &nbsp;&middot;&nbsp; alpha &nbsp;&middot;&nbsp; 2026 &nbsp;&middot;&nbsp; <a href="https://github.com/danmestas/EdgeSync">github.com/danmestas/EdgeSync</a></div>
+  <div>edgesync &nbsp;&middot;&nbsp; v{{ .Site.Params.version }} &nbsp;&middot;&nbsp; alpha &nbsp;&middot;&nbsp; 2026 &nbsp;&middot;&nbsp; <a href="https://github.com/danmestas/EdgeSync">github.com/danmestas/EdgeSync</a></div>
 </footer>
 
 <script>

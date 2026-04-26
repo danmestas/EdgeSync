@@ -53,3 +53,4 @@ docs/site/static/llms-full.txt
 
 # Wrangler / Node
 node_modules/
+.wrangler/

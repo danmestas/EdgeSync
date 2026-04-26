@@ -34,6 +34,11 @@ menu:
         icon: github
 
 params:
+  # Default version for local dev. Overwritten at build time by scripts/sync-version.sh
+  # (which reads `git describe --tags --abbrev=0`). Falls back to this value when no
+  # git tag is reachable (e.g. before the first release).
+  version: "0.0.0-dev"
+
   navbar:
     displayTitle: true
     displayLogo: false
