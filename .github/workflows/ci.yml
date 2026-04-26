@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  GOWORK: "off"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Vet
+        run: |
+          go vet ./...
+          cd leaf && go vet ./...
+          cd ../bridge && go vet ./...
+
+      - name: Unit tests (leaf + bridge in parallel)
+        run: |
+          cd leaf && go test ./... -short -count=1 &
+          PID_LEAF=$!
+          cd bridge && go test ./... -short -count=1 &
+          PID_BRIDGE=$!
+          wait $PID_LEAF
+          wait $PID_BRIDGE
+
+      - name: CLI build
+        run: go build -buildvcs=false ./cmd/edgesync/
+
+      - name: CLI tests
+        run: go test -buildvcs=false ./cmd/edgesync/ -count=1 -timeout=60s

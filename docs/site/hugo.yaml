@@ -1,0 +1,66 @@
+title: EdgeSync
+baseURL: "https://edgesync-docs.daniel-mestas.workers.dev/"
+
+module:
+  imports:
+    - path: github.com/imfing/hextra
+
+markup:
+  goldmark:
+    renderer:
+      unsafe: true
+  highlight:
+    noClasses: false
+
+menu:
+  main:
+    - name: Docs
+      pageRef: /docs
+      weight: 1
+    - name: Architecture
+      pageRef: /docs/architecture
+      weight: 2
+    - name: Deployment
+      pageRef: /docs/deployment
+      weight: 3
+    - name: Search
+      weight: 4
+      params:
+        type: search
+    - name: GitHub
+      weight: 5
+      url: "https://github.com/danmestas/EdgeSync"
+      params:
+        icon: github
+
+params:
+  # Default version for local dev. Overwritten at build time by scripts/sync-version.sh
+  # (which reads `git describe --tags --abbrev=0`). Falls back to this value when no
+  # git tag is reachable (e.g. before the first release).
+  version: "0.0.0-dev"
+
+  navbar:
+    displayTitle: true
+    displayLogo: false
+
+  theme:
+    default: system
+    displayToggle: true
+
+  search:
+    enable: true
+    type: flexsearch
+    flexsearch:
+      index: content
+      tokenize: forward
+
+  footer:
+    displayCopyright: true
+    displayPoweredBy: false
+
+  editURL:
+    enable: true
+    base: "https://github.com/danmestas/EdgeSync/edit/main/docs/site/content"
+
+  page:
+    width: wide
