@@ -35,6 +35,32 @@ func TestNATSMeshStartStop(t *testing.T) {
 	t.Logf("mesh started at %s, publish OK", clientURL)
 }
 
+// TestNATSMeshClientURL_AccessorMatches verifies the public ClientURL
+// accessor returns the same value Start returned. Callers reach the
+// accessor when they hold the *NATSMesh after Start; without it the
+// URL is unrecoverable.
+func TestNATSMeshClientURL_AccessorMatches(t *testing.T) {
+	mesh := &NATSMesh{role: NATSRolePeer}
+	startURL, err := mesh.Start(nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer mesh.Stop()
+	if got := mesh.ClientURL(); got != startURL {
+		t.Fatalf("ClientURL: got %q want %q", got, startURL)
+	}
+}
+
+// TestNATSMeshClientURL_BeforeStartIsEmpty locks in that ClientURL
+// returns empty before Start runs. Callers can use this to gate work
+// that depends on the mesh being up.
+func TestNATSMeshClientURL_BeforeStartIsEmpty(t *testing.T) {
+	mesh := &NATSMesh{role: NATSRolePeer}
+	if got := mesh.ClientURL(); got != "" {
+		t.Fatalf("ClientURL before Start: got %q want empty", got)
+	}
+}
+
 func TestNATSMeshUsesConfiguredClientPort(t *testing.T) {
 	port := freeTCPPort(t)
 	mesh := &NATSMesh{

@@ -65,6 +65,15 @@ func (m *NATSMesh) LeafAddr() string {
 	return m.leafAddr
 }
 
+// ClientURL returns the NATS client URL the embedded server accepts
+// connections on. Empty until Start has run. Useful for callers that want
+// to publish to the mesh from external goroutines or expose this URL as
+// the upstream for other agents' meshes (via NATSUpstream / leaf-node
+// solicit).
+func (m *NATSMesh) ClientURL() string {
+	return m.clientURL
+}
+
 // ReserveLeafPort pre-allocates an ephemeral TCP port for the NATS leaf node
 // listener. The sidecar needs this address at launch (--nats-addr), which
 // happens before Start. The listener is closed immediately — NATS rebinds it.
