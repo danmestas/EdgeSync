@@ -40,3 +40,17 @@ go.work.sum
 
 # Temporary clones for development
 .tmp-libfossil/
+
+# Hugo / docs site build artifacts (regenerated on Cloudflare deploy)
+docs/site/public/
+docs/site/resources/
+docs/site/.hugo_build.lock
+docs/site/static/llms.txt
+docs/site/static/llms-full.txt
+# Leftover Hugo binary downloaded by build-docs.sh when system hugo isn't on PATH
+/hugo
+/LICENSE
+
+# Wrangler / Node
+node_modules/
+.wrangler/

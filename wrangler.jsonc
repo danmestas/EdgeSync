@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "edgesync-docs",
+  "compatibility_date": "2026-04-25",
+  "observability": { "enabled": true },
+  "assets": { "directory": "./docs/site/public" },
+  "build": {
+    "command": "bash scripts/sync-version.sh && bash scripts/build-docs.sh"
+  },
+  "compatibility_flags": ["nodejs_compat"]
+}
