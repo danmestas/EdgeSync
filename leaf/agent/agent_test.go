@@ -192,6 +192,33 @@ func TestAgentStartAndStop(t *testing.T) {
 	}
 }
 
+// TestAgentMeshURLs_AfterStart locks in that MeshClientURL and
+// MeshLeafAddr return non-empty values for a peer-role agent after
+// Start. Callers (e.g. orchestrators that want to expose the agent's
+// NATS to remote agents) depend on this contract.
+func TestAgentMeshURLs_AfterStart(t *testing.T) {
+	repoPath := createTestRepo(t)
+
+	a, err := New(Config{
+		RepoPath:     repoPath,
+		PollInterval: 50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := a.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer a.Stop()
+
+	if got := a.MeshClientURL(); got == "" {
+		t.Error("MeshClientURL after Start: empty")
+	}
+	if got := a.MeshLeafAddr(); got == "" {
+		t.Error("MeshLeafAddr after Start (peer role): empty")
+	}
+}
+
 func TestAgentNewBadRepoPath(t *testing.T) {
 	natsURL := startEmbeddedNATS(t)
 

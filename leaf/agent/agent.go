@@ -502,6 +502,30 @@ func (a *Agent) IrohEndpointID() string { return a.irohEndpointID }
 // IrohSocketPath returns the Unix socket path for the iroh sidecar, or "" if iroh is not enabled.
 func (a *Agent) IrohSocketPath() string { return a.irohSock }
 
+// MeshClientURL returns the NATS client URL the agent's embedded mesh
+// server accepts client connections on. Empty when the agent has not
+// run Start, or was constructed via NewFromParts (no mesh). Callers
+// publish to this URL when they want to share the agent's NATS bus
+// (e.g. for orchestration messages distinct from sync traffic).
+func (a *Agent) MeshClientURL() string {
+	if a.mesh == nil {
+		return ""
+	}
+	return a.mesh.ClientURL()
+}
+
+// MeshLeafAddr returns the leaf-node listen address (host:port) where
+// other agents' meshes can solicit upstream. Empty for NATSRoleLeaf
+// agents (which never accept) and when the agent was constructed via
+// NewFromParts. Callers pass this address as NATSUpstream when wiring
+// remote agents into this agent's mesh.
+func (a *Agent) MeshLeafAddr() string {
+	if a.mesh == nil {
+		return ""
+	}
+	return a.mesh.LeafAddr()
+}
+
 // SyncNow triggers an immediate sync round. It is non-blocking: if a sync
 // trigger is already pending, the call is a no-op.
 func (a *Agent) SyncNow() {
