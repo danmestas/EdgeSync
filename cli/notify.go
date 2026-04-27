@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"context"
@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	libfossil "github.com/danmestas/libfossil"
-	"github.com/danmestas/libfossil/cli"
 	"github.com/danmestas/EdgeSync/leaf/agent/notify"
+	libfossil "github.com/danmestas/libfossil"
+	libfossilcli "github.com/danmestas/libfossil/cli"
 	"github.com/nats-io/nats.go"
 )
 
@@ -29,13 +29,13 @@ type NotifyCmd struct {
 }
 
 // notifyRepoPath returns the path to notify.fossil next to the -R repo.
-func notifyRepoPath(g *cli.Globals) string {
+func notifyRepoPath(g *libfossilcli.Globals) string {
 	dir := filepath.Dir(g.Repo)
 	return filepath.Join(dir, "notify.fossil")
 }
 
 // openNotifyRepo opens the notify.fossil repo with a clear error if missing.
-func openNotifyRepo(g *cli.Globals) (*libfossil.Repo, error) {
+func openNotifyRepo(g *libfossilcli.Globals) (*libfossil.Repo, error) {
 	path := notifyRepoPath(g)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, fmt.Errorf("notify repo not found at %s (run: edgesync notify init -R <repo>)", path)
@@ -83,7 +83,7 @@ func parseActions(s string) []notify.Action {
 
 type NotifyInitCmd struct{}
 
-func (c *NotifyInitCmd) Run(g *cli.Globals) error {
+func (c *NotifyInitCmd) Run(g *libfossilcli.Globals) error {
 	if g.Repo == "" {
 		return fmt.Errorf("repository required (use -R <path>)")
 	}
@@ -108,7 +108,7 @@ type NotifySendCmd struct {
 	Body     string `arg:"" help:"Message body"`
 }
 
-func (c *NotifySendCmd) Run(g *cli.Globals) error {
+func (c *NotifySendCmd) Run(g *libfossilcli.Globals) error {
 	if g.Repo == "" {
 		return fmt.Errorf("repository required (use -R <path>)")
 	}
@@ -163,7 +163,7 @@ type NotifyAskCmd struct {
 	Body     string        `arg:"" help:"Message body"`
 }
 
-func (c *NotifyAskCmd) Run(g *cli.Globals) error {
+func (c *NotifyAskCmd) Run(g *libfossilcli.Globals) error {
 	if g.Repo == "" {
 		return fmt.Errorf("repository required (use -R <path>)")
 	}
@@ -239,7 +239,7 @@ type NotifyWatchCmd struct {
 	NATS    string `help:"NATS server URL (required for real-time delivery)" env:"EDGESYNC_NATS"`
 }
 
-func (c *NotifyWatchCmd) Run(g *cli.Globals) error {
+func (c *NotifyWatchCmd) Run(g *libfossilcli.Globals) error {
 	if g.Repo == "" {
 		return fmt.Errorf("repository required (use -R <path>)")
 	}
@@ -289,7 +289,7 @@ type NotifyThreadsCmd struct {
 	Project string `help:"Project code" required:""`
 }
 
-func (c *NotifyThreadsCmd) Run(g *cli.Globals) error {
+func (c *NotifyThreadsCmd) Run(g *libfossilcli.Globals) error {
 	if g.Repo == "" {
 		return fmt.Errorf("repository required (use -R <path>)")
 	}
@@ -324,7 +324,7 @@ type NotifyLogCmd struct {
 	Thread  string `arg:"" help:"Thread short ID"`
 }
 
-func (c *NotifyLogCmd) Run(g *cli.Globals) error {
+func (c *NotifyLogCmd) Run(g *libfossilcli.Globals) error {
 	if g.Repo == "" {
 		return fmt.Errorf("repository required (use -R <path>)")
 	}
@@ -354,7 +354,7 @@ func (c *NotifyLogCmd) Run(g *cli.Globals) error {
 
 type NotifyStatusCmd struct{}
 
-func (c *NotifyStatusCmd) Run(g *cli.Globals) error {
+func (c *NotifyStatusCmd) Run(g *libfossilcli.Globals) error {
 	if g.Repo == "" {
 		return fmt.Errorf("repository required (use -R <path>)")
 	}
@@ -379,7 +379,7 @@ type NotifyPairCmd struct {
 	Endpoint string `help:"Hub iroh endpoint ID for the QR payload" env:"EDGESYNC_IROH_ENDPOINT"`
 }
 
-func (c *NotifyPairCmd) Run(g *cli.Globals) error {
+func (c *NotifyPairCmd) Run(g *libfossilcli.Globals) error {
 	if g.Repo == "" {
 		return fmt.Errorf("repository required (use -R <path>)")
 	}
@@ -417,7 +417,7 @@ type NotifyUnpairCmd struct {
 	Name string `arg:"" help:"Device name to unpair"`
 }
 
-func (c *NotifyUnpairCmd) Run(g *cli.Globals) error {
+func (c *NotifyUnpairCmd) Run(g *libfossilcli.Globals) error {
 	if g.Repo == "" {
 		return fmt.Errorf("repository required (use -R <path>)")
 	}
@@ -439,7 +439,7 @@ func (c *NotifyUnpairCmd) Run(g *cli.Globals) error {
 
 type NotifyDevicesCmd struct{}
 
-func (c *NotifyDevicesCmd) Run(g *cli.Globals) error {
+func (c *NotifyDevicesCmd) Run(g *libfossilcli.Globals) error {
 	if g.Repo == "" {
 		return fmt.Errorf("repository required (use -R <path>)")
 	}

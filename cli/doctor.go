@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"fmt"
@@ -11,14 +11,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/danmestas/libfossil/cli"
+	libfossilcli "github.com/danmestas/libfossil/cli"
 )
 
 type DoctorCmd struct {
 	NATSUrl string `help:"NATS server URL to check connectivity" default:"nats://localhost:4222"`
 }
 
-func (c *DoctorCmd) Run(g *cli.Globals) error {
+func (c *DoctorCmd) Run(g *libfossilcli.Globals) error {
 	passed, warned, failed := 0, 0, 0
 
 	check := func(name string, fn func() (string, error)) {
