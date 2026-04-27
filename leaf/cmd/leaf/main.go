@@ -13,7 +13,6 @@ import (
 	"time"
 
 	libfossil "github.com/danmestas/libfossil"
-	_ "github.com/danmestas/libfossil/db/driver/modernc"
 	"github.com/danmestas/EdgeSync/leaf/agent"
 	"github.com/danmestas/EdgeSync/leaf/telemetry"
 )

@@ -13,6 +13,7 @@ import (
 type TelemetryConfig struct {
 	ServiceName    string
 	Endpoint       string
+	Headers        map[string]string
 	Insecure       bool
 	Environment    string
 	Version        string

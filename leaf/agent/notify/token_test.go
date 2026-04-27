@@ -67,16 +67,16 @@ func TestRawToken(t *testing.T) {
 }
 
 func TestFormatPairURL(t *testing.T) {
-	u := FormatPairURL("abc123endpointid", "nats://100.78.32.45:4222", "AXKF-9M2P-VR3T")
+	u := FormatPairURL("abc123endpointid", "nats://100.64.0.1:4222", "AXKF-9M2P-VR3T")
 	// url.PathEscape escapes '/' but not ':' — the exact encoding is:
-	want := "edgesync-pair://v1/abc123endpointid/nats:%2F%2F100.78.32.45:4222/AXKF9M2PVR3T"
+	want := "edgesync-pair://v1/abc123endpointid/nats:%2F%2F100.64.0.1:4222/AXKF9M2PVR3T"
 	if u != want {
 		t.Errorf("FormatPairURL =\n  %q\nwant:\n  %q", u, want)
 	}
 }
 
 func TestPairURLRoundTrip(t *testing.T) {
-	u := FormatPairURL("abc123endpointid", "nats://100.78.32.45:4222", "AXKF-9M2P-VR3T")
+	u := FormatPairURL("abc123endpointid", "nats://100.64.0.1:4222", "AXKF-9M2P-VR3T")
 	info, err := ParsePairURL(u)
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestPairURLRoundTrip(t *testing.T) {
 	if info.EndpointID != "abc123endpointid" {
 		t.Errorf("EndpointID = %q", info.EndpointID)
 	}
-	if info.NATSAddr != "nats://100.78.32.45:4222" {
+	if info.NATSAddr != "nats://100.64.0.1:4222" {
 		t.Errorf("NATSAddr = %q", info.NATSAddr)
 	}
 	if info.Token != "AXKF9M2PVR3T" {

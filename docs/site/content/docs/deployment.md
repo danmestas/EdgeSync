@@ -3,7 +3,7 @@ title: Deployment
 weight: 30
 ---
 
-A working production recipe for EdgeSync, derived from the reference deployment at `sync.craftdesign.group`. The shape: one VPS running NATS + a leaf agent, exposed publicly via Cloudflare Tunnel and privately via Tailscale.
+A working production recipe for EdgeSync, derived from a reference deployment at `sync.example.com`. The shape: one VPS running NATS + a leaf agent, exposed publicly via Cloudflare Tunnel and privately via Tailscale.
 
 ## Topology
 
@@ -42,7 +42,7 @@ The leaf binary is built standalone (libfossil pulled from the public Go module 
 
 Two containers:
 
-- **`nats`** — official `nats:latest` image, bound to the host's Tailscale interface only (`100.78.32.45:4222`)
+- **`nats`** — official `nats:latest` image, bound to the host's Tailscale interface only (`100.64.0.1:4222`)
 - **`leaf`** — built from `Dockerfile`, exposed on `:9000`
 
 Ports `8080` and `8090` are intentionally avoided because they are occupied by Coolify and Caddy on the reference VPS. Adjust as needed.
@@ -54,7 +54,7 @@ Ports `8080` and `8090` are intentionally avoided because they are occupied by C
 tunnel: <tunnel-id>
 credentials-file: /home/user/.cloudflared/<tunnel-id>.json
 ingress:
-  - hostname: sync.craftdesign.group
+  - hostname: sync.example.com
     service: http://localhost:9000
   - service: http_status:404
 ```
@@ -75,9 +75,9 @@ This rebuilds the leaf container with the latest code and restarts both services
 
 | Endpoint | URL | Access |
 | --- | --- | --- |
-| Public HTTPS | `https://sync.craftdesign.group` | Cloudflare Tunnel (anyone with the URL) |
-| Tailscale HTTP | `http://100.78.32.45:9000` | Tailnet only |
-| Tailscale NATS | `nats://100.78.32.45:4222` | Tailnet only |
+| Public HTTPS | `https://sync.example.com` | Cloudflare Tunnel (anyone with the URL) |
+| Tailscale HTTP | `http://100.64.0.1:9000` | Tailnet only |
+| Tailscale NATS | `nats://100.64.0.1:4222` | Tailnet only |
 
 ## Mobile clients
 

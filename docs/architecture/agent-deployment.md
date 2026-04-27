@@ -97,7 +97,7 @@ Stack lives in `deploy/`. Two containers: NATS + leaf agent.
 
 | Service | Ports | Notes |
 |---|---|---|
-| `nats` | `100.78.32.45:4222` (Tailscale only) | JetStream enabled, no auth (Tailscale boundary) |
+| `nats` | `100.64.0.1:4222` (Tailscale only) | JetStream enabled, no auth (Tailscale boundary) |
 | `leaf` | `0.0.0.0:9000` (public HTTP) | Health check via `/healthz`, auto-restart |
 
 **Volumes:** `deploy/data/*.fossil` (host mount), `nats-data` (named volume).
@@ -106,9 +106,9 @@ Stack lives in `deploy/`. Two containers: NATS + leaf agent.
 
 | Endpoint | URL | Access |
 |---|---|---|
-| Public HTTPS | `https://sync.craftdesign.group` | Cloudflare Tunnel |
-| Tailscale HTTP | `http://100.78.32.45:9000` | Tailnet only |
-| Tailscale NATS | `nats://100.78.32.45:4222` | Tailnet only |
+| Public HTTPS | `https://sync.example.com` | Cloudflare Tunnel |
+| Tailscale HTTP | `http://100.64.0.1:9000` | Tailnet only |
+| Tailscale NATS | `nats://100.64.0.1:4222` | Tailnet only |
 
 **Excluded from v1:** TLS termination (use reverse proxy), NATS auth, multi-repo, non-root user, OTel in container, backup cron.
 
