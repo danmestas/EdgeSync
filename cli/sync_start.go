@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"fmt"
@@ -8,9 +8,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/danmestas/libfossil/cli"
 	"github.com/danmestas/EdgeSync/leaf/agent"
+	libfossilcli "github.com/danmestas/libfossil/cli"
 )
+
+// SyncCmd is the top-level command group for leaf agent sync.
+type SyncCmd struct {
+	Start SyncStartCmd `cmd:"" help:"Start leaf agent daemon"`
+	Now   SyncNowCmd   `cmd:"" help:"Trigger immediate sync"`
+}
 
 type SyncStartCmd struct {
 	NATSUrl      string        `help:"NATS server URL" default:"nats://localhost:4222"`
@@ -21,7 +27,7 @@ type SyncStartCmd struct {
 	Notify       bool          `help:"Enable notify messaging (requires notify.fossil next to repo)" default:"false"`
 }
 
-func (c *SyncStartCmd) Run(g *cli.Globals) error {
+func (c *SyncStartCmd) Run(g *libfossilcli.Globals) error {
 	if g.Repo == "" {
 		return fmt.Errorf("repository required (use -R <path>)")
 	}

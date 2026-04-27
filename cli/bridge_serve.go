@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"fmt"
@@ -7,9 +7,14 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/danmestas/libfossil/cli"
 	"github.com/danmestas/EdgeSync/bridge/bridge"
+	libfossilcli "github.com/danmestas/libfossil/cli"
 )
+
+// BridgeCmd is the top-level command group for the NATS-to-Fossil bridge.
+type BridgeCmd struct {
+	Serve BridgeServeCmd `cmd:"" help:"Start NATS-to-Fossil bridge"`
+}
 
 type BridgeServeCmd struct {
 	NATSUrl   string `help:"NATS server URL" default:"nats://localhost:4222"`
@@ -17,7 +22,7 @@ type BridgeServeCmd struct {
 	Project   string `required:"" help:"Project code for NATS subject"`
 }
 
-func (c *BridgeServeCmd) Run(g *cli.Globals) error {
+func (c *BridgeServeCmd) Run(g *libfossilcli.Globals) error {
 	b, err := bridge.New(bridge.Config{
 		NATSUrl:     c.NATSUrl,
 		FossilURL:   c.FossilURL,
