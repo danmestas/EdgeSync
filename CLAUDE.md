@@ -146,7 +146,7 @@ make test                                  # CI tests never need Doppler
 Docker Compose stack in `deploy/`. Two containers: NATS + leaf agent.
 
 ```bash
-# On VPS (91.99.202.69):
+# On VPS (203.0.113.1):
 cd ~/EdgeSync/deploy && sudo docker compose up -d --build
 
 # Update:
@@ -155,9 +155,9 @@ cd ~/EdgeSync && git pull && cd deploy && sudo docker compose up -d --build
 
 | Endpoint | URL | Access |
 |----------|-----|--------|
-| Public HTTPS | `https://sync.craftdesign.group` | Cloudflare Tunnel |
-| Tailscale HTTP | `http://100.78.32.45:9000` | Tailnet only |
-| Tailscale NATS | `nats://100.78.32.45:4222` | Tailnet only |
+| Public HTTPS | `https://sync.example.com` | Cloudflare Tunnel |
+| Tailscale HTTP | `http://100.64.0.1:9000` | Tailnet only |
+| Tailscale NATS | `nats://100.64.0.1:4222` | Tailnet only |
 
 - `deploy/Dockerfile` — multi-stage build, uses `GOWORK=off` (copies leaf/, depends on published libfossil)
 - `deploy/docker-compose.yml` — NATS on Tailscale IP, leaf on port 9000 (8080/8090 occupied by Coolify/Caddy)

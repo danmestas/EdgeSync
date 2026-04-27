@@ -20,10 +20,12 @@ iroh-sidecar:
 	cp iroh-sidecar/target/release/iroh-sidecar bin/
 
 wasm-wasi:
-	GOOS=wasip1 GOARCH=wasm go build -buildvcs=false -o bin/leaf.wasm ./leaf/cmd/leaf/
+	@mkdir -p bin
+	cd leaf && GOOS=wasip1 GOARCH=wasm go build -buildvcs=false -o ../bin/leaf.wasm ./cmd/leaf
 
 wasm-browser:
-	GOOS=js GOARCH=wasm go build -buildvcs=false -o bin/leaf-browser.wasm ./leaf/cmd/wasm/
+	@mkdir -p bin
+	cd leaf && GOOS=js GOARCH=wasm go build -buildvcs=false -o ../bin/leaf-browser.wasm ./cmd/wasm
 	cp "$$(go env GOROOT)/lib/wasm/wasm_exec.js" bin/
 
 wasm: wasm-wasi wasm-browser
