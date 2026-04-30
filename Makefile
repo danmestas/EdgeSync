@@ -99,3 +99,53 @@ update-libfossil:
 	go get github.com/danmestas/libfossil/db/driver/modernc@latest
 	go get github.com/danmestas/libfossil/db/driver/ncruces@latest
 	go mod tidy
+
+# CI mirror — must match .github/workflows/ci.yml verbatim.
+.PHONY: ci ci-vet ci-leaf-bridge ci-cmd ci-fast
+
+ci: ci-vet ci-leaf-bridge ci-cmd
+
+ci-vet:
+	go vet ./...
+	cd leaf && go vet ./...
+	cd bridge && go vet ./...
+
+ci-leaf-bridge:
+	cd leaf && go test ./... -short -count=1
+	cd bridge && go test ./... -short -count=1
+
+ci-cmd:
+	go build -buildvcs=false ./cmd/edgesync/
+	go test -buildvcs=false ./cmd/edgesync/ -count=1 -timeout=60s
+
+# Fast subset for pre-push hook.
+# Mirrors the bones-side of ci.yml in -short mode, including descending into
+# the leaf/ and bridge/ sub-modules (separate go.mod) which `go test ./...`
+# from root would miss. Skips the cmd/edgesync build+test (the slowest CI lane).
+ci-fast: ci-vet
+	go build ./...
+	go test -short -count=1 -timeout=30s ./...
+	cd leaf && go test -short -count=1 -timeout=30s ./...
+	cd bridge && go test -short -count=1 -timeout=30s ./...
+
+.PHONY: release
+release:
+	@test -n "$(VERSION)" || { echo "VERSION=vX.Y.Z required"; exit 1; }
+	@echo "$(VERSION)" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-.+)?$$' || { echo "bad version format: $(VERSION)"; exit 1; }
+	@git diff --quiet || { echo "tree dirty; commit or stash first"; exit 1; }
+	@git fetch origin --tags
+	@if git rev-parse "$(VERSION)" >/dev/null 2>&1; then echo "tag $(VERSION) already exists"; exit 1; fi
+	@$(MAKE) ci
+	@PREV=$$(git describe --tags --abbrev=0 2>/dev/null || echo ""); \
+	  TMPL=.github/RELEASE_TEMPLATE.md; \
+	  TMP=$$(mktemp); \
+	  { echo "Release $(VERSION)"; echo; \
+	    [ -f $$TMPL ] && { cat $$TMPL; echo; }; \
+	    echo "## Changes"; \
+	    if [ -n "$$PREV" ]; then git log --oneline $$PREV..HEAD; else git log --oneline; fi; } > $$TMP; \
+	  $${EDITOR:-vi} $$TMP; \
+	  git tag -a "$(VERSION)" -F $$TMP; \
+	  rm $$TMP
+	@echo ""
+	@echo "Tag $(VERSION) created locally. To publish:"
+	@echo "  git push origin $(VERSION)"
