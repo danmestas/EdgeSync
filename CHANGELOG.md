@@ -11,6 +11,19 @@ EdgeSync uses multi-module versioning: the root module and the `leaf` and
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-04-30
+
+### Changed
+
+- Bumped `libfossil` dependency to v0.4.5. Pulls in fixes for hub xfer
+  handler panic on cancelled partial transfers ([libfossil#14], v0.4.4)
+  and `sync.Clone` convergence against a hub being concurrently written
+  to ([libfossil#17], v0.4.5). Wire-format compatible; no EdgeSync source
+  changes.
+
+[libfossil#14]: https://github.com/danmestas/libfossil/issues/14
+[libfossil#17]: https://github.com/danmestas/libfossil/issues/17
+
 ## [0.0.6] - 2026-04-26
 
 Latest pre-1.0 release. EdgeSync is alpha — see the README "Status" section
