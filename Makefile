@@ -99,3 +99,27 @@ update-libfossil:
 	go get github.com/danmestas/libfossil/db/driver/modernc@latest
 	go get github.com/danmestas/libfossil/db/driver/ncruces@latest
 	go mod tidy
+
+# CI mirror — must match .github/workflows/ci.yml verbatim.
+.PHONY: ci ci-vet ci-leaf-bridge ci-cmd ci-fast
+
+ci: ci-vet ci-leaf-bridge ci-cmd
+
+ci-vet:
+	go vet ./...
+	cd leaf && go vet ./...
+	cd bridge && go vet ./...
+
+ci-leaf-bridge:
+	cd leaf && go test ./... -short -count=1
+	cd bridge && go test ./... -short -count=1
+
+ci-cmd:
+	go build -buildvcs=false ./cmd/edgesync/
+	go test -buildvcs=false ./cmd/edgesync/ -count=1 -timeout=60s
+
+# Fast subset for pre-push hook (~30-60s; vet + build + short tests).
+ci-fast:
+	go vet ./...
+	go build ./...
+	go test -short -count=1 -timeout=30s ./...
