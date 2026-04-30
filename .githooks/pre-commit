@@ -1,39 +1,10 @@
-#!/bin/sh
-# EdgeSync pre-commit hook
-# Runs fast tests (~8s) before every commit.
-# Full DST/sim sweep available via: make dst-full / make sim-full
+#!/usr/bin/env bash
+# Pre-commit hook — runs `make ci-fast` (~30-60s) to catch obvious breakage
+# before the commit lands. Mirrors a fast subset of GitHub CI.
 #
-# Install: git config core.hooksPath .githooks
-# Skip:    git commit --no-verify (emergency only)
+# Skip with: git commit --no-verify
 
 set -e
-
-# run_test: suppress output on success, show full diagnostics on failure.
-run_test() {
-	label="$1"
-	shift
-	if output=$("$@" 2>&1); then
-		echo "  $label: OK"
-	else
-		echo "  $label: FAILED"
-		echo ""
-		echo "$output"
-		echo ""
-		exit 1
-	fi
-}
-
-echo "=== pre-commit: unit tests ==="
-run_test "leaf/agent" go test ./leaf/agent/ -short -count=1 -timeout=30s
-run_test "bridge/bridge" go test ./bridge/bridge/ -short -count=1 -timeout=30s
-
-echo "=== pre-commit: DST quick (1 seed) ==="
-run_test "dst" go test ./dst/ -run TestDST -count=1 -timeout=30s
-
-echo "=== pre-commit: sim unit tests ==="
-run_test "sim (unit)" go test ./sim/ -run "TestFaultProxy|TestGenerateSchedule|TestBuggify" -count=1 -timeout=30s
-
-echo "=== pre-commit: sim serve tests ==="
-run_test "sim (serve)" go test ./sim/ -run "TestServeHTTP|TestLeafToLeaf|TestAgentServe" -count=1 -timeout=60s
-
-echo "=== pre-commit: all passed (~8s) ==="
+echo "[pre-commit] running make ci-fast..."
+cd "$(git rev-parse --show-toplevel)"
+make ci-fast
