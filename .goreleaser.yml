@@ -55,15 +55,26 @@ snapshot:
 changelog:
   sort: asc
   use: github
+  groups:
+    - title: 'Features'
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: 'Bug fixes'
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: 'Other'
+      order: 999
   filters:
     exclude:
       - '^docs:'
       - '^chore:'
       - '^test:'
+      - '^ci:'
       - 'merge conflict'
-      - Merge pull request
-      - Merge remote-tracking branch
-      - Merge branch
+      - 'Merge PR'
+      - 'Merge pull request'
+      - 'Merge remote-tracking branch'
+      - 'Merge branch'
 
 release:
   github:
