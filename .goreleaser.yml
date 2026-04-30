@@ -103,6 +103,7 @@ release:
 
 brews:
   - name: edgesync
+    skip_upload: auto
     repository:
       owner: danmestas
       name: homebrew-tap
