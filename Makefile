@@ -118,11 +118,15 @@ ci-cmd:
 	go build -buildvcs=false ./cmd/edgesync/
 	go test -buildvcs=false ./cmd/edgesync/ -count=1 -timeout=60s
 
-# Fast subset for pre-push hook (~30-60s; vet + build + short tests).
-ci-fast:
-	go vet ./...
+# Fast subset for pre-push hook.
+# Mirrors the bones-side of ci.yml in -short mode, including descending into
+# the leaf/ and bridge/ sub-modules (separate go.mod) which `go test ./...`
+# from root would miss. Skips the cmd/edgesync build+test (the slowest CI lane).
+ci-fast: ci-vet
 	go build ./...
 	go test -short -count=1 -timeout=30s ./...
+	cd leaf && go test -short -count=1 -timeout=30s ./...
+	cd bridge && go test -short -count=1 -timeout=30s ./...
 
 .PHONY: release
 release:
