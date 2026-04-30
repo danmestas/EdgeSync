@@ -1,15 +1,17 @@
 # GoReleaser config for edgesync.
 # https://goreleaser.com
 #
-# Cross-compiles edgesync for macOS and Linux on amd64/arm64, archives
-# as tarballs, generates checksums, publishes a GitHub release, and
-# updates the Homebrew formula in danmestas/homebrew-tap.
+# Cross-compiles edgesync and the leaf daemon for macOS and Linux on
+# amd64/arm64, archives as tarballs, generates checksums, publishes a
+# GitHub release, and updates two Homebrew formulas
+# (edgesync, leaf) in danmestas/homebrew-tap.
 
 version: 2
 
 before:
   hooks:
     - go mod tidy
+    - sh -c "cd leaf && go mod tidy"
 
 builds:
   - id: edgesync
@@ -32,8 +34,33 @@ builds:
       - amd64
       - arm64
 
+  # leaf is its own Go module under ./leaf — `dir: leaf` switches goreleaser
+  # into that module so its go.mod resolves cleanly without root replaces.
+  # The bones CLI spawns this binary and waits for /healthz; shipping it
+  # via brew lets `brew install danmestas/tap/bones` pull it as a dep
+  # instead of requiring users to clone EdgeSync and `make leaf`.
+  - id: leaf
+    main: ./cmd/leaf
+    dir: leaf
+    binary: leaf
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
 archives:
   - id: edgesync
+    ids: [edgesync]
     formats: [tar.gz]
     name_template: >-
       {{ .ProjectName }}_
@@ -44,6 +71,18 @@ archives:
     files:
       - LICENSE*
       - README*
+
+  - id: leaf
+    ids: [leaf]
+    formats: [tar.gz]
+    name_template: >-
+      leaf_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - LICENSE*
 
 checksum:
   name_template: 'checksums.txt'
@@ -103,6 +142,7 @@ release:
 
 brews:
   - name: edgesync
+    ids: [edgesync]
     skip_upload: auto
     repository:
       owner: danmestas
@@ -116,3 +156,22 @@ brews:
       bin.install "edgesync"
     test: |
       system "#{bin}/edgesync --version"
+
+  # Standalone leaf formula. bones depends on this via `depends_on
+  # "danmestas/tap/leaf"` in its own brew formula.
+  - name: leaf
+    ids: [leaf]
+    skip_upload: auto
+    repository:
+      owner: danmestas
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_PAT_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/danmestas/EdgeSync
+    description: "Leaf daemon: bridges a workspace to a NATS+Fossil hub. Spawned by bones."
+    license: Apache-2.0
+    install: |
+      bin.install "leaf"
+    # leaf has no --version flag; -h prints usage via stdlib flag (exit 0).
+    test: |
+      assert_match "Usage of", shell_output("#{bin}/leaf -h 2>&1")
