@@ -558,33 +558,18 @@ func (a *Agent) pollLoop(ctx context.Context) {
 			continue
 		}
 
-		// Iterate all sync targets uniformly.
+		// Run all sync targets, collect outcomes, then emit logs at
+		// the appropriate level. Per-target failures get demoted from
+		// ERROR to DEBUG when at least one other target succeeded —
+		// sync as a whole succeeded (e.g. round-0 NATS races where
+		// the HTTP target carries the real result), so isolated
+		// transport noise is not a user-actionable error.
+		outcomes := make([]syncOutcome, 0, len(a.syncTargets))
 		for _, target := range a.syncTargets {
 			result, err := a.repo.Sync(ctx, target.transport, a.buildSyncOpts())
-			if err != nil {
-				a.logf("sync error [%s]: %v", target.label, err)
-				slog.ErrorContext(ctx, "sync error", "target", target.label, "error", err)
-				continue
-			}
-			a.logf("sync done [%s]: ↑%d ↓%d rounds=%d", target.label, result.FilesSent, result.FilesRecvd, result.Rounds)
-			slog.DebugContext(ctx, "sync details",
-				"target", target.label,
-				"rounds", result.Rounds,
-				"files_sent", result.FilesSent,
-				"files_recv", result.FilesRecvd,
-				"bytes_sent", result.BytesSent,
-				"bytes_recv", result.BytesRecvd,
-				"uv_sent", result.UVFilesSent,
-				"uv_recv", result.UVFilesRecvd,
-				"errors", len(result.Errors),
-			)
-			for _, e := range result.Errors {
-				a.logf("sync warning [%s]: %s", target.label, e)
-			}
-			if a.config.PostSyncHook != nil {
-				a.config.PostSyncHook(result)
-			}
+			outcomes = append(outcomes, syncOutcome{target: target, result: result, err: err})
 		}
+		a.emitSyncOutcomes(ctx, outcomes)
 
 		// Update peer registry once per poll cycle.
 		if err := a.updatePeerRegistryAfterSync(); err != nil {
