@@ -121,12 +121,16 @@ type WatchOpts struct {
 
 // Watch returns a channel of messages, closed when ctx is cancelled.
 //
-// Teardown order is subscription-first, channel-close-second: when ctx
-// cancels the close goroutine Unsubscribes from NATS before close(ch),
-// so no late-arriving callback can race the close and panic on a
-// closed channel. Without this ordering, a message arriving between
-// ctx.Done and the channel-close window would trigger a send on a
-// closed channel.
+// Teardown is mutex-gated: every callback dispatch holds `mu` while
+// it does its select, and the close goroutine takes `mu` before
+// `close(ch)`. Neither Unsubscribe nor Drain synchronizes with NATS'
+// per-subscription dispatch goroutine — both can return while a
+// callback is mid-select. Without the mutex, a callback that already
+// committed to `case ch <- msg` would race the close and panic on a
+// closed channel (#100). The `closed` flag keeps callbacks scheduled
+// after teardown from re-entering the select once ch is closed; in
+// practice Unsubscribe stops most of them, the mutex and flag handle
+// the residual.
 func (s *Service) Watch(ctx context.Context, opts WatchOpts) <-chan Message {
 	ch := make(chan Message, 16)
 
@@ -142,7 +146,17 @@ func (s *Service) Watch(ctx context.Context, opts WatchOpts) <-chan Message {
 		subject += ".*"
 	}
 
+	var (
+		mu     sync.Mutex
+		closed bool
+	)
+
 	natsSub, subErr := s.sub.subscribeForWatch(subject, func(msg Message) {
+		mu.Lock()
+		defer mu.Unlock()
+		if closed {
+			return
+		}
 		select {
 		case ch <- msg:
 		case <-ctx.Done():
@@ -157,7 +171,10 @@ func (s *Service) Watch(ctx context.Context, opts WatchOpts) <-chan Message {
 	go func() {
 		<-ctx.Done()
 		_ = natsSub.Unsubscribe()
+		mu.Lock()
+		closed = true
 		close(ch)
+		mu.Unlock()
 	}()
 
 	return ch
