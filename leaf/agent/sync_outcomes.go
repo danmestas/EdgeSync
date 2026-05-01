@@ -2,9 +2,11 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	libfossil "github.com/danmestas/libfossil"
+	"github.com/nats-io/nats.go"
 )
 
 // syncOutcome carries the result of a single per-target sync attempt
@@ -21,8 +23,15 @@ type syncOutcome struct {
 // Failed outcomes log at ERROR when no target in this cycle succeeded
 // (sync as a whole failed; operator action likely needed). When at
 // least one target succeeded, failed outcomes log at DEBUG instead —
-// sync as a whole succeeded, isolated transport-level noise (e.g.
-// the round-0 NATS subject-interest race) shouldn't trip alerting.
+// sync as a whole succeeded, isolated transport-level noise shouldn't
+// trip alerting.
+//
+// Independently, errors classified as benign by isBenignSyncError
+// (today: nats.ErrNoResponders, context.Canceled) log at DEBUG
+// regardless of whether other targets succeeded. ErrNoResponders is
+// the round-0 subject-interest race, expected at every cold-start;
+// context.Canceled is the agent-shutdown teardown artifact. Neither
+// is user-actionable.
 //
 // The legacy `a.logf("sync error [%s]: %v", ...)` callback fires
 // regardless of slog level so harness-supplied loggers stay
@@ -35,15 +44,15 @@ func (a *Agent) emitSyncOutcomes(ctx context.Context, outcomes []syncOutcome) {
 			break
 		}
 	}
-	failedLevel := slog.LevelError
-	if anySuccess {
-		failedLevel = slog.LevelDebug
-	}
 
 	for _, o := range outcomes {
 		if o.err != nil {
 			a.logf("sync error [%s]: %v", o.target.label, o.err)
-			slog.LogAttrs(ctx, failedLevel, "sync error",
+			level := slog.LevelError
+			if anySuccess || isBenignSyncError(o.err) {
+				level = slog.LevelDebug
+			}
+			slog.LogAttrs(ctx, level, "sync error",
 				slog.String("target", o.target.label),
 				slog.Any("error", o.err),
 			)
@@ -69,4 +78,30 @@ func (a *Agent) emitSyncOutcomes(ctx context.Context, outcomes []syncOutcome) {
 			a.config.PostSyncHook(o.result)
 		}
 	}
+}
+
+// isBenignSyncError reports whether a sync error is known to be
+// non-actionable and should always log at DEBUG, even if it is the
+// only error in the cycle. Today's classifications:
+//
+//   - nats.ErrNoResponders: round-0 NATS request fired before the
+//     hub's serve-nats subscriber finished propagating its
+//     subject-interest through the leaf-node mesh. Expected on every
+//     cold-start; the next round resolves.
+//   - context.Canceled: agent shutdown interrupted an in-flight sync.
+//     The operator chose to stop; the in-flight result is moot.
+//
+// Both classifications are matched via errors.Is so wrapped errors
+// from libfossil's transport layer are caught.
+func isBenignSyncError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, nats.ErrNoResponders) {
+		return true
+	}
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	return false
 }
