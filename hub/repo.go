@@ -112,6 +112,18 @@ func (r *Repo) RemoveUser(login string) error {
 	return nil
 }
 
+// SetUserCaps replaces the caps string on an existing user. Errors if the
+// user doesn't exist or the underlying SetCaps fails.
+func (r *Repo) SetUserCaps(login, caps string) error {
+	if login == "" {
+		return errors.New("hub: SetUserCaps: login is required")
+	}
+	if err := r.handle.SetCaps(login, caps); err != nil {
+		return fmt.Errorf("hub: set caps for %q: %w", login, err)
+	}
+	return nil
+}
+
 // Commit commits a set of files to the hub repo with the given message
 // and author. Returns the new manifest UUID as an opaque RevID.
 func (r *Repo) Commit(ctx context.Context, opts CommitOpts) (RevID, error) {

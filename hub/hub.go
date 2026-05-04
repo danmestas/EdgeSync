@@ -48,6 +48,12 @@ type Config struct {
 	// NATSLeafPort is the leafnode listener port for remote agents.
 	// 0 = auto-pick.
 	NATSLeafPort int
+
+	// NobodyCaps grants the libfossil-pre-populated 'nobody' user these
+	// caps after hub bootstrap. Empty leaves nobody at libfossil's defaults
+	// (no caps; unauthenticated requests are rejected). Set to "gio" to
+	// allow unauthenticated clone/pull/push, the typical hub deployment.
+	NobodyCaps string
 }
 
 // Hub hosts an EdgeSync hub in-process. Construct one via NewHub, then call
@@ -85,6 +91,13 @@ func NewHub(ctx context.Context, cfg Config) (*Hub, error) {
 	}
 	applySQLiteTuning(libfossilRepo)
 	repo := newRepoFromHandle(libfossilRepo)
+
+	if cfg.NobodyCaps != "" {
+		if err := repo.SetUserCaps("nobody", cfg.NobodyCaps); err != nil {
+			repo.Close()
+			return nil, fmt.Errorf("hub: apply NobodyCaps: %w", err)
+		}
+	}
 
 	httpAddr := fmt.Sprintf("127.0.0.1:%d", cfg.FossilHTTPPort)
 	httpLn, err := net.Listen("tcp", httpAddr)

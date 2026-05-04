@@ -22,3 +22,6 @@ func (h *Hub) ListUsers() ([]User, error) { return h.repo.ListUsers() }
 
 // RemoveUser deletes the user with the given login.
 func (h *Hub) RemoveUser(login string) error { return h.repo.RemoveUser(login) }
+
+// SetUserCaps replaces the caps string on an existing user.
+func (h *Hub) SetUserCaps(login, caps string) error { return h.repo.SetUserCaps(login, caps) }
