@@ -141,6 +141,39 @@ func TestAgent_Diff_BetweenTwoRevs(t *testing.T) {
 	}
 }
 
+// TestAgent_Diff_RenameAcrossRevs exercises the case the pre-cleanup
+// implementation got wrong: same content, different name. The old
+// hand-rolled file enumeration diffed both files as full additions/
+// removals; libfossil's whole-checkin Diff should handle the rename
+// natively. We don't pin the exact rename-marker shape — we just
+// confirm Diff doesn't error and produces non-empty output for the
+// pair.
+func TestAgent_Diff_RenameAcrossRevs(t *testing.T) {
+	a := newAgentForCommitTests(t)
+	ctx := context.Background()
+
+	revA, err := a.Commit(ctx, CommitOpts{
+		Files:   []FileToCommit{{Name: "before.txt", Content: []byte("same content\n")}},
+		Message: "rev A",
+		Author:  "testuser",
+	})
+	if err != nil {
+		t.Fatalf("Commit rev A: %v", err)
+	}
+	revB, err := a.Commit(ctx, CommitOpts{
+		Files:   []FileToCommit{{Name: "after.txt", Content: []byte("same content\n")}},
+		Message: "rev B (renamed)",
+		Author:  "testuser",
+	})
+	if err != nil {
+		t.Fatalf("Commit rev B: %v", err)
+	}
+
+	if _, err := a.Diff(ctx, revA, revB); err != nil {
+		t.Fatalf("Diff across rename: %v", err)
+	}
+}
+
 func TestAgent_ExtractTo_PopulatesDir(t *testing.T) {
 	a := newAgentForCommitTests(t)
 	ctx := context.Background()

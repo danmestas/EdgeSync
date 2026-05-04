@@ -138,41 +138,13 @@ func (a *Agent) Diff(ctx context.Context, revA, revB RevID) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("agent: diff: resolve %q: %w", revB, err)
 	}
-	filesA, err := a.repo.ListFiles(ridA)
+	entries, err := a.repo.Diff(ridA, ridB, "")
 	if err != nil {
-		return nil, fmt.Errorf("agent: diff: list files at %q: %w", revA, err)
-	}
-	filesB, err := a.repo.ListFiles(ridB)
-	if err != nil {
-		return nil, fmt.Errorf("agent: diff: list files at %q: %w", revB, err)
-	}
-	uuidByName := make(map[string]string, len(filesA)+len(filesB))
-	for _, f := range filesA {
-		uuidByName[f.Name] = f.UUID
-	}
-	names := make([]string, 0, len(uuidByName)+len(filesB))
-	seen := make(map[string]bool, len(uuidByName)+len(filesB))
-	for _, f := range filesA {
-		if !seen[f.Name] {
-			names = append(names, f.Name)
-			seen[f.Name] = true
-		}
-	}
-	for _, f := range filesB {
-		if changed := uuidByName[f.Name] != f.UUID; changed && !seen[f.Name] {
-			names = append(names, f.Name)
-			seen[f.Name] = true
-		}
+		return nil, fmt.Errorf("agent: diff: %w", err)
 	}
 	var out strings.Builder
-	for _, name := range names {
-		entries, derr := a.repo.Diff(ridA, ridB, name)
-		if derr != nil {
-			return nil, fmt.Errorf("agent: diff %q: %w", name, derr)
-		}
-		for _, e := range entries {
-			out.WriteString(e.Unified)
-		}
+	for _, e := range entries {
+		out.WriteString(e.Unified)
 	}
 	return []byte(out.String()), nil
 }
@@ -191,7 +163,7 @@ func (a *Agent) Tip(ctx context.Context, branch string) (RevID, error) {
 	if rid == 0 {
 		return "", nil
 	}
-	uuid, err := ridToUUID(a.repo, rid)
+	uuid, err := a.repo.UUIDFromRID(rid)
 	if err != nil {
 		return "", fmt.Errorf("agent: tip %q: %w", branch, err)
 	}
@@ -233,19 +205,11 @@ func (a *Agent) toSyncResult(r *libfossil.SyncResult) *SyncResult {
 	}
 	if forks, err := a.repo.DetectForks(); err == nil && len(forks) > 0 {
 		out.Forked = true
-		if uuid, uerr := ridToUUID(a.repo, forks[0].LocalTip); uerr == nil {
+		if uuid, uerr := a.repo.UUIDFromRID(forks[0].LocalTip); uerr == nil {
 			out.BranchID = uuid
 		}
 	}
 	return out
-}
-
-func ridToUUID(r *libfossil.Repo, rid int64) (string, error) {
-	var uuid string
-	if err := r.DB().QueryRow(`SELECT uuid FROM blob WHERE rid = ?`, rid).Scan(&uuid); err != nil {
-		return "", fmt.Errorf("rid→uuid: %w", err)
-	}
-	return uuid, nil
 }
 
 // applySQLiteTuning applies SQLite settings the agent needs for safe
