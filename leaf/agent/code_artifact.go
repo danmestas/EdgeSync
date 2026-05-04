@@ -24,6 +24,18 @@ type CommitOpts struct {
 	Files   []FileToCommit
 	Message string
 	Author  string // fossil user; required
+
+	// ParentID is the primary parent rid for the new commit. When 0,
+	// Agent.Commit resolves the current trunk tip and uses that — the
+	// natural "chain onto trunk" behavior matching `fossil ci`. On a
+	// fresh repo with no trunk tip, the resolution falls through to 0
+	// and the commit is a legitimate orphan root (the first commit).
+	// Set explicitly to chain onto a non-trunk branch via Agent.Tip.
+	ParentID int64
+
+	// MergeParents lists additional parents for a merge commit. Each
+	// contributes a secondary entry on the manifest's P-card.
+	MergeParents []int64
 }
 
 // SyncOpts configures Agent.SyncTo.
@@ -45,23 +57,52 @@ type SyncResult struct {
 
 // Commit commits a set of files to the agent's repo with the given message
 // and author. Returns the new manifest UUID as an opaque RevID.
+//
+// When opts.ParentID is 0, the current trunk tip is resolved and used as
+// the parent — matching `fossil ci`'s default chain-onto-tip behavior. On
+// an empty repo (no trunk tip yet), the resolution returns 0 and the
+// commit is a legitimate orphan root.
 func (a *Agent) Commit(ctx context.Context, opts CommitOpts) (RevID, error) {
 	if opts.Author == "" {
 		return "", errors.New("agent: Commit: Author is required")
+	}
+	parentID, err := a.resolveCommitParent(opts.ParentID)
+	if err != nil {
+		return "", err
 	}
 	files := make([]libfossil.FileToCommit, len(opts.Files))
 	for i, f := range opts.Files {
 		files[i] = libfossil.FileToCommit{Name: f.Name, Content: f.Content}
 	}
 	_, uuid, err := a.repo.Commit(libfossil.CommitOpts{
-		Files:   files,
-		Comment: opts.Message,
-		User:    opts.Author,
+		Files:        files,
+		Comment:      opts.Message,
+		User:         opts.Author,
+		ParentID:     parentID,
+		MergeParents: opts.MergeParents,
 	})
 	if err != nil {
 		return "", fmt.Errorf("agent: commit: %w", err)
 	}
 	return RevID(uuid), nil
+}
+
+// resolveCommitParent maps the caller-supplied ParentID to the rid the
+// commit should chain onto. Non-zero is used verbatim. Zero auto-resolves
+// trunk's tip; on an empty repo with no trunk tip yet, returns 0 (which
+// libfossil treats as orphan root — correct first-commit behavior).
+func (a *Agent) resolveCommitParent(supplied int64) (int64, error) {
+	if supplied != 0 {
+		return supplied, nil
+	}
+	rid, err := a.repo.BranchTip("trunk")
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || strings.Contains(err.Error(), "no rows in result set") {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("agent: commit: resolve trunk tip: %w", err)
+	}
+	return rid, nil
 }
 
 // Sync runs one sync round against the agent's configured upstream/transport.
