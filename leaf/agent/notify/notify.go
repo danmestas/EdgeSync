@@ -29,6 +29,7 @@ type Service struct {
 	config    ServiceConfig
 	threadMap map[string]string // thread-short -> full thread ID cache
 	mu        sync.Mutex
+	ownsRepo  bool // true when the Service was constructed via NewServiceFromPath
 }
 
 // NewService creates a new notify Service. Repo must be non-nil.
@@ -50,10 +51,59 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	}, nil
 }
 
-// Close unsubscribes from NATS. Does NOT close the repo.
+// ServiceFromPathConfig holds configuration for NewServiceFromPath.
+type ServiceFromPathConfig struct {
+	RepoPath string     // notify.fossil path; created if absent
+	NATSConn *nats.Conn // May be nil for repo-only mode
+	From     string     // iroh endpoint ID
+	FromName string     // Human-readable name
+}
+
+// NewServiceFromPath creates a Service that opens (or creates) the notify
+// repo at the given path. Unlike NewService — which expects a pre-opened
+// repo and leaves ownership with the caller — this constructor owns the
+// repo lifecycle: Close() will close it.
+//
+// If the repo already exists at RepoPath, it's opened. If not, it's
+// created via InitNotifyRepo.
+func NewServiceFromPath(cfg ServiceFromPathConfig) (*Service, error) {
+	if cfg.RepoPath == "" {
+		return nil, fmt.Errorf("notify: ServiceFromPathConfig.RepoPath is required")
+	}
+	repo, err := libfossil.Open(cfg.RepoPath)
+	if err != nil {
+		repo, err = InitNotifyRepo(cfg.RepoPath)
+		if err != nil {
+			return nil, fmt.Errorf("notify: open or create notify repo at %s: %w", cfg.RepoPath, err)
+		}
+	}
+	s, err := NewService(ServiceConfig{
+		Repo:     repo,
+		NATSConn: cfg.NATSConn,
+		From:     cfg.From,
+		FromName: cfg.FromName,
+	})
+	if err != nil {
+		repo.Close()
+		return nil, err
+	}
+	s.ownsRepo = true
+	return s, nil
+}
+
+// Close unsubscribes from NATS. When the Service was constructed via
+// NewServiceFromPath, also closes the underlying repo. When constructed
+// via NewService, the repo is left open (caller retains ownership).
 func (s *Service) Close() error {
 	if s.sub != nil {
 		s.sub.Unsubscribe()
+	}
+	if s.ownsRepo && s.repo != nil {
+		err := s.repo.Close()
+		s.repo = nil
+		if err != nil {
+			return fmt.Errorf("notify: close repo: %w", err)
+		}
 	}
 	return nil
 }
