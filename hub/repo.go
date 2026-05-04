@@ -132,12 +132,13 @@ func (r *Repo) Commit(ctx context.Context, opts CommitOpts) (RevID, error) {
 	}
 	files := make([]libfossil.FileToCommit, len(opts.Files))
 	for i, f := range opts.Files {
-		files[i] = libfossil.FileToCommit{Name: f.Name, Content: f.Content}
+		files[i] = libfossil.FileToCommit{Name: f.Name, Content: f.Content, Perm: f.Perm}
 	}
 	_, uuid, err := r.handle.Commit(libfossil.CommitOpts{
 		Files:   files,
 		Comment: opts.Message,
 		User:    opts.Author,
+		Time:    opts.Time,
 	})
 	if err != nil {
 		return "", fmt.Errorf("hub: commit: %w", err)
