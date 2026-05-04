@@ -23,6 +23,7 @@ import (
 
 	libfossil "github.com/danmestas/libfossil"
 	natsserver "github.com/nats-io/nats-server/v2/server"
+	"github.com/nats-io/nats.go"
 )
 
 // Config configures NewHub.
@@ -54,15 +55,37 @@ type Config struct {
 	// (no caps; unauthenticated requests are rejected). Set to "gio" to
 	// allow unauthenticated clone/pull/push, the typical hub deployment.
 	NobodyCaps string
+
+	// DisableFossilSyncOverNATS turns off the hub's NATS subscriber for the
+	// fossil sync subject. By default, NewHub connects a local NATS client
+	// to the embedded server and subscribes to "fossil.<project-code>.sync"
+	// so peer leaf agents can push xfer requests to the hub over NATS
+	// (alongside the HTTP path). Set to true for read-only HTTP-only
+	// mirrors that don't accept NATS pushes.
+	//
+	// Inverted-name (Disable*) shape over the more obvious ServeFossilSyncOverNATS
+	// because Go bool zero-value is false; the production default is "enabled,"
+	// which maps cleanly to "DisableX defaults false."
+	DisableFossilSyncOverNATS bool
+
+	// FossilSyncSubjectPrefix overrides the NATS subject prefix used by the
+	// fossil sync subscriber. Empty defaults to "fossil" (matching the
+	// leaf-agent default). The full subscribed subject is
+	// "<prefix>.<project-code>.sync".
+	FossilSyncSubjectPrefix string
 }
 
 // Hub hosts an EdgeSync hub in-process. Construct one via NewHub, then call
 // ServeHTTP in a goroutine. Use Stop to tear everything down.
 type Hub struct {
-	repo       *Repo
-	server     *natsserver.Server
+	repo         *Repo
+	server       *natsserver.Server
 	httpListener net.Listener
-	httpServer *http.Server
+	httpServer   *http.Server
+
+	natsClient    *nats.Conn
+	natsSyncSub   *nats.Subscription
+	syncSubject   string
 
 	httpAddr     string
 	natsURL      string
@@ -126,7 +149,76 @@ func NewHub(ctx context.Context, cfg Config) (*Hub, error) {
 		natsURL:      natsServer.ClientURL(),
 		leafUpstream: leafAddr,
 	}
+
+	if !cfg.DisableFossilSyncOverNATS {
+		if err := h.startFossilSyncSubscriber(cfg); err != nil {
+			natsServer.Shutdown()
+			natsServer.WaitForShutdown()
+			httpLn.Close()
+			repo.Close()
+			return nil, err
+		}
+	}
+
 	return h, nil
+}
+
+// startFossilSyncSubscriber connects a local NATS client to the embedded
+// server and subscribes to "<prefix>.<project-code>.sync", dispatching
+// incoming xfer payloads to the hub repo's HandleSync. Invoked by NewHub
+// when Config.DisableFossilSyncOverNATS is false.
+func (h *Hub) startFossilSyncSubscriber(cfg Config) error {
+	projectCode, err := h.repo.handle.Config("project-code")
+	if err != nil {
+		return fmt.Errorf("hub: read project-code for fossil-sync subscriber: %w", err)
+	}
+	if projectCode == "" {
+		return fmt.Errorf("hub: project-code is empty; refusing to start fossil-sync subscriber")
+	}
+
+	prefix := cfg.FossilSyncSubjectPrefix
+	if prefix == "" {
+		prefix = "fossil"
+	}
+	subject := prefix + "." + projectCode + ".sync"
+
+	nc, err := nats.Connect(h.natsURL,
+		nats.Name("edgesync-hub"),
+		nats.MaxReconnects(-1),
+		nats.ReconnectWait(2*time.Second),
+		nats.RetryOnFailedConnect(true),
+		nats.Timeout(5*time.Second),
+	)
+	if err != nil {
+		return fmt.Errorf("hub: connect local NATS for fossil-sync subscriber: %w", err)
+	}
+
+	sub, err := nc.Subscribe(subject, func(msg *nats.Msg) {
+		respBytes, hsErr := h.repo.handle.HandleSync(context.Background(), msg.Data)
+		if hsErr != nil {
+			// Empty response signals failure to the caller without hanging.
+			_ = msg.Respond([]byte{})
+			return
+		}
+		_ = msg.Respond(respBytes)
+	})
+	if err != nil {
+		nc.Close()
+		return fmt.Errorf("hub: subscribe %s: %w", subject, err)
+	}
+
+	// Flush so the server has registered the subscription before NewHub
+	// returns. Tests that publish immediately after NewHub depend on this.
+	if err := nc.FlushTimeout(2 * time.Second); err != nil {
+		_ = sub.Unsubscribe()
+		nc.Close()
+		return fmt.Errorf("hub: flush fossil-sync subscription: %w", err)
+	}
+
+	h.natsClient = nc
+	h.natsSyncSub = sub
+	h.syncSubject = subject
+	return nil
 }
 
 // ServeHTTP runs the fossil HTTP server (timeline UI + xfer endpoint)
@@ -166,6 +258,12 @@ func (h *Hub) Stop() error {
 		} else if h.httpListener != nil {
 			h.httpListener.Close()
 		}
+		if h.natsSyncSub != nil {
+			_ = h.natsSyncSub.Unsubscribe()
+		}
+		if h.natsClient != nil {
+			h.natsClient.Close()
+		}
 		if h.server != nil {
 			h.server.Shutdown()
 			h.server.WaitForShutdown()
@@ -189,6 +287,11 @@ func (h *Hub) LeafUpstream() string { return h.leafUpstream }
 
 // HTTPAddr returns the host:port the fossil HTTP server is bound to.
 func (h *Hub) HTTPAddr() string { return h.httpAddr }
+
+// FossilSyncSubject returns the NATS subject the hub subscribes to for
+// incoming fossil-sync xfer requests, or "" if Config.DisableFossilSyncOverNATS
+// was set. Format: "<prefix>.<project-code>.sync".
+func (h *Hub) FossilSyncSubject() string { return h.syncSubject }
 
 // Repo returns the underlying fossil-repo handle the hub serves from. Use
 // this to share the handle with another component in the same process —

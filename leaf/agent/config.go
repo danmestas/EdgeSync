@@ -28,6 +28,17 @@ type Config struct {
 	// RepoPath is the path to the local Fossil repository file (required).
 	RepoPath string
 
+	// CloneFromHubURL, when set and RepoPath does not yet exist on disk,
+	// causes New to clone the leaf repo from this fossil HTTP URL before
+	// proceeding. Matching project-codes between leaf and hub are required
+	// for downstream NATS sync subjects to align, so callers that need to
+	// bootstrap a leaf against an existing hub should use this field rather
+	// than letting libfossil create an empty repo.
+	//
+	// When empty, New behaves as before: opens RepoPath if it exists, errors
+	// otherwise.
+	CloneFromHubURL string
+
 	// NATSUpstream is an optional external NATS URL that the embedded server
 	// joins as a leaf node. Empty means standalone mesh (no upstream).
 	NATSUpstream string
