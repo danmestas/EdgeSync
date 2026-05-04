@@ -92,7 +92,7 @@ jobs:
           go-version-file: go.mod
 
       - if: steps.in.outputs.skip != 'true' && steps.idem.outputs.exists != 'true'
-        name: Bump module
+        name: Bump module in every go.mod
         id: bump
         env:
           BRANCH: ${{ steps.in.outputs.branch }}
@@ -100,27 +100,57 @@ jobs:
           VERSION: ${{ steps.in.outputs.version }}
         run: |
           git switch -c "$BRANCH"
-          for i in 1 2 3; do
-            if go get "${MODULE}@${VERSION}"; then
-              break
+
+          # Walk every go.mod in the repo. Skip modules that don't depend on
+          # $MODULE (otherwise `go get` would add it as a new dep).
+          mapfile -t GOMODS < <(find . -name go.mod -not -path './.git/*' -not -path './node_modules/*' | sort)
+          echo "::notice::Found ${#GOMODS[@]} go.mod file(s): ${GOMODS[*]}"
+
+          any_changed=false
+          for gomod in "${GOMODS[@]}"; do
+            d=$(dirname "$gomod")
+            if ! grep -qE "^[[:space:]]*${MODULE}([[:space:]]|$)" "$gomod"; then
+              echo "::notice::${d}: ${MODULE} not a direct dep — skipping"
+              continue
             fi
-            if [ "$i" -lt 3 ]; then
-              echo "::notice::go get failed (attempt $i/3) — likely GOPROXY propagation race; retrying in 15s..."
-              sleep 15
+            pushd "$d" >/dev/null
+            for i in 1 2 3; do
+              if go get "${MODULE}@${VERSION}"; then
+                break
+              fi
+              if [ "$i" -lt 3 ]; then
+                echo "::notice::${d}: go get failed (attempt ${i}/3) — likely GOPROXY propagation race; retrying in 15s..."
+                sleep 15
+              else
+                echo "::error::${d}: go get failed after 3 attempts"
+                exit 1
+              fi
+            done
+            go mod tidy
+            if ! git diff --quiet go.mod go.sum; then
+              any_changed=true
+              echo "::notice::${d}: bumped"
             else
-              echo "::error::go get failed after 3 attempts"
-              exit 1
+              echo "::notice::${d}: already at ${VERSION}, no diff"
             fi
+            popd >/dev/null
           done
-          go mod tidy
-          if git diff --quiet go.mod go.sum; then
-            echo "::notice::No-op bump — version already pinned"
+
+          if [ "$any_changed" = "false" ]; then
+            echo "::notice::No-op bump — version already pinned in every module"
             echo "noop=true" >> "$GITHUB_OUTPUT"
           fi
 
       - if: steps.in.outputs.skip != 'true' && steps.idem.outputs.exists != 'true' && steps.bump.outputs.noop != 'true'
-        name: Verify build
-        run: go build ./...
+        name: Verify build for every module
+        run: |
+          mapfile -t GOMODS < <(find . -name go.mod -not -path './.git/*' -not -path './node_modules/*' | sort)
+          for gomod in "${GOMODS[@]}"; do
+            d=$(dirname "$gomod")
+            echo "::group::go build ./... in ${d}"
+            (cd "$d" && go build ./...)
+            echo "::endgroup::"
+          done
 
       - if: steps.in.outputs.skip != 'true' && steps.idem.outputs.exists != 'true' && steps.bump.outputs.noop != 'true'
         name: Commit + push + open PR
@@ -136,7 +166,12 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add go.mod go.sum
+          # Stage every changed go.mod and go.sum across the repo.
+          mapfile -t GOMODS < <(find . -name go.mod -not -path './.git/*' -not -path './node_modules/*' | sort)
+          for gomod in "${GOMODS[@]}"; do
+            d=$(dirname "$gomod")
+            git add "${d}/go.mod" "${d}/go.sum" 2>/dev/null || true
+          done
           git commit -m "chore: bump ${REPO} → ${VERSION}"
           git push -u origin "$BRANCH"
           gh pr create \
@@ -149,4 +184,4 @@ jobs:
           - Tag SHA: \`${TAG_SHA}\`
           - Triggered by: @${ACTOR}
 
-          CI must pass before merge. Review go.sum diff for transitive surprises."
+          Updated every \`go.mod\` in the repo that depends on \`${MODULE}\`. CI must pass before merge. Review \`go.sum\` diffs for transitive surprises."
