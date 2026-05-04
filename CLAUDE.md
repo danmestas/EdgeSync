@@ -12,6 +12,7 @@ See `docs/architecture/` for condensed architectural decision records (ARDs):
 - `repo-operations.md` — CLI, tags, FTS, verify/rebuild, auth, shun/purge
 - `testing-strategy.md` — test tiers, DST, sim, interop, BUGGIFY
 - `notify-messaging.md` — bidirectional messaging: data model, dual delivery, CLI, planned phases
+- `hub-package.md` — in-process hub: fossil repo + embedded NATS + HTTP serving, libfossil-hidden API
 
 ## Architecture
 
