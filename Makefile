@@ -43,7 +43,7 @@ test:
 	for pid in $$pids; do wait $$pid || fail=1; done; \
 	if [ $$fail -ne 0 ]; then echo "FAIL: unit tests"; exit 1; fi
 	(cd sim && go test . -run 'TestFaultProxy|TestGenerateSchedule|TestBuggify' -count=1)
-	(cd sim && go test . -run 'TestServeHTTP|TestLeafToLeaf|TestAgentServe' -count=1 -timeout=120s)
+	(cd sim && go test . -run 'TestServeHTTP|TestLeafToLeaf|TestAgentServe|TestHubLeafE2E' -count=1 -timeout=120s)
 	(cd sim && go test . -run 'TestInterop' -count=1 -short -timeout=60s)
 	(cd sim && go test . -run 'TestSimulation' -sim.seed=1 -count=1 -timeout=120s)
 
