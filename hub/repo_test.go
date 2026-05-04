@@ -132,6 +132,136 @@ func TestRepo_Close_IsIdempotent(t *testing.T) {
 	}
 }
 
+// TestRepo_SetUserCaps_RoundTrip exercises SetUserCaps against an existing
+// user. The 'nobody' user is libfossil-pre-populated with empty caps;
+// SetUserCaps replaces them.
+func TestRepo_SetUserCaps_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	repoPath := filepath.Join(dir, "hub.fossil")
+
+	h, err := NewHub(context.Background(), Config{RepoPath: repoPath})
+	if err != nil {
+		t.Fatalf("NewHub: %v", err)
+	}
+	_ = h.Stop()
+
+	r, err := OpenRepo(repoPath)
+	if err != nil {
+		t.Fatalf("OpenRepo: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+
+	if err := r.SetUserCaps("nobody", "gio"); err != nil {
+		t.Fatalf("SetUserCaps: %v", err)
+	}
+	got, err := r.GetUser("nobody")
+	if err != nil {
+		t.Fatalf("GetUser nobody: %v", err)
+	}
+	if got.Caps != "gio" {
+		t.Errorf("nobody.Caps = %q, want %q", got.Caps, "gio")
+	}
+}
+
+func TestRepo_SetUserCaps_RejectsEmptyLogin(t *testing.T) {
+	dir := t.TempDir()
+	repoPath := filepath.Join(dir, "hub.fossil")
+	h, err := NewHub(context.Background(), Config{RepoPath: repoPath})
+	if err != nil {
+		t.Fatalf("NewHub: %v", err)
+	}
+	_ = h.Stop()
+
+	r, err := OpenRepo(repoPath)
+	if err != nil {
+		t.Fatalf("OpenRepo: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+
+	if err := r.SetUserCaps("", "gio"); err == nil {
+		t.Fatal("SetUserCaps with empty login should error")
+	}
+}
+
+// TestNewHub_NobodyCaps_AppliedAtBootstrap proves Config.NobodyCaps is
+// applied during NewHub so unauthenticated request setup is one-line.
+func TestNewHub_NobodyCaps_AppliedAtBootstrap(t *testing.T) {
+	dir := t.TempDir()
+	repoPath := filepath.Join(dir, "hub.fossil")
+
+	h, err := NewHub(context.Background(), Config{
+		RepoPath:   repoPath,
+		NobodyCaps: "gio",
+	})
+	if err != nil {
+		t.Fatalf("NewHub: %v", err)
+	}
+	t.Cleanup(func() { _ = h.Stop() })
+
+	got, err := h.GetUser("nobody")
+	if err != nil {
+		t.Fatalf("Hub.GetUser nobody: %v", err)
+	}
+	if got.Caps != "gio" {
+		t.Errorf("nobody.Caps after bootstrap = %q, want %q", got.Caps, "gio")
+	}
+}
+
+// TestNewHub_NobodyCaps_Idempotent proves calling NewHub twice with the
+// same NobodyCaps on an existing repo leaves the same end state.
+func TestNewHub_NobodyCaps_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	repoPath := filepath.Join(dir, "hub.fossil")
+
+	h1, err := NewHub(context.Background(), Config{RepoPath: repoPath, NobodyCaps: "gio"})
+	if err != nil {
+		t.Fatalf("NewHub phase 1: %v", err)
+	}
+	_ = h1.Stop()
+
+	h2, err := NewHub(context.Background(), Config{RepoPath: repoPath, NobodyCaps: "gio"})
+	if err != nil {
+		t.Fatalf("NewHub phase 2 (open): %v", err)
+	}
+	t.Cleanup(func() { _ = h2.Stop() })
+
+	got, err := h2.GetUser("nobody")
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if got.Caps != "gio" {
+		t.Errorf("nobody.Caps after re-open = %q, want %q", got.Caps, "gio")
+	}
+}
+
+// TestNewHub_NobodyCaps_EmptyDoesNotOverwrite proves empty NobodyCaps
+// doesn't replace previously-set caps. Bootstrap with "gio", then re-open
+// with NobodyCaps unset — caps should still be "gio".
+func TestNewHub_NobodyCaps_EmptyDoesNotOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	repoPath := filepath.Join(dir, "hub.fossil")
+
+	h1, err := NewHub(context.Background(), Config{RepoPath: repoPath, NobodyCaps: "gio"})
+	if err != nil {
+		t.Fatalf("NewHub phase 1: %v", err)
+	}
+	_ = h1.Stop()
+
+	h2, err := NewHub(context.Background(), Config{RepoPath: repoPath /* NobodyCaps left empty */})
+	if err != nil {
+		t.Fatalf("NewHub phase 2: %v", err)
+	}
+	t.Cleanup(func() { _ = h2.Stop() })
+
+	got, err := h2.GetUser("nobody")
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if got.Caps != "gio" {
+		t.Errorf("nobody.Caps after empty NobodyCaps = %q, want %q (no overwrite)", got.Caps, "gio")
+	}
+}
+
 // TestHub_Repo_AccessorReturnsLiveHandle proves Hub.Repo() returns a *Repo
 // whose lifecycle is bound to the Hub. Operations against it observe the
 // same state as Hub.* methods.
