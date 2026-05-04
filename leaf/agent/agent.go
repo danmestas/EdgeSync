@@ -89,6 +89,7 @@ func New(cfg Config) (*Agent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("agent: open repo: %w", err)
 	}
+	applySQLiteTuning(r)
 
 	projectCode, err := r.Config("project-code")
 	if err != nil {
@@ -178,7 +179,13 @@ func (a *Agent) logf(format string, args ...any) {
 	}
 }
 
-// Repo returns the agent's Fossil repository (for invariant checking in simulation).
+// Repo returns the underlying libfossil handle for the agent's repository.
+//
+// Production code should prefer the libfossil-hidden code-artifact methods
+// (Commit, Sync, SyncTo, Read, Files, Diff, Tip, ExtractTo, Config) which
+// don't leak libfossil types into the consumer's import graph. Repo() stays
+// available for sim/test harnesses and for advanced callers that need
+// libfossil features the agent surface doesn't yet cover.
 func (a *Agent) Repo() *libfossil.Repo {
 	return a.repo
 }
@@ -492,7 +499,11 @@ func (a *Agent) Stop() error {
 // NotifyService returns the notify messaging service, or nil if notify is not enabled.
 func (a *Agent) NotifyService() *notify.Service { return a.notifySvc }
 
-// NotifyRepo returns the notify repository, or nil if notify is not enabled.
+// NotifyRepo returns the underlying libfossil handle for the notify
+// repository, or nil if notify is not enabled.
+//
+// Production code should prefer notify.Service methods. NotifyRepo() stays
+// available for sim/test harnesses and advanced callers.
 func (a *Agent) NotifyRepo() *libfossil.Repo { return a.notifyRepo }
 
 // IrohEndpointID returns the local iroh endpoint ID, or "" if iroh is not enabled
