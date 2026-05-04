@@ -149,7 +149,9 @@ func (s *Subscriber) subscribeReturn(
 	if err != nil {
 		return nil, fmt.Errorf("notify: subscribe %s: %w", subject, err)
 	}
+	s.mu.Lock()
 	s.subs = append(s.subs, sub)
+	s.mu.Unlock()
 	if err := s.conn.Flush(); err != nil {
 		return sub, err
 	}
@@ -158,8 +160,11 @@ func (s *Subscriber) subscribeReturn(
 
 // Unsubscribe removes all active subscriptions.
 func (s *Subscriber) Unsubscribe() {
-	for _, sub := range s.subs {
+	s.mu.Lock()
+	subs := s.subs
+	s.subs = nil
+	s.mu.Unlock()
+	for _, sub := range subs {
 		sub.Unsubscribe()
 	}
-	s.subs = nil
 }
