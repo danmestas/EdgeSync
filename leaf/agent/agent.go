@@ -85,6 +85,16 @@ func New(cfg Config) (*Agent, error) {
 		return nil, err
 	}
 
+	if cfg.CloneFromHubURL != "" {
+		if _, statErr := os.Stat(cfg.RepoPath); os.IsNotExist(statErr) {
+			if err := cloneFromHub(cfg.RepoPath, cfg.CloneFromHubURL); err != nil {
+				return nil, fmt.Errorf("agent: clone from %s: %w", cfg.CloneFromHubURL, err)
+			}
+		} else if statErr != nil {
+			return nil, fmt.Errorf("agent: stat repo path %s: %w", cfg.RepoPath, statErr)
+		}
+	}
+
 	r, err := libfossil.Open(cfg.RepoPath)
 	if err != nil {
 		return nil, fmt.Errorf("agent: open repo: %w", err)
