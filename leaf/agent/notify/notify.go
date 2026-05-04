@@ -58,7 +58,14 @@ func (s *Service) Close() error {
 	return nil
 }
 
-// Repo returns the underlying Fossil repo.
+// Repo returns the underlying libfossil repo handle.
+//
+// New code should prefer the libfossil-hidden Service methods
+// (ListThreads, ReadThread, MessageCount, ListDevices, AddDevice,
+// RemoveDevice, CreatePairingToken, ValidateToken) which take/return
+// only stdlib types or types defined in this package. Repo() stays
+// available for sim/test harnesses and advanced consumers that need
+// libfossil features the Service surface doesn't yet cover.
 func (s *Service) Repo() *libfossil.Repo {
 	return s.repo
 }
