@@ -194,6 +194,20 @@ cd ~/EdgeSync && git pull && cd deploy && sudo docker compose up -d --build
 - `mlink` — file mappings per checkin
 - `unversioned` — mutable UV files (name, mtime, hash, sz, encoding, content)
 
+## Agent skills
+
+### Issue tracker
+
+Issues live as GitHub issues on `danmestas/EdgeSync` (use the `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical label vocabulary — `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix` — plus `bug`/`enhancement`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout. ADRs live in `docs/architecture/` (not `docs/adr/`); no `CONTEXT.md` — fall back to `CLAUDE.md` + `MEMORY.md`. See `docs/agents/domain.md`.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
