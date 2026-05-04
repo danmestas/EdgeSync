@@ -1,4 +1,4 @@
-.PHONY: build test clean leaf bridge edgesync iroh-sidecar wasm-wasi wasm-browser wasm dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks setup test-interop test-iroh update-libfossil
+.PHONY: build test clean leaf bridge edgesync iroh-sidecar wasm-wasi wasm-browser wasm dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks setup test-interop test-iroh update-libfossil auto-release auto-release-dry
 
 # --- Build ---
 
@@ -97,6 +97,21 @@ test-iroh: iroh-sidecar
 update-libfossil:
 	go get github.com/danmestas/libfossil@latest
 	go get github.com/danmestas/libfossil/db/driver/modernc@latest
+
+# --- Auto-release ---
+# Coordinated multi-module release driver. `make auto-release-dry`
+# reports what would happen; `make auto-release` runs it (interactive,
+# prompts before each push). The workflow_dispatch entry point is
+# .github/workflows/auto-release.yml.
+#
+# Distinct from the manual `release:` target above, which takes a
+# specific VERSION= and tags the root only.
+
+auto-release-dry:
+	./scripts/release.sh --dry-run
+
+auto-release:
+	./scripts/release.sh
 	go get github.com/danmestas/libfossil/db/driver/ncruces@latest
 	go mod tidy
 

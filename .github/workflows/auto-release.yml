@@ -1,0 +1,68 @@
+name: Auto-release
+
+# Drives the multi-step EdgeSync release flow: tag any submodule that
+# changed since its last <name>/v* tag, bump the matching root go.mod
+# pin (commit straight to main as github-actions[bot]), then tag the
+# next root v*. Pushing the root tag fires release.yml (goreleaser +
+# bones dispatch).
+#
+# Manual entry point. Click "Run workflow" or:
+#   gh workflow run auto-release.yml -f dry_run=true
+#   gh workflow run auto-release.yml -f bump_kind=patch
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Report what would happen without pushing anything'
+        required: false
+        default: false
+        type: boolean
+      bump_kind:
+        description: 'Semver bump kind'
+        required: false
+        default: patch
+        type: choice
+        options: [patch, minor, major]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+          # Use a token that can push to main even when branch protection
+          # restricts the default GITHUB_TOKEN. If the repo doesn't have
+          # branch protection on main this is unnecessary; if it does,
+          # configure RELEASE_PUSH_TOKEN as a fine-grained PAT with
+          # contents:write on this repo.
+          token: ${{ secrets.RELEASE_PUSH_TOKEN || github.token }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run release driver
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          BUMP_KIND: ${{ inputs.bump_kind }}
+        run: |
+          args=(--ci "--bump=${BUMP_KIND}")
+          if [[ "$DRY_RUN" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          ./scripts/release.sh "${args[@]}"
