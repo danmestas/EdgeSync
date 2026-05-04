@@ -218,9 +218,12 @@ func portOrAuto(p int) int {
 	return p
 }
 
-// applySQLiteTuning matches the leaf agent's tuning: single-conn cap so
-// libfossil's per-connection PRAGMAs stick, plus a 30s busy timeout.
+// applySQLiteTuning sets a 30s SQLite busy_timeout so concurrent operations
+// retry on SQLITE_BUSY rather than failing fast.
+//
+// Mirrors leaf/agent's tuning. Notably does NOT cap MaxOpenConns: hub
+// repos serve concurrent clones, and capping the pool deadlocks libfossil's
+// clone path (issue #120).
 func applySQLiteTuning(r *libfossil.Repo) {
-	r.DB().SqlDB().SetMaxOpenConns(1)
 	_, _ = r.DB().Exec(`PRAGMA busy_timeout = 30000`)
 }

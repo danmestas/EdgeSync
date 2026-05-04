@@ -248,10 +248,17 @@ func ridToUUID(r *libfossil.Repo, rid int64) (string, error) {
 	return uuid, nil
 }
 
-// applySQLiteTuning applies the per-connection SQLite settings the agent
-// needs for safe concurrent writes against its repo. libfossil PRAGMAs are
-// per-connection, so we cap MaxOpenConns at 1 to make them stick.
+// applySQLiteTuning applies SQLite settings the agent needs for safe
+// concurrent operation against its repo. The busy_timeout PRAGMA tells
+// SQLite to retry on SQLITE_BUSY for up to 30s before giving up, which
+// is what production callers want under contention.
+//
+// We do NOT cap MaxOpenConns at 1 here, even though libfossil PRAGMAs
+// are per-connection. Capping the pool to 1 deadlocks libfossil's clone
+// path, which has internal goroutines that all need a DB connection
+// (issue #120). If PRAGMA stickiness across pooled connections matters
+// later, route it through the modernc driver's per-connection init
+// hook rather than a pool cap.
 func applySQLiteTuning(r *libfossil.Repo) {
-	r.DB().SqlDB().SetMaxOpenConns(1)
 	_, _ = r.DB().Exec(`PRAGMA busy_timeout = 30000`)
 }
