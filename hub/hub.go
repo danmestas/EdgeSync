@@ -53,7 +53,7 @@ type Config struct {
 // Hub hosts an EdgeSync hub in-process. Construct one via NewHub, then call
 // ServeHTTP in a goroutine. Use Stop to tear everything down.
 type Hub struct {
-	repo       *libfossil.Repo
+	repo       *Repo
 	server     *natsserver.Server
 	httpListener net.Listener
 	httpServer *http.Server
@@ -79,11 +79,12 @@ func NewHub(ctx context.Context, cfg Config) (*Hub, error) {
 		cfg.NATSStoreDir = filepath.Join(filepath.Dir(cfg.RepoPath), "nats-store")
 	}
 
-	repo, err := openOrCreateRepo(cfg.RepoPath, cfg.BootstrapUser)
+	libfossilRepo, err := openOrCreateRepo(cfg.RepoPath, cfg.BootstrapUser)
 	if err != nil {
 		return nil, err
 	}
-	applySQLiteTuning(repo)
+	applySQLiteTuning(libfossilRepo)
+	repo := newRepoFromHandle(libfossilRepo)
 
 	httpAddr := fmt.Sprintf("127.0.0.1:%d", cfg.FossilHTTPPort)
 	httpLn, err := net.Listen("tcp", httpAddr)
@@ -120,7 +121,7 @@ func NewHub(ctx context.Context, cfg Config) (*Hub, error) {
 // Stop is called.
 func (h *Hub) ServeHTTP(ctx context.Context) error {
 	mux := http.NewServeMux()
-	mux.Handle("/", h.repo.XferHandler())
+	mux.Handle("/", h.repo.handle.XferHandler())
 
 	srv := &http.Server{Handler: mux}
 	h.httpServer = srv
@@ -158,7 +159,7 @@ func (h *Hub) Stop() error {
 		}
 		if h.repo != nil {
 			if err := h.repo.Close(); err != nil && firstErr == nil {
-				firstErr = fmt.Errorf("hub: close repo: %w", err)
+				firstErr = err
 			}
 		}
 	})
@@ -175,6 +176,13 @@ func (h *Hub) LeafUpstream() string { return h.leafUpstream }
 
 // HTTPAddr returns the host:port the fossil HTTP server is bound to.
 func (h *Hub) HTTPAddr() string { return h.httpAddr }
+
+// Repo returns the underlying fossil-repo handle the hub serves from. Use
+// this to share the handle with another component in the same process —
+// e.g. a coexisting CLI command path that needs user/commit/read access
+// without re-opening the file. Don't call Close on the returned *Repo
+// while the Hub is still serving; use Hub.Stop for teardown.
+func (h *Hub) Repo() *Repo { return h.repo }
 
 func openOrCreateRepo(path, bootstrapUser string) (*libfossil.Repo, error) {
 	if r, err := libfossil.Open(path); err == nil {
