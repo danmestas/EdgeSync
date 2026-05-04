@@ -34,6 +34,10 @@ The leaf agent is a Go daemon in its own module (`leaf/`) that opens a Fossil re
 | `hub` | Yes | No | Dedicated server, cluster node |
 | `leaf` | No | Yes (always solicits outward) | WASM browser, lightweight client |
 
+## Hub Package
+
+The hub package (`hub/`, in the root module) is an in-process host for an EdgeSync hub: fossil repo bootstrap, embedded NATS server with JetStream, auto-port allocation, and the libfossil HTTP server. Consumers (notably bones) use it to host a hub without rolling their own libfossil + nats-server bootstrap; everything is libfossil-free at the public API boundary. Leaf agents on the same host (or another host) sync to it via `Hub.HTTPAddr()` (HTTP-xfer) or `Hub.LeafUpstream()` (NATS leaf node). See [hub-package.md](./hub-package.md).
+
 ## Bridge Architecture
 
 The bridge is a NATS-to-HTTP translator in its own module (`bridge/`). It subscribes to `<prefix>.<project-code>.sync`, decodes xfer messages, proxies them to a Fossil HTTP server via `sync.HTTPTransport`, and replies. One project per instance.
