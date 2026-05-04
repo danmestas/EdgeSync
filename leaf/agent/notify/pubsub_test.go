@@ -220,3 +220,38 @@ func TestSubscribeDedup(t *testing.T) {
 		t.Errorf("callback count = %d, want 1 (dedup should filter duplicates)", count)
 	}
 }
+
+// TestSubscriber_ConcurrentSubscribeUnsubscribe stresses Subscriber.subs
+// across many concurrent subscribers and unsubscribers. Run under
+// `go test -race` to catch unsynchronized append/iterate on s.subs (issue
+// #95). Without proper locking, the race detector flags the read in
+// Unsubscribe against the append in subscribeReturn.
+func TestSubscriber_ConcurrentSubscribeUnsubscribe(t *testing.T) {
+	url := startTestNATS(t)
+
+	conn, err := nats.Connect(url)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer conn.Close()
+
+	s := NewSubscriber(conn)
+	defer s.Unsubscribe()
+
+	const goroutines = 16
+	const iters = 8
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for range goroutines {
+		go func() {
+			defer wg.Done()
+			for range iters {
+				if err := s.SubscribeThread("p", "t", func(Message) {}); err != nil {
+					t.Errorf("subscribe: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
