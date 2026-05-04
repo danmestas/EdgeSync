@@ -117,10 +117,14 @@ func TestHubLeafE2E(t *testing.T) {
 		t.Fatal("Agent.SyncTo returned nil result")
 	}
 
-	// 8. Confirm the file landed on the hub.
-	got, err := h.ReadAt(ctx, "trunk", "leaf-update.txt")
+	// 8. Confirm the file landed on the hub. Read by the explicit RevID
+	// from the leaf's Commit — that's deterministic and exercises the
+	// transport contract without coupling to branch-tip resolution
+	// (which depends on fossil's branch-name semantics on the hub side
+	// and isn't what this test is about).
+	got, err := h.ReadAt(ctx, hub.RevID(rev), "leaf-update.txt")
 	if err != nil {
-		t.Fatalf("hub Hub.ReadAt: %v", err)
+		t.Fatalf("hub Hub.ReadAt(rev=%s): %v", rev, err)
 	}
 	if string(got) != "hello-from-leaf\n" {
 		t.Errorf("hub Hub.ReadAt = %q, want %q", got, "hello-from-leaf\n")

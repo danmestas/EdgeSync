@@ -174,6 +174,105 @@ func TestAgent_Diff_RenameAcrossRevs(t *testing.T) {
 	}
 }
 
+// TestAgent_Commit_ChainsOntoTrunkTipByDefault proves that two consecutive
+// Agent.Commit calls without explicit ParentID produce a chained pair —
+// the second commit's primary parent is the first commit. Without the fix
+// for issue #125 every commit was an orphan root and every commit's
+// Parents slice was empty.
+func TestAgent_Commit_ChainsOntoTrunkTipByDefault(t *testing.T) {
+	a := newAgentForCommitTests(t)
+	ctx := context.Background()
+
+	rev1, err := a.Commit(ctx, CommitOpts{
+		Files:   []FileToCommit{{Name: "f", Content: []byte("v1")}},
+		Message: "first",
+		Author:  "testuser",
+	})
+	if err != nil {
+		t.Fatalf("Commit 1: %v", err)
+	}
+	rev2, err := a.Commit(ctx, CommitOpts{
+		Files:   []FileToCommit{{Name: "f", Content: []byte("v2")}},
+		Message: "second",
+		Author:  "testuser",
+	})
+	if err != nil {
+		t.Fatalf("Commit 2: %v", err)
+	}
+
+	// Walk the timeline and find rev2; its Parents must contain rev1.
+	tipRID, err := a.repo.BranchTip("trunk")
+	if err != nil {
+		t.Fatalf("BranchTip: %v", err)
+	}
+	timeline, err := a.repo.Timeline(libfossil.LogOpts{Start: tipRID, Limit: 10})
+	if err != nil {
+		t.Fatalf("Timeline: %v", err)
+	}
+	var second *libfossil.LogEntry
+	for i := range timeline {
+		if timeline[i].UUID == string(rev2) {
+			second = &timeline[i]
+			break
+		}
+	}
+	if second == nil {
+		t.Fatalf("rev2 %q not found in timeline %+v", rev2, timeline)
+	}
+	if !slices.Contains(second.Parents, string(rev1)) {
+		t.Errorf("rev2.Parents = %v, want to contain rev1 %q", second.Parents, rev1)
+	}
+}
+
+// TestAgent_Commit_ExplicitParentIDOverride proves that a caller-supplied
+// ParentID is used verbatim — useful for committing onto a non-trunk
+// branch via Agent.Tip(ctx, branchName).
+func TestAgent_Commit_ExplicitParentIDOverride(t *testing.T) {
+	a := newAgentForCommitTests(t)
+	ctx := context.Background()
+
+	rev1, err := a.Commit(ctx, CommitOpts{
+		Files:   []FileToCommit{{Name: "f", Content: []byte("v1")}},
+		Message: "first",
+		Author:  "testuser",
+	})
+	if err != nil {
+		t.Fatalf("Commit 1: %v", err)
+	}
+	rid1, err := a.repo.ResolveVersion(string(rev1))
+	if err != nil {
+		t.Fatalf("ResolveVersion rev1: %v", err)
+	}
+
+	rev2, err := a.Commit(ctx, CommitOpts{
+		Files:    []FileToCommit{{Name: "f", Content: []byte("v2")}},
+		Message:  "explicit parent",
+		Author:   "testuser",
+		ParentID: rid1,
+	})
+	if err != nil {
+		t.Fatalf("Commit 2 with explicit ParentID: %v", err)
+	}
+
+	tipRID, err := a.repo.BranchTip("trunk")
+	if err != nil {
+		t.Fatalf("BranchTip: %v", err)
+	}
+	timeline, err := a.repo.Timeline(libfossil.LogOpts{Start: tipRID, Limit: 10})
+	if err != nil {
+		t.Fatalf("Timeline: %v", err)
+	}
+	for _, e := range timeline {
+		if e.UUID == string(rev2) {
+			if !slices.Contains(e.Parents, string(rev1)) {
+				t.Errorf("rev2.Parents = %v, want to contain rev1 %q", e.Parents, rev1)
+			}
+			return
+		}
+	}
+	t.Errorf("rev2 %q not found in timeline", rev2)
+}
+
 func TestAgent_ExtractTo_PopulatesDir(t *testing.T) {
 	a := newAgentForCommitTests(t)
 	ctx := context.Background()
