@@ -73,10 +73,31 @@ type Config struct {
 	// leaf-agent default). The full subscribed subject is
 	// "<prefix>.<project-code>.sync".
 	FossilSyncSubjectPrefix string
+
+	// CheckpointInterval is how often the hub runs a PASSIVE WAL checkpoint
+	// against hub.fossil while serving. PASSIVE never blocks readers or
+	// writers, so the file stays readable by vanilla fossil tooling
+	// (fossil ui / fossil info / fossil timeline) without coordinating
+	// with the hub. Zero defaults to defaultCheckpointInterval.
+	//
+	// No "disable" knob: vanilla-fossil readability is the contract this
+	// Config exists to uphold. Set a long interval if you really want to
+	// dilute the cadence; it should never be off.
+	CheckpointInterval time.Duration
 }
+
+// defaultCheckpointInterval is the period between background PASSIVE
+// checkpoints when Config.CheckpointInterval is zero.
+const defaultCheckpointInterval = 10 * time.Second
 
 // Hub hosts an EdgeSync hub in-process. Construct one via NewHub, then call
 // ServeHTTP in a goroutine. Use Stop to tear everything down.
+//
+// While serving, the hub runs a PASSIVE WAL checkpoint on hub.fossil every
+// Config.CheckpointInterval (default 10s) so vanilla fossil tooling can read
+// the file. After Stop returns nil, the on-disk hub.fossil is self-contained
+// — libfossil's Close runs a TRUNCATE checkpoint, leaving no WAL/SHM
+// sidecar.
 type Hub struct {
 	repo         *Repo
 	server       *natsserver.Server
@@ -90,6 +111,9 @@ type Hub struct {
 	httpAddr     string
 	natsURL      string
 	leafUpstream string
+
+	checkpointStop chan struct{}
+	checkpointDone chan struct{}
 
 	stopOnce sync.Once
 }
@@ -160,7 +184,35 @@ func NewHub(ctx context.Context, cfg Config) (*Hub, error) {
 		}
 	}
 
+	h.startCheckpointLoop(cfg.CheckpointInterval)
+
 	return h, nil
+}
+
+// startCheckpointLoop runs PASSIVE WAL checkpoints against the hub repo on a
+// ticker so vanilla fossil tooling can read hub.fossil while the hub is
+// serving. PASSIVE never blocks readers or writers; checkpoint errors are
+// non-fatal (the next tick retries, and Hub.Stop's repo.Close runs a
+// TRUNCATE checkpoint anyway).
+func (h *Hub) startCheckpointLoop(interval time.Duration) {
+	if interval <= 0 {
+		interval = defaultCheckpointInterval
+	}
+	h.checkpointStop = make(chan struct{})
+	h.checkpointDone = make(chan struct{})
+	go func() {
+		defer close(h.checkpointDone)
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-h.checkpointStop:
+				return
+			case <-t.C:
+				_ = h.repo.handle.Checkpoint(libfossil.CheckpointPassive)
+			}
+		}
+	}()
 }
 
 // startFossilSyncSubscriber connects a local NATS client to the embedded
@@ -267,6 +319,10 @@ func (h *Hub) Stop() error {
 		if h.server != nil {
 			h.server.Shutdown()
 			h.server.WaitForShutdown()
+		}
+		if h.checkpointStop != nil {
+			close(h.checkpointStop)
+			<-h.checkpointDone
 		}
 		if h.repo != nil {
 			if err := h.repo.Close(); err != nil && firstErr == nil {
