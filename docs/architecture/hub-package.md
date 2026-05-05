@@ -12,12 +12,13 @@ All types are libfossil-free and nats-server-free. Consumers import only `github
 
 ```go
 type Config struct {
-    RepoPath       string // hub.fossil path; created if absent
-    BootstrapUser  string // default "hub"
-    NATSStoreDir   string // default <repo dir>/nats-store
-    FossilHTTPPort int    // 0 = auto-pick
-    NATSClientPort int    // 0 = auto-pick
-    NATSLeafPort   int    // 0 = auto-pick
+    RepoPath           string        // hub.fossil path; created if absent
+    BootstrapUser      string        // default "hub"
+    NATSStoreDir       string        // default <repo dir>/nats-store
+    FossilHTTPPort     int           // 0 = auto-pick
+    NATSClientPort     int           // 0 = auto-pick
+    NATSLeafPort       int           // 0 = auto-pick
+    CheckpointInterval time.Duration // 0 = 10s (PASSIVE WAL checkpoint cadence)
 }
 
 type Hub struct{ /* opaque */ }
@@ -70,6 +71,17 @@ go h.ServeHTTP(ctx)
 `busy_timeout = 30000` is applied at hub bootstrap so concurrent operations retry on `SQLITE_BUSY` rather than failing fast.
 
 The hub deliberately does **not** cap `MaxOpenConns`. An earlier iteration set `SetMaxOpenConns(1)` (matching what bones did before this package existed), but libfossil's clone path has internal goroutines that all need a DB connection — capping the pool deadlocked every concurrent clone (issue #120). `busy_timeout` alone is the right primitive for concurrent-write safety.
+
+## Vanilla Fossil Interop
+
+`hub.fossil` is opened in WAL journal mode (libfossil's default). Without periodic checkpoints, the on-disk file would stay as a ~4 KiB stub plus a multi-hundred-KiB `*-wal` sidecar for the lifetime of the hub — and vanilla `fossil ui` / `fossil info` / third-party SQLite tooling would refuse to open it because their validity probe stats the main file before consulting the WAL.
+
+The hub guards both ends of that contract:
+
+- **While serving:** a background goroutine runs `PRAGMA wal_checkpoint(PASSIVE)` every `Config.CheckpointInterval` (default 10s). PASSIVE never blocks readers or writers, so vanilla fossil can read `hub.fossil` at any time without coordinating with the hub.
+- **After Stop:** `Hub.Stop` halts the checkpoint goroutine, then closes the libfossil handle. libfossil's own `(*Repo).Close` runs `PRAGMA wal_checkpoint(TRUNCATE)` before releasing the connection (libfossil v0.6.0+), so the on-disk `hub.fossil` is self-contained — no `-wal` / `-shm` sidecar required.
+
+There is no "disable" knob: vanilla-fossil readability is the contract this package exists to uphold. Set a long `CheckpointInterval` if you really want to dilute the cadence.
 
 ## Layout: in-root vs. separate module
 
