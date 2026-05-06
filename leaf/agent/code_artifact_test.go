@@ -77,6 +77,126 @@ func TestAgent_Commit_RejectsEmptyAuthor(t *testing.T) {
 	}
 }
 
+// TestAgent_Commit_BranchTags_LandsOnNamedBranch verifies that supplying the
+// fossil branch tag pair (branch=<name> + sym-<name>=*) on CommitOpts.Tags
+// lands the checkin on that branch. After the commit, BranchTip(name)
+// resolves to the new commit and trunk's tip is unchanged. This is the
+// symmetric leaf-side counterpart to hub.CommitOpts.Tags (#147/#148) and
+// unblocks bones' synthetic-agent-slot model (commits to agent/<id>).
+func TestAgent_Commit_BranchTags_LandsOnNamedBranch(t *testing.T) {
+	a := newAgentForCommitTests(t)
+	ctx := context.Background()
+
+	trunkRev, err := a.Commit(ctx, CommitOpts{
+		Files:   []FileToCommit{{Name: "seed.txt", Content: []byte("seed\n")}},
+		Message: "seed trunk",
+		Author:  "testuser",
+	})
+	if err != nil {
+		t.Fatalf("seed Commit: %v", err)
+	}
+	trunkTipBefore, err := a.repo.BranchTip("trunk")
+	if err != nil {
+		t.Fatalf("BranchTip(trunk) before: %v", err)
+	}
+
+	const branch = "agent/abc123"
+	branchRev, err := a.Commit(ctx, CommitOpts{
+		Files:   []FileToCommit{{Name: "branch.txt", Content: []byte("on branch\n")}},
+		Message: "first commit on " + branch,
+		Author:  "testuser",
+		Tags: []TagSpec{
+			{Name: "branch", Value: branch},
+			{Name: "sym-" + branch, Value: "*"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("branch Commit: %v", err)
+	}
+	if branchRev == trunkRev {
+		t.Fatalf("branch commit produced the same RevID as trunk seed: %s", branchRev)
+	}
+
+	branchTip, err := a.repo.BranchTip(branch)
+	if err != nil {
+		t.Fatalf("BranchTip(%q): %v", branch, err)
+	}
+	branchRID, err := a.repo.ResolveVersion(string(branchRev))
+	if err != nil {
+		t.Fatalf("ResolveVersion(%s): %v", branchRev, err)
+	}
+	if branchTip != branchRID {
+		t.Errorf("BranchTip(%q) = %d, want %d (the new commit)", branch, branchTip, branchRID)
+	}
+
+	trunkTipAfter, err := a.repo.BranchTip("trunk")
+	if err != nil {
+		t.Fatalf("BranchTip(trunk) after: %v", err)
+	}
+	if trunkTipAfter != trunkTipBefore {
+		t.Errorf("trunk tip moved: was %d, now %d — branch commit must not advance trunk",
+			trunkTipBefore, trunkTipAfter)
+	}
+}
+
+// TestAgent_Commit_BranchTags_PropagateForward verifies that a second commit
+// carrying the same branch tag pair lands on the branch's tip (parented by
+// the previous branch commit), not on trunk. Subsequent commits don't fork
+// unless explicitly told to.
+func TestAgent_Commit_BranchTags_PropagateForward(t *testing.T) {
+	a := newAgentForCommitTests(t)
+	ctx := context.Background()
+
+	if _, err := a.Commit(ctx, CommitOpts{
+		Files:   []FileToCommit{{Name: "seed.txt", Content: []byte("seed\n")}},
+		Message: "seed trunk",
+		Author:  "testuser",
+	}); err != nil {
+		t.Fatalf("seed Commit: %v", err)
+	}
+
+	const branch = "agent/xyz789"
+	branchTags := []TagSpec{
+		{Name: "branch", Value: branch},
+		{Name: "sym-" + branch, Value: "*"},
+	}
+
+	first, err := a.Commit(ctx, CommitOpts{
+		Files:   []FileToCommit{{Name: "f.txt", Content: []byte("v1\n")}},
+		Message: "first on branch",
+		Author:  "testuser",
+		Tags:    branchTags,
+	})
+	if err != nil {
+		t.Fatalf("first branch Commit: %v", err)
+	}
+
+	second, err := a.Commit(ctx, CommitOpts{
+		Files:   []FileToCommit{{Name: "f.txt", Content: []byte("v2\n")}},
+		Message: "second on branch",
+		Author:  "testuser",
+		Tags:    branchTags,
+	})
+	if err != nil {
+		t.Fatalf("second branch Commit: %v", err)
+	}
+	if first == second {
+		t.Fatalf("second commit returned same RevID as first: %s", first)
+	}
+
+	tip, err := a.repo.BranchTip(branch)
+	if err != nil {
+		t.Fatalf("BranchTip(%q): %v", branch, err)
+	}
+	secondRID, err := a.repo.ResolveVersion(string(second))
+	if err != nil {
+		t.Fatalf("ResolveVersion(second): %v", err)
+	}
+	if tip != secondRID {
+		t.Errorf("BranchTip(%q) = %d, want %d (the second commit)", branch, tip, secondRID)
+	}
+}
+
 func TestAgent_Tip_ReturnsCommitUUID(t *testing.T) {
 	a := newAgentForCommitTests(t)
 	ctx := context.Background()
