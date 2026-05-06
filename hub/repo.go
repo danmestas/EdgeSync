@@ -134,11 +134,19 @@ func (r *Repo) Commit(ctx context.Context, opts CommitOpts) (RevID, error) {
 	for i, f := range opts.Files {
 		files[i] = libfossil.FileToCommit{Name: f.Name, Content: f.Content, Perm: f.Perm}
 	}
+	var tags []libfossil.TagSpec
+	if len(opts.Tags) > 0 {
+		tags = make([]libfossil.TagSpec, len(opts.Tags))
+		for i, t := range opts.Tags {
+			tags[i] = libfossil.TagSpec{Name: t.Name, Value: t.Value}
+		}
+	}
 	_, uuid, err := r.handle.Commit(libfossil.CommitOpts{
 		Files:   files,
 		Comment: opts.Message,
 		User:    opts.Author,
 		Time:    opts.Time,
+		Tags:    tags,
 	})
 	if err != nil {
 		return "", fmt.Errorf("hub: commit: %w", err)
