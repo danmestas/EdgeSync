@@ -31,6 +31,28 @@ type CommitOpts struct {
 	// production daemon bootstrapping a hub repo from on-disk content) should
 	// pass an explicit value.
 	Time time.Time
+
+	// Tags, when non-empty, are attached to the resulting checkin manifest.
+	// Tags are libfossil's primitive — fossil "branches" are themselves
+	// propagating "branch=<name>" + "sym-<name>" tag pairs. To land a commit
+	// on branch "agent/abc123":
+	//
+	//   Tags: []TagSpec{
+	//       {Name: "branch",            Value: "agent/abc123"},
+	//       {Name: "sym-agent/abc123",  Value: "*"},
+	//   }
+	//
+	// Empty preserves current behavior (commit to current branch, no extra tags).
+	Tags []TagSpec
+}
+
+// TagSpec describes a tag attached at commit time. Mirrors libfossil's
+// underlying tag primitive; pass these via CommitOpts.Tags to attach
+// arbitrary tags (including the propagating branch-tag pair that creates
+// or advances a fossil branch) on the resulting checkin.
+type TagSpec struct {
+	Name  string
+	Value string
 }
 
 // Commit commits a set of files to the hub repo.
