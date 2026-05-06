@@ -36,6 +36,28 @@ type CommitOpts struct {
 	// MergeParents lists additional parents for a merge commit. Each
 	// contributes a secondary entry on the manifest's P-card.
 	MergeParents []int64
+
+	// Tags, when non-empty, are attached to the resulting checkin manifest.
+	// Tags are libfossil's primitive — fossil "branches" are themselves
+	// propagating "branch=<name>" + "sym-<name>" tag pairs. To land a commit
+	// on branch "agent/abc123":
+	//
+	//   Tags: []TagSpec{
+	//       {Name: "branch",            Value: "agent/abc123"},
+	//       {Name: "sym-agent/abc123",  Value: "*"},
+	//   }
+	//
+	// Empty preserves current behavior (commit to current branch, no extra tags).
+	Tags []TagSpec
+}
+
+// TagSpec describes a tag attached at commit time. Mirrors libfossil's
+// underlying tag primitive; pass these via CommitOpts.Tags to attach
+// arbitrary tags (including the propagating branch-tag pair that creates
+// or advances a fossil branch) on the resulting checkin.
+type TagSpec struct {
+	Name  string
+	Value string
 }
 
 // SyncOpts configures Agent.SyncTo.
@@ -74,12 +96,20 @@ func (a *Agent) Commit(ctx context.Context, opts CommitOpts) (RevID, error) {
 	for i, f := range opts.Files {
 		files[i] = libfossil.FileToCommit{Name: f.Name, Content: f.Content}
 	}
+	var tags []libfossil.TagSpec
+	if len(opts.Tags) > 0 {
+		tags = make([]libfossil.TagSpec, len(opts.Tags))
+		for i, t := range opts.Tags {
+			tags[i] = libfossil.TagSpec{Name: t.Name, Value: t.Value}
+		}
+	}
 	_, uuid, err := a.repo.Commit(libfossil.CommitOpts{
 		Files:        files,
 		Comment:      opts.Message,
 		User:         opts.Author,
 		ParentID:     parentID,
 		MergeParents: opts.MergeParents,
+		Tags:         tags,
 	})
 	if err != nil {
 		return "", fmt.Errorf("agent: commit: %w", err)
