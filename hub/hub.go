@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"sync"
 	"time"
@@ -31,12 +32,18 @@ type Config struct {
 	// RepoPath is the absolute path to hub.fossil. Created if absent.
 	RepoPath string
 
+	// ServerName is the NATS server identity. Surfaces in leafnode
+	// handshakes, varz, and gossip. Empty leaves nats-server's
+	// auto-generated random name.
+	ServerName string
+
 	// BootstrapUser is the libfossil user created at hub bootstrap.
 	// Default: "hub".
 	BootstrapUser string
 
 	// NATSStoreDir is the JetStream storage directory. When empty, defaults
-	// to filepath.Dir(RepoPath) + "/nats-store".
+	// to filepath.Dir(RepoPath) + "/messaging" — implementation-agnostic on
+	// disk; the contents underneath are still NATS JetStream format.
 	NATSStoreDir string
 
 	// FossilHTTPPort is the port to serve fossil HTTP on. 0 = auto-pick.
@@ -49,6 +56,12 @@ type Config struct {
 	// NATSLeafPort is the leafnode listener port for remote agents.
 	// 0 = auto-pick.
 	NATSLeafPort int
+
+	// LeafUpstream is an optional upstream leafnode URL to solicit a
+	// connection toward (e.g. "nats-leaf://hub.example:7422"). When set,
+	// this hub acts as a leaf of that upstream — subjects published locally
+	// are forwarded upstream and vice versa. Empty = no upstream solicit.
+	LeafUpstream string
 
 	// NobodyCaps grants the libfossil-pre-populated 'nobody' user these
 	// caps after hub bootstrap. Empty leaves nobody at libfossil's defaults
@@ -129,7 +142,7 @@ func NewHub(ctx context.Context, cfg Config) (*Hub, error) {
 		cfg.BootstrapUser = "hub"
 	}
 	if cfg.NATSStoreDir == "" {
-		cfg.NATSStoreDir = filepath.Join(filepath.Dir(cfg.RepoPath), "nats-store")
+		cfg.NATSStoreDir = filepath.Join(filepath.Dir(cfg.RepoPath), "messaging")
 	}
 
 	libfossilRepo, err := openOrCreateRepo(cfg.RepoPath, cfg.BootstrapUser)
@@ -336,6 +349,10 @@ func (h *Hub) Stop() error {
 // NATSURL returns the embedded NATS server's client URL.
 func (h *Hub) NATSURL() string { return h.natsURL }
 
+// ServerName returns the NATS server identity (Config.ServerName, or the
+// auto-generated random name if Config.ServerName was empty).
+func (h *Hub) ServerName() string { return h.server.Name() }
+
 // LeafUpstream returns the leafnode listener URL, suitable for passing to
 // remote agents as their NATS leaf upstream. Empty if no leaf port is
 // configured.
@@ -369,15 +386,26 @@ func openOrCreateRepo(path, bootstrapUser string) (*libfossil.Repo, error) {
 
 func startNATS(cfg Config) (*natsserver.Server, error) {
 	opts := &natsserver.Options{
-		Host:      "127.0.0.1",
-		Port:      portOrAuto(cfg.NATSClientPort),
-		NoLog:     true,
-		NoSigs:    true,
-		JetStream: true,
-		StoreDir:  cfg.NATSStoreDir,
+		Host:       "127.0.0.1",
+		Port:       portOrAuto(cfg.NATSClientPort),
+		ServerName: cfg.ServerName,
+		NoLog:      true,
+		NoSigs:     true,
+		JetStream:  true,
+		StoreDir:   cfg.NATSStoreDir,
 	}
 	opts.LeafNode.Host = "127.0.0.1"
 	opts.LeafNode.Port = portOrAuto(cfg.NATSLeafPort)
+
+	if cfg.LeafUpstream != "" {
+		u, err := url.Parse(cfg.LeafUpstream)
+		if err != nil {
+			return nil, fmt.Errorf("hub: parse LeafUpstream %q: %w", cfg.LeafUpstream, err)
+		}
+		opts.LeafNode.Remotes = []*natsserver.RemoteLeafOpts{
+			{URLs: []*url.URL{u}},
+		}
+	}
 
 	srv, err := natsserver.NewServer(opts)
 	if err != nil {

@@ -11,6 +11,7 @@ type CLI struct {
 	Repo   repocli.Cmd       `cmd:"" help:"Repository operations"`
 	Sync   edgecli.SyncCmd   `cmd:"" help:"Leaf agent sync"`
 	Bridge edgecli.BridgeCmd `cmd:"" help:"NATS-to-Fossil bridge"`
+	Hub    edgecli.HubCmd    `cmd:"" help:"Embedded NATS + fossil hub (root or soliciting via --leaf-upstream)"`
 	Notify edgecli.NotifyCmd `cmd:"" help:"Bidirectional notification messaging"`
 	Doctor edgecli.DoctorCmd `cmd:"" help:"Check development environment health"`
 }
