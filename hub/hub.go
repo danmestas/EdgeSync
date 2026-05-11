@@ -361,6 +361,12 @@ func (h *Hub) LeafUpstream() string { return h.leafUpstream }
 // HTTPAddr returns the host:port the fossil HTTP server is bound to.
 func (h *Hub) HTTPAddr() string { return h.httpAddr }
 
+// NumLeafs returns the current count of active leafnode connections to
+// this hub. Consumers can poll this to implement auto-shutdown behavior
+// when the last remote leaf disconnects (e.g. sesh's "hub runs until the
+// last session closes" lifecycle).
+func (h *Hub) NumLeafs() int { return h.server.NumLeafNodes() }
+
 // FossilSyncSubject returns the NATS subject the hub subscribes to for
 // incoming fossil-sync xfer requests, or "" if Config.DisableFossilSyncOverNATS
 // was set. Format: "<prefix>.<project-code>.sync".
