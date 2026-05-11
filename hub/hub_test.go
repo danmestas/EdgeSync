@@ -37,8 +37,8 @@ func TestNewHub_BootstrapAndAddresses(t *testing.T) {
 	if h.NATSURL() == "" {
 		t.Error("NATSURL empty after NewHub")
 	}
-	if h.LeafUpstream() == "" {
-		t.Error("LeafUpstream empty after NewHub")
+	if h.LeafURL() == "" {
+		t.Error("LeafURL empty after NewHub")
 	}
 }
 
@@ -46,7 +46,7 @@ func TestNewHub_AutoPortsAreDistinct(t *testing.T) {
 	h := newTestHub(t)
 
 	natsURL := h.NATSURL()         // nats://127.0.0.1:NNNN
-	leafURL := h.LeafUpstream()    // nats-leaf://127.0.0.1:LLLL
+	leafURL := h.LeafURL()         // nats-leaf://127.0.0.1:LLLL
 	httpAddr := h.HTTPAddr()       // 127.0.0.1:HHHH
 
 	if natsURL == leafURL || natsURL == httpAddr || leafURL == httpAddr {

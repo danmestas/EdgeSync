@@ -121,9 +121,9 @@ type Hub struct {
 	natsSyncSub   *nats.Subscription
 	syncSubject   string
 
-	httpAddr     string
-	natsURL      string
-	leafUpstream string
+	httpAddr string
+	natsURL  string
+	leafURL  string
 
 	checkpointStop chan struct{}
 	checkpointDone chan struct{}
@@ -184,7 +184,7 @@ func NewHub(ctx context.Context, cfg Config) (*Hub, error) {
 		httpListener: httpLn,
 		httpAddr:     httpLn.Addr().String(),
 		natsURL:      natsServer.ClientURL(),
-		leafUpstream: leafAddr,
+		leafURL:      leafAddr,
 	}
 
 	if !cfg.DisableFossilSyncOverNATS {
@@ -353,10 +353,10 @@ func (h *Hub) NATSURL() string { return h.natsURL }
 // auto-generated random name if Config.ServerName was empty).
 func (h *Hub) ServerName() string { return h.server.Name() }
 
-// LeafUpstream returns the leafnode listener URL, suitable for passing to
-// remote agents as their NATS leaf upstream. Empty if no leaf port is
-// configured.
-func (h *Hub) LeafUpstream() string { return h.leafUpstream }
+// LeafURL returns this hub's leafnode listener URL — the URL remote leaves
+// dial as their upstream. Empty if no leaf port is configured. Distinct
+// from Config.LeafUpstream, which is the input URL this hub itself solicits.
+func (h *Hub) LeafURL() string { return h.leafURL }
 
 // HTTPAddr returns the host:port the fossil HTTP server is bound to.
 func (h *Hub) HTTPAddr() string { return h.httpAddr }

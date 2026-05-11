@@ -72,7 +72,7 @@ func (c *HubServeCmd) Run(g *libfossilcli.Globals) error {
 		"repo", repoPath,
 		"http", "http://"+h.HTTPAddr(),
 		"nats", h.NATSURL(),
-		"leaf_upstream", h.LeafUpstream(),
+		"leaf_url", h.LeafURL(),
 		"sync_subject", h.FossilSyncSubject(),
 	)
 
