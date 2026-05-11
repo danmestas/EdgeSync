@@ -12,12 +12,14 @@ All types are libfossil-free and nats-server-free. Consumers import only `github
 
 ```go
 type Config struct {
-    RepoPath           string        // hub.fossil path; created if absent
+    RepoPath           string        // fossil repo path; created if absent
+    ServerName         string        // NATS server identity; empty = nats-server auto-generated random
     BootstrapUser      string        // default "hub"
-    NATSStoreDir       string        // default <repo dir>/nats-store
+    NATSStoreDir       string        // default <repo dir>/messaging
     FossilHTTPPort     int           // 0 = auto-pick
     NATSClientPort     int           // 0 = auto-pick
     NATSLeafPort       int           // 0 = auto-pick
+    LeafUpstream       string        // optional "nats-leaf://host:port" to solicit upstream; empty = root hub
     CheckpointInterval time.Duration // 0 = 10s (PASSIVE WAL checkpoint cadence)
 }
 
@@ -28,8 +30,9 @@ func (h *Hub) ServeHTTP(ctx context.Context) error
 func (h *Hub) Stop() error
 
 func (h *Hub) NATSURL() string       // "nats://127.0.0.1:NNNN"
-func (h *Hub) LeafUpstream() string  // "nats-leaf://127.0.0.1:LLLL"
+func (h *Hub) LeafUpstream() string  // "nats-leaf://127.0.0.1:LLLL" (this hub's leafnode listener)
 func (h *Hub) HTTPAddr() string      // "127.0.0.1:HHHH"
+func (h *Hub) ServerName() string    // live NATS server identity (Config.ServerName or auto-generated)
 
 type User struct{ Login, Caps string }
 
@@ -58,7 +61,7 @@ func (h *Hub) ReadAt(ctx context.Context, rev RevID, path string) ([]byte, error
 ctx, cancel := context.WithCancel(context.Background())
 defer cancel()
 
-h, err := hub.NewHub(ctx, hub.Config{RepoPath: "/data/hub.fossil"})
+h, err := hub.NewHub(ctx, hub.Config{RepoPath: "/data/hub.repo"})
 if err != nil { return err }
 defer h.Stop()
 
@@ -74,12 +77,12 @@ The hub deliberately does **not** cap `MaxOpenConns`. An earlier iteration set `
 
 ## Vanilla Fossil Interop
 
-`hub.fossil` is opened in WAL journal mode (libfossil's default). Without periodic checkpoints, the on-disk file would stay as a ~4 KiB stub plus a multi-hundred-KiB `*-wal` sidecar for the lifetime of the hub — and vanilla `fossil ui` / `fossil info` / third-party SQLite tooling would refuse to open it because their validity probe stats the main file before consulting the WAL.
+The hub repo file is opened in WAL journal mode (libfossil's default). Without periodic checkpoints, the on-disk file would stay as a ~4 KiB stub plus a multi-hundred-KiB `*-wal` sidecar for the lifetime of the hub — and vanilla `fossil ui` / `fossil info` / third-party SQLite tooling would refuse to open it because their validity probe stats the main file before consulting the WAL.
 
 The hub guards both ends of that contract:
 
-- **While serving:** a background goroutine runs `PRAGMA wal_checkpoint(PASSIVE)` every `Config.CheckpointInterval` (default 10s). PASSIVE never blocks readers or writers, so vanilla fossil can read `hub.fossil` at any time without coordinating with the hub.
-- **After Stop:** `Hub.Stop` halts the checkpoint goroutine, then closes the libfossil handle. libfossil's own `(*Repo).Close` runs `PRAGMA wal_checkpoint(TRUNCATE)` before releasing the connection (libfossil v0.6.0+), so the on-disk `hub.fossil` is self-contained — no `-wal` / `-shm` sidecar required.
+- **While serving:** a background goroutine runs `PRAGMA wal_checkpoint(PASSIVE)` every `Config.CheckpointInterval` (default 10s). PASSIVE never blocks readers or writers, so vanilla fossil can read the repo file at any time without coordinating with the hub.
+- **After Stop:** `Hub.Stop` halts the checkpoint goroutine, then closes the libfossil handle. libfossil's own `(*Repo).Close` runs `PRAGMA wal_checkpoint(TRUNCATE)` before releasing the connection (libfossil v0.6.0+), so the on-disk repo file is self-contained — no `-wal` / `-shm` sidecar required.
 
 There is no "disable" knob: vanilla-fossil readability is the contract this package exists to uphold. Set a long `CheckpointInterval` if you really want to dilute the cadence.
 
