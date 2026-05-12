@@ -179,7 +179,7 @@ func NewHub(ctx context.Context, cfg Config) (*Hub, error) {
 
 	if cfg.SeedFromUpstream != "" {
 		if _, statErr := os.Stat(cfg.RepoPath); errors.Is(statErr, os.ErrNotExist) {
-			if err := seedFromUpstream(ctx, cfg.RepoPath, cfg.SeedFromUpstream, cfg.BootstrapUser, cfg.ProjectCode); err != nil {
+			if err := seedFromUpstream(ctx, cfg.RepoPath, cfg.SeedFromUpstream, cfg.ProjectCode); err != nil {
 				return nil, err
 			}
 		}
