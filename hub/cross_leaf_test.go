@@ -87,6 +87,72 @@ func TestCrossLeaf_SharedProjectCode_PropagatesCommit(t *testing.T) {
 	})
 }
 
+// TestCrossLeaf_SeedFromUpstream_PropagatesCommit covers the other half
+// of the issue #156 fix: hub B bootstraps via SeedFromUpstream pointing at
+// hub A's HTTP xfer endpoint, inheriting A's project-code through the
+// clone. Once leaf-linked, A's commits should propagate to B over NATS
+// sync, same as the shared-ProjectCode path.
+func TestCrossLeaf_SeedFromUpstream_PropagatesCommit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	dirA := t.TempDir()
+	hubA, err := NewHub(ctx, Config{
+		RepoPath:    filepath.Join(dirA, "hubA.fossil"),
+		ProjectCode: sharedProjectCode,
+		NobodyCaps:  "gio", // allow unauthenticated clone
+	})
+	if err != nil {
+		t.Fatalf("NewHub A: %v", err)
+	}
+	t.Cleanup(func() { _ = hubA.Stop() })
+
+	httpCtxA, httpCancelA := context.WithCancel(context.Background())
+	t.Cleanup(httpCancelA)
+	go func() { _ = hubA.ServeHTTP(httpCtxA) }()
+
+	// Bootstrap B by cloning from A's HTTP xfer endpoint. Deliberately
+	// omit ProjectCode on B — the whole point of SeedFromUpstream is that
+	// the project-code rides in via the clone.
+	dirB := t.TempDir()
+	hubB, err := NewHub(ctx, Config{
+		RepoPath:         filepath.Join(dirB, "hubB.fossil"),
+		SeedFromUpstream: "http://" + hubA.HTTPAddr() + "/",
+		LeafUpstream:     hubA.LeafURL(),
+		NobodyCaps:       "gio",
+	})
+	if err != nil {
+		t.Fatalf("NewHub B: %v", err)
+	}
+	t.Cleanup(func() { _ = hubB.Stop() })
+
+	if hubB.FossilSyncSubject() != hubA.FossilSyncSubject() {
+		t.Fatalf("after seed, sync subjects diverge: A=%q B=%q",
+			hubA.FossilSyncSubject(), hubB.FossilSyncSubject())
+	}
+
+	httpCtxB, httpCancelB := context.WithCancel(context.Background())
+	t.Cleanup(httpCancelB)
+	go func() { _ = hubB.ServeHTTP(httpCtxB) }()
+
+	waitFor(t, 5*time.Second, "leaf link A↔B after seed", func() bool {
+		return hubA.NumLeafs() >= 1
+	})
+
+	if _, err := hubA.Commit(ctx, CommitOpts{
+		Files:   []FileToCommit{{Name: "seeded.txt", Content: []byte("seeded-then-synced")}},
+		Message: "commit on A after seed",
+		Author:  "hub",
+	}); err != nil {
+		t.Fatalf("hubA.Commit: %v", err)
+	}
+
+	waitFor(t, 10*time.Second, "B sees seeded.txt at trunk", func() bool {
+		got, readErr := hubB.Read(ctx, "seeded.txt")
+		return readErr == nil && bytes.Equal(got, []byte("seeded-then-synced"))
+	})
+}
+
 // TestCrossLeaf_SubjectsAlign asserts that two hubs declaring the same
 // ProjectCode end up subscribed to the same .sync and .commit subjects.
 // Cheap structural check separate from the propagation gold-path.

@@ -20,7 +20,13 @@ import (
 // If expectedProjectCode is non-empty, asserts the cloned repo's
 // project-code matches it. The cloned repo is removed before returning
 // the mismatch error so the caller can retry or give up cleanly.
-func seedFromUpstream(ctx context.Context, path, upstreamURL, bootstrapUser, expectedProjectCode string) error {
+//
+// Authentication: clones anonymously (no login card sent). The upstream
+// hub must grant clone caps to its "nobody" user — i.e. NobodyCaps must
+// include "g" (the standard NobodyCaps:"gio"). The local bootstrapUser
+// is a Create-time concept for the local repo, not an upstream-auth
+// identity, so it's intentionally not threaded through here.
+func seedFromUpstream(ctx context.Context, path, upstreamURL, expectedProjectCode string) error {
 	u, err := url.Parse(upstreamURL)
 	if err != nil {
 		return fmt.Errorf("hub: parse SeedFromUpstream %q: %w", upstreamURL, err)
@@ -31,7 +37,6 @@ func seedFromUpstream(ctx context.Context, path, upstreamURL, bootstrapUser, exp
 
 	transport := libfossil.NewHTTPTransport(upstreamURL)
 	repo, result, err := libfossil.Clone(ctx, path, transport, libfossil.CloneOpts{
-		User:        bootstrapUser,
 		ProjectCode: expectedProjectCode,
 	})
 	if err != nil {
