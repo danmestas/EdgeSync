@@ -24,6 +24,16 @@ type Repo struct {
 	handle  *libfossil.Repo
 	closeMu sync.Mutex
 	closed  bool
+
+	// publish, when non-nil, is invoked after a successful Commit with the
+	// new commit's rid and uuid. NewHub wires this to a NATS publisher on
+	// "<prefix>.<project-code>.commit" so peer hubs can pull the new
+	// commit. Standalone OpenRepo callers leave it nil (no publish).
+	//
+	// Implementations MUST be non-blocking — Commit calls publish on the
+	// foreground path and a slow publisher would back-pressure writers.
+	// Best-effort by contract: publish failures must not fail the commit.
+	publish func(rid int64, uuid string)
 }
 
 // OpenRepo opens an existing hub repo at path. Returns an error if the
@@ -141,7 +151,7 @@ func (r *Repo) Commit(ctx context.Context, opts CommitOpts) (RevID, error) {
 			tags[i] = libfossil.TagSpec{Name: t.Name, Value: t.Value}
 		}
 	}
-	_, uuid, err := r.handle.Commit(libfossil.CommitOpts{
+	rid, uuid, err := r.handle.Commit(libfossil.CommitOpts{
 		Files:   files,
 		Comment: opts.Message,
 		User:    opts.Author,
@@ -150,6 +160,9 @@ func (r *Repo) Commit(ctx context.Context, opts CommitOpts) (RevID, error) {
 	})
 	if err != nil {
 		return "", fmt.Errorf("hub: commit: %w", err)
+	}
+	if r.publish != nil {
+		r.publish(rid, uuid)
 	}
 	return RevID(uuid), nil
 }
