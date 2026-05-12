@@ -13,11 +13,14 @@ package hub
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -83,9 +86,36 @@ type Config struct {
 
 	// FossilSyncSubjectPrefix overrides the NATS subject prefix used by the
 	// fossil sync subscriber. Empty defaults to "fossil" (matching the
-	// leaf-agent default). The full subscribed subject is
-	// "<prefix>.<project-code>.sync".
+	// leaf-agent default). The full subscribed subjects are
+	// "<prefix>.<project-code>.sync" (xfer request/reply) and
+	// "<prefix>.<project-code>.commit" (notification on new commits).
 	FossilSyncSubjectPrefix string
+
+	// ProjectCode optionally pins the repo's project-code on first create
+	// (passed to libfossil.CreateOpts). When non-empty, must be 40-char
+	// lowercase hex (^[0-9a-f]{40}$).
+	//
+	// When the repo at RepoPath already exists, this value (if non-empty)
+	// must match the on-disk project-code or NewHub returns an error —
+	// guards against silent topology drift when a caller updates their
+	// config but an old repo lingers.
+	//
+	// Empty preserves current behavior: generate on create, accept whatever's
+	// on disk on open. Set this in topologies where multiple hubs/leaves
+	// must share a project-code so commits propagate over the same NATS
+	// sync subject.
+	ProjectCode string
+
+	// SeedFromUpstream, when set and RepoPath doesn't yet exist on disk,
+	// clones from this URL before opening. The cloned repo carries the
+	// upstream's project-code, so children declaring a SeedFromUpstream
+	// don't typically also need to set ProjectCode (though setting both
+	// and asserting they match is allowed and cross-checked).
+	//
+	// URL is an EdgeSync hub HTTP xfer endpoint (e.g. "http://hub.local:8080/").
+	// NATS-native clone is deferred until libfossil HandleSync supports the
+	// clone protocol upstream.
+	SeedFromUpstream string
 
 	// CheckpointInterval is how often the hub runs a PASSIVE WAL checkpoint
 	// against hub.fossil while serving. PASSIVE never blocks readers or
@@ -119,7 +149,9 @@ type Hub struct {
 
 	natsClient    *nats.Conn
 	natsSyncSub   *nats.Subscription
+	natsCommitSub *nats.Subscription
 	syncSubject   string
+	commitSubject string
 
 	httpAddr string
 	natsURL  string
@@ -145,7 +177,15 @@ func NewHub(ctx context.Context, cfg Config) (*Hub, error) {
 		cfg.NATSStoreDir = filepath.Join(filepath.Dir(cfg.RepoPath), "messaging")
 	}
 
-	libfossilRepo, err := openOrCreateRepo(cfg.RepoPath, cfg.BootstrapUser)
+	if cfg.SeedFromUpstream != "" {
+		if _, statErr := os.Stat(cfg.RepoPath); errors.Is(statErr, os.ErrNotExist) {
+			if err := seedFromUpstream(ctx, cfg.RepoPath, cfg.SeedFromUpstream, cfg.BootstrapUser, cfg.ProjectCode); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	libfossilRepo, err := openOrCreateRepo(cfg.RepoPath, cfg.BootstrapUser, cfg.ProjectCode)
 	if err != nil {
 		return nil, err
 	}
@@ -189,6 +229,19 @@ func NewHub(ctx context.Context, cfg Config) (*Hub, error) {
 
 	if !cfg.DisableFossilSyncOverNATS {
 		if err := h.startFossilSyncSubscriber(cfg); err != nil {
+			natsServer.Shutdown()
+			natsServer.WaitForShutdown()
+			httpLn.Close()
+			repo.Close()
+			return nil, err
+		}
+		if err := h.startCommitSubscriber(cfg); err != nil {
+			if h.natsSyncSub != nil {
+				_ = h.natsSyncSub.Unsubscribe()
+			}
+			if h.natsClient != nil {
+				h.natsClient.Close()
+			}
 			natsServer.Shutdown()
 			natsServer.WaitForShutdown()
 			httpLn.Close()
@@ -253,6 +306,7 @@ func (h *Hub) startFossilSyncSubscriber(cfg Config) error {
 		nats.ReconnectWait(2*time.Second),
 		nats.RetryOnFailedConnect(true),
 		nats.Timeout(5*time.Second),
+		nats.NoEcho(), // we publish on .commit + .sync ourselves; don't self-loop
 	)
 	if err != nil {
 		return fmt.Errorf("hub: connect local NATS for fossil-sync subscriber: %w", err)
@@ -283,6 +337,83 @@ func (h *Hub) startFossilSyncSubscriber(cfg Config) error {
 	h.natsClient = nc
 	h.natsSyncSub = sub
 	h.syncSubject = subject
+	return nil
+}
+
+// commitNotification is the JSON payload published on the .commit subject
+// when a new commit lands. Peers decode it and pull the manifest via the
+// .sync subject.
+type commitNotification struct {
+	RID  int64  `json:"rid"`
+	UUID string `json:"uuid"`
+}
+
+// startCommitSubscriber subscribes to "<prefix>.<project-code>.commit" and,
+// on receipt, triggers an xfer pull from peers on the sibling .sync
+// subject. Also wires the hub repo's publish hook so successful commits
+// publish a notification on the .commit subject.
+//
+// Requires startFossilSyncSubscriber to have run first (uses h.natsClient
+// and shares the project-code / prefix derivation).
+func (h *Hub) startCommitSubscriber(cfg Config) error {
+	projectCode, err := h.repo.handle.Config("project-code")
+	if err != nil {
+		return fmt.Errorf("hub: read project-code for commit subscriber: %w", err)
+	}
+	if projectCode == "" {
+		return fmt.Errorf("hub: project-code is empty; refusing to start commit subscriber")
+	}
+	prefix := cfg.FossilSyncSubjectPrefix
+	if prefix == "" {
+		prefix = "fossil"
+	}
+	commitSubject := prefix + "." + projectCode + ".commit"
+	syncSubject := prefix + "." + projectCode + ".sync"
+
+	pullTransport := newNATSTransport(h.natsClient, syncSubject, 0)
+	sub, err := h.natsClient.Subscribe(commitSubject, func(msg *nats.Msg) {
+		var n commitNotification
+		if jsonErr := json.Unmarshal(msg.Data, &n); jsonErr != nil {
+			log.Printf("hub commit subscriber: decode notification: %v", jsonErr)
+			return
+		}
+		// Pull is naturally idempotent — if we already have the uuid,
+		// the sync round converges with zero rounds / zero blobs. So
+		// we skip the up-front existence check and let the protocol
+		// handle dedup.
+		pullCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		if _, syncErr := h.repo.handle.Sync(pullCtx, pullTransport, libfossil.SyncOpts{
+			Pull:        true,
+			ProjectCode: projectCode,
+			PeerID:      "edgesync-hub",
+		}); syncErr != nil {
+			log.Printf("hub commit subscriber: pull triggered by notification rid=%d uuid=%s: %v", n.RID, n.UUID, syncErr)
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("hub: subscribe %s: %w", commitSubject, err)
+	}
+	if flushErr := h.natsClient.FlushTimeout(2 * time.Second); flushErr != nil {
+		_ = sub.Unsubscribe()
+		return fmt.Errorf("hub: flush commit subscription: %w", flushErr)
+	}
+
+	// Wire publish hook on the repo so future commits notify peers.
+	nc := h.natsClient
+	h.repo.publish = func(rid int64, uuid string) {
+		payload, jsonErr := json.Marshal(commitNotification{RID: rid, UUID: uuid})
+		if jsonErr != nil {
+			log.Printf("hub commit publish: encode notification rid=%d uuid=%s: %v", rid, uuid, jsonErr)
+			return
+		}
+		if pubErr := nc.Publish(commitSubject, payload); pubErr != nil {
+			log.Printf("hub commit publish: publish to %s rid=%d uuid=%s: %v", commitSubject, rid, uuid, pubErr)
+		}
+	}
+
+	h.natsCommitSub = sub
+	h.commitSubject = commitSubject
 	return nil
 }
 
@@ -322,6 +453,9 @@ func (h *Hub) Stop() error {
 			}
 		} else if h.httpListener != nil {
 			h.httpListener.Close()
+		}
+		if h.natsCommitSub != nil {
+			_ = h.natsCommitSub.Unsubscribe()
 		}
 		if h.natsSyncSub != nil {
 			_ = h.natsSyncSub.Unsubscribe()
@@ -372,6 +506,12 @@ func (h *Hub) NumLeafs() int { return h.server.NumLeafNodes() }
 // was set. Format: "<prefix>.<project-code>.sync".
 func (h *Hub) FossilSyncSubject() string { return h.syncSubject }
 
+// FossilCommitSubject returns the NATS subject the hub publishes on
+// after a successful commit, and subscribes to for peer notifications.
+// Empty if Config.DisableFossilSyncOverNATS was set. Format:
+// "<prefix>.<project-code>.commit".
+func (h *Hub) FossilCommitSubject() string { return h.commitSubject }
+
 // Repo returns the underlying fossil-repo handle the hub serves from. Use
 // this to share the handle with another component in the same process —
 // e.g. a coexisting CLI command path that needs user/commit/read access
@@ -379,11 +519,25 @@ func (h *Hub) FossilSyncSubject() string { return h.syncSubject }
 // while the Hub is still serving; use Hub.Stop for teardown.
 func (h *Hub) Repo() *Repo { return h.repo }
 
-func openOrCreateRepo(path, bootstrapUser string) (*libfossil.Repo, error) {
+func openOrCreateRepo(path, bootstrapUser, projectCode string) (*libfossil.Repo, error) {
 	if r, err := libfossil.Open(path); err == nil {
+		if projectCode != "" {
+			onDisk, cfgErr := r.Config("project-code")
+			if cfgErr != nil {
+				_ = r.Close()
+				return nil, fmt.Errorf("hub: read project-code from existing repo at %s: %w", path, cfgErr)
+			}
+			if onDisk != projectCode {
+				_ = r.Close()
+				return nil, fmt.Errorf("hub: existing repo at %s has project-code %q, Config.ProjectCode is %q (config drift)", path, onDisk, projectCode)
+			}
+		}
 		return r, nil
 	}
-	r, err := libfossil.Create(path, libfossil.CreateOpts{User: bootstrapUser})
+	r, err := libfossil.Create(path, libfossil.CreateOpts{
+		User:        bootstrapUser,
+		ProjectCode: projectCode,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("hub: create repo at %s: %w", path, err)
 	}

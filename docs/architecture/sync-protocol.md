@@ -225,6 +225,75 @@ Two-pass architecture matching Fossil's `manifest_crosslink_begin`/`manifest_cro
 | Extension tables | `xigot`/`xgimme` exchange pending | Catalog hashes match or no rows exchanged |
 | Safety | -- | `MaxRounds` (100) or context cancellation |
 
+## NATS-Wrapped Sync (Cross-Leaf Propagation)
+
+The protocol above is transport-agnostic. EdgeSync's hub wraps it in two
+NATS subjects so multiple hubs sharing a project-code propagate commits
+without polling.
+
+### Subjects
+
+For a project-code `<pc>` and configurable prefix (default `fossil`):
+
+| Subject | Pattern | Role |
+|---------|---------|------|
+| Sync | `<prefix>.<pc>.sync` | Request/reply. Body = xfer payload. Hub subscribes; on receipt, dispatches to `HandleSync` and `Respond`s with the encoded reply. Pullers `Request` on the same subject; the `natsTransport` adapter turns this into an `RTT` for `libfossil.Sync`. |
+| Commit | `<prefix>.<pc>.commit` | Fire-and-forget notification. Body = JSON `{"rid": int64, "uuid": string}`. Hub publishes on every successful `Repo.Commit`; subscribers trigger a pull on the sibling `.sync` subject. |
+
+### Cross-leaf flow
+
+1. Hub A commits via `Hub.Repo().Commit(...)`. After libfossil returns
+   the new rid/uuid, A's `publish` hook fires a JSON notification on
+   `<prefix>.<pc>.commit`.
+2. NATS delivers the notification to every connected hub subscribed to
+   that subject. The publishing connection uses `NoEcho()` so A does
+   not receive its own notification.
+3. Hub B's `startCommitSubscriber` callback decodes the message and
+   calls `libfossil.Sync(ctx, natsTransport, SyncOpts{Pull: true,
+   ProjectCode: pc})`. The transport publishes the xfer request on
+   `<prefix>.<pc>.sync` and awaits the responder's reply.
+4. Hub A's `startFossilSyncSubscriber` callback handles the xfer
+   request, dispatches to `HandleSync`, and `Respond`s with the
+   manifest.
+5. B's `Sync` applies the manifest; trunk advances.
+
+### Project-code coordination
+
+Both hubs must end up with the same project-code for their subjects to
+align. Two coordination patterns:
+
+- **Explicit pinning.** `Config.ProjectCode` passed to every hub in
+  the topology; root hubs use this on first create
+  (`libfossil.CreateOpts.ProjectCode`). Reopening a repo with a
+  different `Config.ProjectCode` than what's on disk is rejected as
+  config drift.
+- **Clone-from-upstream.** `Config.SeedFromUpstream` — when set and
+  the local repo doesn't yet exist, NewHub clones from the given hub
+  HTTP xfer URL before opening. The clone copies the upstream's
+  project-code, so children declaring `SeedFromUpstream` typically
+  don't need to also set `ProjectCode` (both can be set and are
+  cross-checked).
+
+NATS-native clone (cloning over a `.sync` subject) is deferred until
+libfossil's `HandleSync` supports the clone protocol; today the seed
+path uses HTTP against an upstream hub's `XferHandler`.
+
+### Known limitations
+
+- **Multi-responder race on `.sync`.** With 3+ hubs sharing a
+  project-code, every subscriber on `.sync` responds to xfer
+  requests. `nats.Request` returns only the first reply. If the
+  first responder doesn't have the requested data, the pull
+  observes a no-op round and the caller falls back to retrying
+  on the next `.commit` notification. Acceptable for 2-node sesh
+  topologies (gold-path); a follow-up will add queue-group routing
+  or per-peer reply subjects for larger fan-outs.
+- **No backpressure on the `.commit` queue.** A burst of commits
+  produces a burst of notifications, each fanning out to all peers,
+  each triggering a pull. NATS subscription limits eventually drop
+  messages under load; subscribers recover via the next non-dropped
+  notification (idempotent pull).
+
 ## Key Constraints
 
 - **Blob format:** `[4-byte BE uncompressed size][zlib data]`. If `len(content) == declared size`, content is uncompressed.
