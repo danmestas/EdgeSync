@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	libfossil "github.com/danmestas/libfossil"
 	_ "github.com/danmestas/libfossil/db/driver/modernc"
 )
 
@@ -150,6 +151,102 @@ func TestCrossLeaf_SeedFromUpstream_PropagatesCommit(t *testing.T) {
 	waitFor(t, 10*time.Second, "B sees seeded.txt at trunk", func() bool {
 		got, readErr := hubB.Read(ctx, "seeded.txt")
 		return readErr == nil && bytes.Equal(got, []byte("seeded-then-synced"))
+	})
+}
+
+// TestCrossLeaf_HTTPPush_PropagatesCommit covers issue #160: commits that
+// arrive at a hub via the HTTP xfer push endpoint (an external `fossil
+// push <hub-http>` from a CLI agent) write artifacts straight into the
+// SQLite repo, bypassing Repo.Commit and therefore the .commit
+// auto-publish hook. The wrapper installed by Hub.ServeHTTP must close
+// that gap so peers still see the commit.
+//
+// Topology: two hubs A and B share a project-code and are leaf-linked, so
+// .commit notifications on A's NATS subject reach B and trigger a pull.
+// A third standalone libfossil.Repo plays the external CLI agent — it
+// clones from A's HTTP endpoint, commits locally, then pushes back to A
+// via the same HTTP endpoint. The push lands through A's XferHandler.
+// Before the fix, the test would time out waiting for B to see the file.
+func TestCrossLeaf_HTTPPush_PropagatesCommit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	dirA := t.TempDir()
+	hubA, err := NewHub(ctx, Config{
+		RepoPath:    filepath.Join(dirA, "hubA.fossil"),
+		ProjectCode: sharedProjectCode,
+		NobodyCaps:  "gio", // allow unauthenticated clone + push from the agent
+	})
+	if err != nil {
+		t.Fatalf("NewHub A: %v", err)
+	}
+	t.Cleanup(func() { _ = hubA.Stop() })
+
+	httpCtxA, httpCancelA := context.WithCancel(context.Background())
+	t.Cleanup(httpCancelA)
+	go func() { _ = hubA.ServeHTTP(httpCtxA) }()
+
+	dirB := t.TempDir()
+	hubB, err := NewHub(ctx, Config{
+		RepoPath:     filepath.Join(dirB, "hubB.fossil"),
+		ProjectCode:  sharedProjectCode,
+		LeafUpstream: hubA.LeafURL(),
+		NobodyCaps:   "gio",
+	})
+	if err != nil {
+		t.Fatalf("NewHub B: %v", err)
+	}
+	t.Cleanup(func() { _ = hubB.Stop() })
+
+	httpCtxB, httpCancelB := context.WithCancel(context.Background())
+	t.Cleanup(httpCancelB)
+	go func() { _ = hubB.ServeHTTP(httpCtxB) }()
+
+	waitFor(t, 5*time.Second, "leaf link A↔B", func() bool {
+		return hubA.NumLeafs() >= 1
+	})
+
+	// External CLI-agent equivalent: a libfossil.Repo with no hub, no
+	// NATS connection. Clones from A via HTTP, commits a file, pushes the
+	// commit back to A via HTTP. Mirrors the `fossil clone $HTTP && fossil
+	// commit && fossil push $HTTP` flow from the issue's reproduction.
+	agentPath := filepath.Join(t.TempDir(), "agent.fossil")
+	httpURL := "http://" + hubA.HTTPAddr() + "/"
+	agentRepo, _, err := libfossil.Clone(ctx, agentPath,
+		libfossil.NewHTTPTransport(httpURL),
+		libfossil.CloneOpts{ProjectCode: sharedProjectCode},
+	)
+	if err != nil {
+		t.Fatalf("agent clone from %s: %v", httpURL, err)
+	}
+	t.Cleanup(func() { _ = agentRepo.Close() })
+
+	if _, _, err := agentRepo.Commit(libfossil.CommitOpts{
+		Files: []libfossil.FileToCommit{
+			{Name: "from-agent.txt", Content: []byte("hello-from-agent")},
+		},
+		Comment: "external agent commit",
+		User:    "agent",
+	}); err != nil {
+		t.Fatalf("agent Commit: %v", err)
+	}
+
+	if _, err := agentRepo.Sync(ctx,
+		libfossil.NewHTTPTransport(httpURL),
+		libfossil.SyncOpts{
+			Push:        true,
+			ProjectCode: sharedProjectCode,
+			PeerID:      "agent",
+		},
+	); err != nil {
+		t.Fatalf("agent push to %s: %v", httpURL, err)
+	}
+
+	// Without the fix, B never sees the file — the HTTP push lands in A's
+	// repo but A doesn't publish on .commit, so B has no trigger to pull.
+	waitFor(t, 10*time.Second, "B sees from-agent.txt at trunk", func() bool {
+		got, readErr := hubB.Read(ctx, "from-agent.txt")
+		return readErr == nil && bytes.Equal(got, []byte("hello-from-agent"))
 	})
 }
 
