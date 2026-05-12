@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 
 	libfossil "github.com/danmestas/libfossil"
@@ -34,6 +35,18 @@ type Repo struct {
 	// foreground path and a slow publisher would back-pressure writers.
 	// Best-effort by contract: publish failures must not fail the commit.
 	publish func(rid int64, uuid string)
+
+	// publishMu serializes publishNewCommits so concurrent callers (the
+	// local Commit path and the HTTP xfer-push wrapper) cannot interleave
+	// scans of the event table and race the publishedRID watermark.
+	publishMu sync.Mutex
+
+	// publishedRID is the highest 'ci' event rid that has been emitted on
+	// the .commit subject. publishNewCommits only emits for rids strictly
+	// greater than this, then advances it. Initialised at hub startup
+	// (in startCommitSubscriber) to the current max ci rid so any commits
+	// that landed via SeedFromUpstream are not republished.
+	publishedRID int64
 }
 
 // OpenRepo opens an existing hub repo at path. Returns an error if the
@@ -151,7 +164,7 @@ func (r *Repo) Commit(ctx context.Context, opts CommitOpts) (RevID, error) {
 			tags[i] = libfossil.TagSpec{Name: t.Name, Value: t.Value}
 		}
 	}
-	rid, uuid, err := r.handle.Commit(libfossil.CommitOpts{
+	_, uuid, err := r.handle.Commit(libfossil.CommitOpts{
 		Files:   files,
 		Comment: opts.Message,
 		User:    opts.Author,
@@ -161,10 +174,94 @@ func (r *Repo) Commit(ctx context.Context, opts CommitOpts) (RevID, error) {
 	if err != nil {
 		return "", fmt.Errorf("hub: commit: %w", err)
 	}
-	if r.publish != nil {
-		r.publish(rid, uuid)
-	}
+	r.publishNewCommits()
 	return RevID(uuid), nil
+}
+
+// publishNewCommits invokes r.publish for every 'ci' event whose rid is
+// strictly greater than r.publishedRID, in rid order, then advances the
+// watermark. No-op when r.publish is nil (standalone OpenRepo, or hub
+// constructed with Config.DisableFossilSyncOverNATS=true).
+//
+// Both code paths that can land a new commit funnel through here:
+//
+//   - Repo.Commit (local, in-process commits): calls this after libfossil
+//     has written the new event; the watermark scan picks up exactly the
+//     one rid that just landed.
+//   - The HTTP xfer-push wrapper installed by Hub.ServeHTTP: calls this
+//     after every xfer request so commits arriving via `fossil push
+//     <hub-http>` from an external CLI agent emit the same .commit
+//     notification a Repo.Commit caller would have. Without that wrapper,
+//     HTTP-pushed commits land in the repo but peers never get notified
+//     (issue #160). A single multi-commit push emits one notification per
+//     new ci event so each lands on the subject in rid order.
+//
+// publishMu serialises the scan/publish/advance triple so concurrent
+// callers cannot republish the same rid. Publish errors are logged inside
+// the publish hook (see startCommitSubscriber) and never bubble up — both
+// call sites treat publish as best-effort.
+func (r *Repo) publishNewCommits() {
+	r.publishMu.Lock()
+	defer r.publishMu.Unlock()
+	if r.publish == nil {
+		return
+	}
+	rows, err := r.handle.DB().Query(
+		"SELECT objid FROM event WHERE type='ci' AND objid > ? ORDER BY objid",
+		r.publishedRID,
+	)
+	if err != nil {
+		log.Printf("hub publish: enumerate new commits since rid=%d: %v", r.publishedRID, err)
+		return
+	}
+	var newRIDs []int64
+	for rows.Next() {
+		var rid int64
+		if scanErr := rows.Scan(&rid); scanErr != nil {
+			_ = rows.Close()
+			log.Printf("hub publish: scan rid: %v", scanErr)
+			return
+		}
+		newRIDs = append(newRIDs, rid)
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		log.Printf("hub publish: enumerate new commits since rid=%d: rows error: %v", r.publishedRID, err)
+		return
+	}
+	for _, rid := range newRIDs {
+		uuid, err := r.handle.UUIDFromRID(rid)
+		if err != nil {
+			log.Printf("hub publish: uuid for rid=%d: %v", rid, err)
+			continue
+		}
+		r.publish(rid, uuid)
+		r.publishedRID = rid
+	}
+}
+
+// initPublishWatermark snapshots the current max 'ci' event rid into
+// publishedRID. NewHub calls this in startCommitSubscriber immediately
+// after wiring r.publish — that's the boundary at which any commits
+// already in the repo (e.g. from SeedFromUpstream's clone) are considered
+// "already known to peers" by definition, and future publishNewCommits
+// scans must not re-emit them.
+//
+// Best-effort: a query error leaves publishedRID at 0, which would cause
+// the first publishNewCommits call to (harmlessly) emit notifications for
+// every commit in the repo. Logged so the divergence is visible.
+func (r *Repo) initPublishWatermark() {
+	r.publishMu.Lock()
+	defer r.publishMu.Unlock()
+	var maxRID int64
+	err := r.handle.DB().QueryRow(
+		"SELECT COALESCE(MAX(objid), 0) FROM event WHERE type='ci'",
+	).Scan(&maxRID)
+	if err != nil {
+		log.Printf("hub publish: init watermark: %v", err)
+		return
+	}
+	r.publishedRID = maxRID
 }
 
 // Read returns the contents of path at the current trunk tip.

@@ -411,6 +411,10 @@ func (h *Hub) startCommitSubscriber(cfg Config) error {
 			log.Printf("hub commit publish: publish to %s rid=%d uuid=%s: %v", commitSubject, rid, uuid, pubErr)
 		}
 	}
+	// Snapshot the current max ci rid so any commits already in the repo
+	// (notably anything pulled in by SeedFromUpstream) are not republished
+	// by the first call to publishNewCommits.
+	h.repo.initPublishWatermark()
 
 	h.natsCommitSub = sub
 	h.commitSubject = commitSubject
@@ -422,7 +426,18 @@ func (h *Hub) startCommitSubscriber(cfg Config) error {
 // Stop is called.
 func (h *Hub) ServeHTTP(ctx context.Context) error {
 	mux := http.NewServeMux()
-	mux.Handle("/", h.repo.handle.XferHandler())
+	xfer := h.repo.handle.XferHandler()
+	// Wrap XferHandler so commits arriving via an external `fossil push
+	// <hub-http>` (which writes artifacts straight into the SQLite repo
+	// via libfossil's xfer protocol, bypassing Repo.Commit) still trigger
+	// the .commit auto-publish that Repo.Commit installs. publishNewCommits
+	// is a no-op when nothing new landed (typical for pull/clone) or when
+	// the publish hook isn't wired (DisableFossilSyncOverNATS), so it's
+	// safe to fire on every request. Issue #160.
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		xfer.ServeHTTP(w, r)
+		h.repo.publishNewCommits()
+	}))
 
 	srv := &http.Server{Handler: mux}
 	h.httpServer = srv
