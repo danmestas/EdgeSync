@@ -160,8 +160,24 @@ type Hub struct {
 	checkpointStop chan struct{}
 	checkpointDone chan struct{}
 
+	catchupStop chan struct{}
+	catchupDone chan struct{}
+
 	stopOnce sync.Once
 }
+
+// publishCatchupDelay is how long after NewHub returns the hub waits
+// before scanning past the persisted watermark and republishing any
+// commits that landed while the hub was down. The delay gives NATS
+// leaf clients (default ReconnectWait 2s in startFossilSyncSubscriber)
+// time to reconnect after a hub restart on the same leaf port; without
+// it, the catchup publish would land before peers reconnect and the
+// notification would be lost.
+//
+// Bounded by the test window in TestCrossLeaf_HubRestart_RepublishesUnannouncedCommits;
+// production tolerates a slightly longer wait if reconnect backoff is
+// tuned wider.
+const publishCatchupDelay = 3 * time.Second
 
 // NewHub bootstraps the hub repo if absent, applies SQLite tunings, binds
 // the HTTP listener (so HTTPAddr is immediately available), and starts the
@@ -411,14 +427,50 @@ func (h *Hub) startCommitSubscriber(cfg Config) error {
 			log.Printf("hub commit publish: publish to %s rid=%d uuid=%s: %v", commitSubject, rid, uuid, pubErr)
 		}
 	}
-	// Snapshot the current max ci rid so any commits already in the repo
-	// (notably anything pulled in by SeedFromUpstream) are not republished
-	// by the first call to publishNewCommits.
+	// Restore the watermark from the persisted value if present, else
+	// snapshot the current max ci rid. Schedule a delayed catchup that
+	// republishes any commits past the persisted watermark — handles
+	// the crash-mid-publish case (commit landed via HTTP push, hub
+	// died before the .commit notification went out) and any commit
+	// made by an offline tool against the same repo file while the
+	// hub was down.
+	//
+	// The delay matters: an immediate catchup would fire before NATS
+	// leaf clients reconnect after a hub restart on the same leaf port,
+	// and the notification would land in the void. publishCatchupDelay
+	// gives clients time to reconnect first.
 	h.repo.initPublishWatermark()
+	h.startPublishCatchup()
 
 	h.natsCommitSub = sub
 	h.commitSubject = commitSubject
 	return nil
+}
+
+// startPublishCatchup schedules a one-shot publishNewCommits call after
+// publishCatchupDelay. Caller-cancellable via the catchupStop channel
+// owned by Hub so Stop tears it down cleanly even if it fires before the
+// delay elapses.
+//
+// Best-effort by contract: if no peer reconnects within the delay window
+// the catchup publish is lost (NATS Core is fire-and-forget with no
+// per-subscriber queuing). Next commit through Repo.Commit or the HTTP
+// xfer-push wrapper triggers another scan, so peers eventually catch up
+// on activity; a long quiet period after a crash with no peers connected
+// leaves the backlog hanging. Tracked as a follow-up — JetStream-durable
+// .commit subject would close the gap.
+func (h *Hub) startPublishCatchup() {
+	h.catchupStop = make(chan struct{})
+	h.catchupDone = make(chan struct{})
+	go func() {
+		defer close(h.catchupDone)
+		select {
+		case <-h.catchupStop:
+			return
+		case <-time.After(publishCatchupDelay):
+			h.repo.publishNewCommits()
+		}
+	}()
 }
 
 // ServeHTTP runs the fossil HTTP server (timeline UI + xfer endpoint)
@@ -481,6 +533,10 @@ func (h *Hub) Stop() error {
 		if h.server != nil {
 			h.server.Shutdown()
 			h.server.WaitForShutdown()
+		}
+		if h.catchupStop != nil {
+			close(h.catchupStop)
+			<-h.catchupDone
 		}
 		if h.checkpointStop != nil {
 			close(h.checkpointStop)
