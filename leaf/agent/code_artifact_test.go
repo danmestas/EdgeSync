@@ -344,6 +344,118 @@ func TestAgent_Commit_ChainsOntoTrunkTipByDefault(t *testing.T) {
 	}
 }
 
+// TestAgent_Commit_PreservesParentFiles asserts the #152 fix: when a
+// caller supplies only the files this commit changes (matching `fossil
+// ci` semantics), the resulting manifest must still carry every file
+// the parent commit tracked, not just the supplied subset.
+//
+// Before the fix, agent.Commit passed opts.Files straight through to
+// libfossil.Commit, which wrote a partial manifest. A linear chain of
+// commits on disjoint paths silently lost every prior commit's files at
+// the next commit — bones' multi-slot workflow surfaced the bug
+// (bones#366 → EdgeSync#152 → libfossil#30).
+func TestAgent_Commit_PreservesParentFiles(t *testing.T) {
+	a := newAgentForCommitTests(t)
+	ctx := context.Background()
+
+	// Slot alpha commits its own file.
+	if _, err := a.Commit(ctx, CommitOpts{
+		Files:   []FileToCommit{{Name: "alpha/n.md", Content: []byte("alpha-work")}},
+		Message: "alpha work",
+		Author:  "slot-alpha",
+	}); err != nil {
+		t.Fatalf("Commit alpha: %v", err)
+	}
+
+	// Slot bravo commits a disjoint file. Auto-resolves parent to alpha's
+	// tip — agent.Commit must merge bravo's file with alpha's existing
+	// tracked files, not replace them.
+	if _, err := a.Commit(ctx, CommitOpts{
+		Files:   []FileToCommit{{Name: "bravo/n.md", Content: []byte("bravo-work")}},
+		Message: "bravo work",
+		Author:  "slot-bravo",
+	}); err != nil {
+		t.Fatalf("Commit bravo: %v", err)
+	}
+
+	// Both files must be visible at trunk's tip.
+	files, err := a.Files(ctx)
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	if !slices.Contains(files, "alpha/n.md") {
+		t.Errorf("Files = %v, want to contain alpha/n.md (parent file dropped — #152)", files)
+	}
+	if !slices.Contains(files, "bravo/n.md") {
+		t.Errorf("Files = %v, want to contain bravo/n.md", files)
+	}
+
+	// Read content directly against the trunk tip rid. a.Read goes
+	// through libfossil's ResolveVersion("trunk"), which resolves via the
+	// sym-trunk singleton tag — that tag isn't propagated by
+	// libfossil.Commit so it stays pinned to the first commit. Files() is
+	// fine here because it uses BranchTip, which resolves via the
+	// branch=trunk propagating tag.
+	tipRID, err := a.repo.BranchTip("trunk")
+	if err != nil {
+		t.Fatalf("BranchTip trunk: %v", err)
+	}
+	gotAlpha, err := a.repo.ReadFile(tipRID, "alpha/n.md")
+	if err != nil {
+		t.Fatalf("ReadFile alpha/n.md at tip: %v", err)
+	}
+	if !bytes.Equal(gotAlpha, []byte("alpha-work")) {
+		t.Errorf("alpha/n.md content = %q, want %q", gotAlpha, "alpha-work")
+	}
+	gotBravo, err := a.repo.ReadFile(tipRID, "bravo/n.md")
+	if err != nil {
+		t.Fatalf("ReadFile bravo/n.md at tip: %v", err)
+	}
+	if !bytes.Equal(gotBravo, []byte("bravo-work")) {
+		t.Errorf("bravo/n.md content = %q, want %q", gotBravo, "bravo-work")
+	}
+}
+
+// TestAgent_Commit_SuppliedFileOverridesParent asserts the merge rule:
+// when opts.Files contains a name that the parent also tracks, the
+// supplied content wins. Without this, every commit would inherit the
+// parent's content verbatim and updates would no-op.
+func TestAgent_Commit_SuppliedFileOverridesParent(t *testing.T) {
+	a := newAgentForCommitTests(t)
+	ctx := context.Background()
+
+	if _, err := a.Commit(ctx, CommitOpts{
+		Files:   []FileToCommit{{Name: "doc.md", Content: []byte("v1")}},
+		Message: "v1",
+		Author:  "testuser",
+	}); err != nil {
+		t.Fatalf("Commit v1: %v", err)
+	}
+
+	if _, err := a.Commit(ctx, CommitOpts{
+		Files:   []FileToCommit{{Name: "doc.md", Content: []byte("v2")}},
+		Message: "v2",
+		Author:  "testuser",
+	}); err != nil {
+		t.Fatalf("Commit v2: %v", err)
+	}
+
+	// Resolve trunk tip directly — a.Read can't be used here because
+	// ResolveVersion("trunk") uses the sym-trunk singleton tag, which
+	// libfossil.Commit doesn't propagate forward.
+	tipRID, err := a.repo.BranchTip("trunk")
+	if err != nil {
+		t.Fatalf("BranchTip trunk: %v", err)
+	}
+	got, err := a.repo.ReadFile(tipRID, "doc.md")
+	if err != nil {
+		t.Fatalf("ReadFile doc.md at tip: %v", err)
+	}
+	if !bytes.Equal(got, []byte("v2")) {
+		t.Errorf("doc.md content = %q, want %q (supplied must win over parent)", got, "v2")
+	}
+}
+
 // TestAgent_Commit_ExplicitParentIDOverride proves that a caller-supplied
 // ParentID is used verbatim — useful for committing onto a non-trunk
 // branch via Agent.Tip(ctx, branchName).
