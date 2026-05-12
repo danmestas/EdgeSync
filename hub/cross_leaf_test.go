@@ -3,6 +3,7 @@ package hub
 import (
 	"bytes"
 	"context"
+	"net"
 	"path/filepath"
 	"testing"
 	"time"
@@ -247,6 +248,119 @@ func TestCrossLeaf_HTTPPush_PropagatesCommit(t *testing.T) {
 	waitFor(t, 10*time.Second, "B sees from-agent.txt at trunk", func() bool {
 		got, readErr := hubB.Read(ctx, "from-agent.txt")
 		return readErr == nil && bytes.Equal(got, []byte("hello-from-agent"))
+	})
+}
+
+// TestCrossLeaf_HubRestart_RepublishesUnannouncedCommits covers the
+// crash-safety half of the #161 follow-up: if a commit lands in the hub
+// repo but the .commit notification never goes out (process killed mid-
+// publish, or commit made by an offline tool against the repo while the
+// hub is down), the next hub startup must scan past the persisted
+// watermark and republish the backlog so peers catch up.
+//
+// Topology: hubA leaf-binds on a fixed port so hubB's LeafUpstream URL
+// survives hubA's restart; hubB leaf-links and stays running the whole
+// time. The "unannounced commit" is simulated by opening hubA's repo
+// file directly via libfossil after Stop — no hub plumbing, no publish
+// hook, no NATS — and committing through that handle. Before the
+// watermark-persistence fix, the restart snapshots max-rid into a fresh
+// in-memory watermark and the offline commit is never broadcast; peers
+// stay stale until some future commit triggers a publish, and even then
+// only by the lucky idempotency of pull.
+func TestCrossLeaf_HubRestart_RepublishesUnannouncedCommits(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Reserve a stable leaf port. hubA picks it on first boot and reuses
+	// it on restart so hubB's leafnode reconnect lands on the same URL.
+	leafLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve leaf port: %v", err)
+	}
+	leafPort := leafLn.Addr().(*net.TCPAddr).Port
+	if err := leafLn.Close(); err != nil {
+		t.Fatalf("close reserved leaf listener: %v", err)
+	}
+
+	dirA := t.TempDir()
+	repoPath := filepath.Join(dirA, "hubA.fossil")
+
+	hubA1, err := NewHub(ctx, Config{
+		RepoPath:     repoPath,
+		ProjectCode:  sharedProjectCode,
+		NATSLeafPort: leafPort,
+		NobodyCaps:   "gio",
+	})
+	if err != nil {
+		t.Fatalf("NewHub A first boot: %v", err)
+	}
+
+	dirB := t.TempDir()
+	hubB, err := NewHub(ctx, Config{
+		RepoPath:     filepath.Join(dirB, "hubB.fossil"),
+		ProjectCode:  sharedProjectCode,
+		LeafUpstream: hubA1.LeafURL(),
+		NobodyCaps:   "gio",
+	})
+	if err != nil {
+		t.Fatalf("NewHub B: %v", err)
+	}
+	t.Cleanup(func() { _ = hubB.Stop() })
+
+	waitFor(t, 5*time.Second, "leaf link A1↔B", func() bool {
+		return hubA1.NumLeafs() >= 1
+	})
+
+	// Stop A so we can edit the repo file while NATS is down. This is
+	// the moral equivalent of "A's process was killed after a libfossil
+	// write but before the .commit publish went out" — the difference
+	// is procedurally how the unannounced commit got in, not where the
+	// crash-safety gap lives.
+	if err := hubA1.Stop(); err != nil {
+		t.Fatalf("Stop A first boot: %v", err)
+	}
+
+	offline, err := libfossil.Open(repoPath)
+	if err != nil {
+		t.Fatalf("libfossil.Open offline: %v", err)
+	}
+	if _, _, err := offline.Commit(libfossil.CommitOpts{
+		Files: []libfossil.FileToCommit{
+			{Name: "while-down.txt", Content: []byte("offline-commit")},
+		},
+		Comment: "commit while hub A was down",
+		User:    "ghost",
+	}); err != nil {
+		_ = offline.Close()
+		t.Fatalf("offline Commit: %v", err)
+	}
+	if err := offline.Close(); err != nil {
+		t.Fatalf("offline Close: %v", err)
+	}
+
+	// Restart A with the same RepoPath and the same leaf port. The
+	// startup catchup in startCommitSubscriber must read the persisted
+	// watermark (which is at the pre-offline max), then republish for
+	// every rid past it — picking up the offline commit and pushing it
+	// out on the .commit subject so hubB pulls and converges.
+	hubA2, err := NewHub(ctx, Config{
+		RepoPath:     repoPath,
+		ProjectCode:  sharedProjectCode,
+		NATSLeafPort: leafPort,
+		NobodyCaps:   "gio",
+	})
+	if err != nil {
+		t.Fatalf("NewHub A restart: %v", err)
+	}
+	t.Cleanup(func() { _ = hubA2.Stop() })
+
+	waitFor(t, 10*time.Second, "leaf link A2↔B after restart", func() bool {
+		return hubA2.NumLeafs() >= 1
+	})
+
+	waitFor(t, 15*time.Second, "B sees while-down.txt via startup catchup", func() bool {
+		got, readErr := hubB.Read(ctx, "while-down.txt")
+		return readErr == nil && bytes.Equal(got, []byte("offline-commit"))
 	})
 }
 

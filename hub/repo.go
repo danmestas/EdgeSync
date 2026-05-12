@@ -2,13 +2,22 @@ package hub
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"sync"
 
 	libfossil "github.com/danmestas/libfossil"
 )
+
+// publishedRIDConfigKey is the libfossil-config row that persists the
+// .commit publish watermark across hub restarts. Stored in the repo's
+// own config table (rather than a sidecar file) so the watermark moves
+// with the repo and operators can inspect it via fossil tooling. The
+// "edgesync:" prefix namespaces against fossil's own config keys.
+const publishedRIDConfigKey = "edgesync:hub-published-rid"
 
 // Repo is a hub fossil repo opened for direct operations — user mgmt,
 // commits, reads. No embedded NATS server, no HTTP listener; it's the
@@ -43,9 +52,11 @@ type Repo struct {
 
 	// publishedRID is the highest 'ci' event rid that has been emitted on
 	// the .commit subject. publishNewCommits only emits for rids strictly
-	// greater than this, then advances it. Initialised at hub startup
-	// (in startCommitSubscriber) to the current max ci rid so any commits
-	// that landed via SeedFromUpstream are not republished.
+	// greater than this, then advances it. Persisted to the repo's config
+	// table under publishedRIDConfigKey after each advance and reloaded
+	// by initPublishWatermark on hub startup so commits that landed via
+	// HTTP push but never got their .commit publish out before a crash
+	// can be republished by the startup catchup in startCommitSubscriber.
 	publishedRID int64
 }
 
@@ -237,31 +248,69 @@ func (r *Repo) publishNewCommits() {
 		}
 		r.publish(rid, uuid)
 		r.publishedRID = rid
+		if setErr := r.handle.SetConfig(publishedRIDConfigKey, strconv.FormatInt(rid, 10)); setErr != nil {
+			// Best-effort: a failed persist means a future restart may
+			// republish this rid. Idempotent on the subscriber side
+			// (the .commit subscriber's pull converges to zero blobs
+			// when nothing new), so harmless beyond a little extra
+			// chatter. Log so the drift is visible.
+			log.Printf("hub publish: persist watermark rid=%d: %v", rid, setErr)
+		}
 	}
 }
 
-// initPublishWatermark snapshots the current max 'ci' event rid into
-// publishedRID. NewHub calls this in startCommitSubscriber immediately
-// after wiring r.publish — that's the boundary at which any commits
-// already in the repo (e.g. from SeedFromUpstream's clone) are considered
-// "already known to peers" by definition, and future publishNewCommits
-// scans must not re-emit them.
+// initPublishWatermark restores publishedRID from the previous hub run.
+// NewHub calls this in startCommitSubscriber immediately after wiring
+// r.publish, before the startup catchup. Two paths:
 //
-// Best-effort: a query error leaves publishedRID at 0, which would cause
-// the first publishNewCommits call to (harmlessly) emit notifications for
-// every commit in the repo. Logged so the divergence is visible.
+//   - Warm start: a persisted value exists under publishedRIDConfigKey.
+//     Load it. The startup catchup will then republish any commits that
+//     landed while the hub was down (e.g. an HTTP push that crashed the
+//     hub mid-publish, or commits made by an offline tool against the
+//     same repo file).
+//
+//   - Cold start: no persisted value (first run on this repo, or a v1
+//     upgrade). Snapshot the current max ci rid and persist it. Commits
+//     already in the repo (notably anything pulled in by
+//     SeedFromUpstream) are treated as "already known to peers" — the
+//     same semantic as before persistence was added. Commits made while
+//     a previous v1 hub was alive but un-announced before crash do NOT
+//     get republished on the v1→v2 transition; tracked in the PR as a
+//     known limitation and recoverable by a subsequent commit (whose
+//     publish notification triggers a pull that idempotently catches the
+//     backlog up).
+//
+// Best-effort across the board: failure to read or persist leaves
+// publishedRID at its zero value, which the subsequent publishNewCommits
+// would treat as "republish everything" — harmless because the .commit
+// subscriber's pull is idempotent, but logged so the drift is visible.
 func (r *Repo) initPublishWatermark() {
 	r.publishMu.Lock()
 	defer r.publishMu.Unlock()
+
+	val, err := r.handle.Config(publishedRIDConfigKey)
+	if err == nil {
+		parsed, parseErr := strconv.ParseInt(val, 10, 64)
+		if parseErr == nil {
+			r.publishedRID = parsed
+			return
+		}
+		log.Printf("hub publish: parse persisted watermark %q: %v; falling back to max-rid snapshot", val, parseErr)
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		log.Printf("hub publish: read persisted watermark: %v; falling back to max-rid snapshot", err)
+	}
+
 	var maxRID int64
-	err := r.handle.DB().QueryRow(
+	if scanErr := r.handle.DB().QueryRow(
 		"SELECT COALESCE(MAX(objid), 0) FROM event WHERE type='ci'",
-	).Scan(&maxRID)
-	if err != nil {
-		log.Printf("hub publish: init watermark: %v", err)
+	).Scan(&maxRID); scanErr != nil {
+		log.Printf("hub publish: init watermark: %v", scanErr)
 		return
 	}
 	r.publishedRID = maxRID
+	if setErr := r.handle.SetConfig(publishedRIDConfigKey, strconv.FormatInt(maxRID, 10)); setErr != nil {
+		log.Printf("hub publish: persist initial watermark %d: %v", maxRID, setErr)
+	}
 }
 
 // Read returns the contents of path at the current trunk tip.
