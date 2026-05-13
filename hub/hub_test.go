@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/danmestas/libfossil/db/driver/modernc"
 	"github.com/nats-io/nats.go"
 )
 

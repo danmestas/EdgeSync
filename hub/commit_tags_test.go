@@ -3,8 +3,6 @@ package hub
 import (
 	"context"
 	"testing"
-
-	_ "github.com/danmestas/libfossil/db/driver/modernc"
 )
 
 // TestCommit_BranchTags_LandsOnNamedBranch verifies that supplying the fossil

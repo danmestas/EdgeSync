@@ -9,7 +9,6 @@ import (
 	"time"
 
 	libfossil "github.com/danmestas/libfossil"
-	_ "github.com/danmestas/libfossil/db/driver/modernc"
 )
 
 // sharedProjectCode is a fixed 40-char lowercase hex string used as the
