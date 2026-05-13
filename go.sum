@@ -12,8 +12,8 @@ github.com/danmestas/go-sqlite3-opfs v0.2.0 h1:bO6iQYobgWCqTCQZ4NQ147x3yU2v+J+nn
 github.com/danmestas/go-sqlite3-opfs v0.2.0/go.mod h1:eAYxwG9hykpkB6oNMnsM8sSGB9HhHZv/NIN6yO9ZVQE=
 github.com/danmestas/libfossil v0.6.2 h1:ijBfh7d83tHQdzhJVh80/nUZ3Ru1763w/W348nOCUkc=
 github.com/danmestas/libfossil v0.6.2/go.mod h1:Ex+ADZ0kBLkBhSqnyrKg+KHbANVyQpKEWvVHUq8qMLc=
-github.com/danmestas/libfossil/db/driver/modernc v0.1.0 h1:w3elyVSdXdbGNZ3Iu9xE6RP4XTz6JRlkpk0RZKBMl1Y=
-github.com/danmestas/libfossil/db/driver/modernc v0.1.0/go.mod h1:sXeYxCmAkz3Tb/zLIOo7X2CoZDelYQ1MWyoUrySD/vU=
+github.com/danmestas/libfossil/db/driver/modernc v0.2.0 h1:5qhxKjOZc3xTkXos+ebCh1niW3uqez6RHYGkwRqetQc=
+github.com/danmestas/libfossil/db/driver/modernc v0.2.0/go.mod h1:PhgxmpF3jhfhO1lRFTOIyGGpL/GwYC8Q6yiEfkTVxYA=
 github.com/danmestas/libfossil/db/driver/ncruces v0.1.0 h1:GWlyrNicyBYSUi68w4G4uXL34SIqmwSFco5a8IuutY0=
 github.com/danmestas/libfossil/db/driver/ncruces v0.1.0/go.mod h1:fA+18RPKWC5YxA2yimMNtr2YzMvt1yjMYNlc/p56PvY=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
