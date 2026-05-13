@@ -80,19 +80,16 @@ type SyncResult struct {
 // Commit commits a set of files to the agent's repo with the given message
 // and author. Returns the new manifest UUID as an opaque RevID.
 //
-// opts.Files is interpreted with `fossil ci` semantics — "files this
-// commit changes" — and is merged on top of the parent commit's tracked
-// files (supplied wins by name). Files at the parent that are not in
-// opts.Files are carried forward unchanged. Without that merge,
-// libfossil.Commit would emit a partial manifest containing only the
-// supplied subset, silently dropping every other file the parent tracked
-// (#152, chains to libfossil#30). There is no delete-file API today;
-// once libfossil grows one, plumb it through CommitOpts.
+// opts.Files reads with `fossil ci` semantics — "files this commit
+// changes." Files at the parent that are not in opts.Files are carried
+// forward unchanged. libfossil.Repo.Commit handles the merge against
+// the parent's F-card set internally as of v0.6.2 (the fix for
+// libfossil#30 / EdgeSync#152); the agent layer is a thin pass-through.
 //
 // When opts.ParentID is 0, the current trunk tip is resolved and used as
 // the parent — matching `fossil ci`'s default chain-onto-tip behavior. On
 // an empty repo (no trunk tip yet), the resolution returns 0 and the
-// commit is a legitimate orphan root with no parent files to inherit.
+// commit is a legitimate orphan root.
 func (a *Agent) Commit(ctx context.Context, opts CommitOpts) (RevID, error) {
 	if opts.Author == "" {
 		return "", errors.New("agent: Commit: Author is required")
@@ -101,9 +98,9 @@ func (a *Agent) Commit(ctx context.Context, opts CommitOpts) (RevID, error) {
 	if err != nil {
 		return "", err
 	}
-	files, err := a.mergeWithParent(parentID, opts.Files)
-	if err != nil {
-		return "", err
+	files := make([]libfossil.FileToCommit, len(opts.Files))
+	for i, f := range opts.Files {
+		files[i] = libfossil.FileToCommit{Name: f.Name, Content: f.Content}
 	}
 	var tags []libfossil.TagSpec
 	if len(opts.Tags) > 0 {
@@ -124,65 +121,6 @@ func (a *Agent) Commit(ctx context.Context, opts CommitOpts) (RevID, error) {
 		return "", fmt.Errorf("agent: commit: %w", err)
 	}
 	return RevID(uuid), nil
-}
-
-// mergeWithParent computes the full F-card set for a new commit. Starts
-// from the parent commit's tracked files (preserving each file's Perm),
-// then overlays the supplied opts.Files — supplied wins by name. Parent
-// files not overridden are carried forward by reading their content out
-// of the parent checkin.
-//
-// parentID == 0 is the orphan-root case (first commit in a fresh repo);
-// nothing to inherit, so the result is just opts.Files in the libfossil
-// shape.
-//
-// Reading each preserved file out of the parent is O(parent file count)
-// per commit. Acceptable for the workloads agent.Commit targets; if
-// large-tree repos surface as a hotspot, a future libfossil API that
-// emits a manifest by referencing parent F-card UUIDs without rehydrating
-// the content would be the right place to optimise — agent.Commit can
-// stay shaped the way it is.
-func (a *Agent) mergeWithParent(parentID int64, supplied []FileToCommit) ([]libfossil.FileToCommit, error) {
-	suppliedByName := make(map[string]struct{}, len(supplied))
-	for _, f := range supplied {
-		suppliedByName[f.Name] = struct{}{}
-	}
-
-	var merged []libfossil.FileToCommit
-	if parentID != 0 {
-		parentFiles, err := a.repo.ListFiles(parentID)
-		if err != nil {
-			return nil, fmt.Errorf("agent: commit: list parent rid=%d files: %w", parentID, err)
-		}
-		merged = make([]libfossil.FileToCommit, 0, len(parentFiles)+len(supplied))
-		for _, pf := range parentFiles {
-			if _, overridden := suppliedByName[pf.Name]; overridden {
-				continue
-			}
-			content, err := a.repo.ReadFile(parentID, pf.Name)
-			if err != nil {
-				return nil, fmt.Errorf("agent: commit: read parent file %q at rid=%d: %w", pf.Name, parentID, err)
-			}
-			merged = append(merged, libfossil.FileToCommit{
-				Name:    pf.Name,
-				Content: content,
-				Perm:    pf.Perm,
-			})
-		}
-	} else {
-		merged = make([]libfossil.FileToCommit, 0, len(supplied))
-	}
-	for _, sf := range supplied {
-		// agent.FileToCommit doesn't carry Perm — supplied files get
-		// libfossil's default. Parent-inherited entries above preserve
-		// the parent's Perm explicitly so file modes don't silently
-		// regress across a commit that didn't touch them.
-		merged = append(merged, libfossil.FileToCommit{
-			Name:    sf.Name,
-			Content: sf.Content,
-		})
-	}
-	return merged, nil
 }
 
 // resolveCommitParent maps the caller-supplied ParentID to the rid the
