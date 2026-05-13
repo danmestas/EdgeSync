@@ -6,7 +6,6 @@ import (
 	"time"
 
 	libfossil "github.com/danmestas/libfossil"
-	_ "github.com/danmestas/libfossil/db/driver/modernc"
 )
 
 func TestHub_FileToCommit_PermXMarksExecutable(t *testing.T) {
