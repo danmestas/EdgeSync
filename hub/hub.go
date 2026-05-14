@@ -163,6 +163,8 @@ type Hub struct {
 	catchupStop chan struct{}
 	catchupDone chan struct{}
 
+	ready chan struct{}
+
 	stopOnce sync.Once
 }
 
@@ -241,6 +243,7 @@ func NewHub(ctx context.Context, cfg Config) (*Hub, error) {
 		httpAddr:     httpLn.Addr().String(),
 		natsURL:      natsServer.ClientURL(),
 		leafURL:      leafAddr,
+		ready:        make(chan struct{}),
 	}
 
 	if !cfg.DisableFossilSyncOverNATS {
@@ -501,11 +504,30 @@ func (h *Hub) ServeHTTP(ctx context.Context) error {
 		_ = srv.Shutdown(shutdownCtx)
 	}()
 
+	close(h.ready)
+
 	if err := srv.Serve(h.httpListener); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("hub: serve HTTP: %w", err)
 	}
 	return nil
 }
+
+// Ready returns a channel closed once ServeHTTP has finished configuring
+// the HTTP server and is about to enter the Accept loop. Callers that
+// advertise the hub's URLs externally — e.g. session state JSON or peer
+// discovery — should wait on Ready before publishing, to close the window
+// where the listener is bound at the kernel level but the goroutine running
+// ServeHTTP hasn't started processing requests yet.
+//
+// The TCP listener is bound earlier (inside NewHub), so TCP-level connects
+// succeed immediately after NewHub returns. Ready closes after the
+// http.Server is wired up and just before srv.Serve runs, giving consumers
+// a clean barrier for "HTTP request processing is about to be live."
+//
+// Safe to call from any goroutine; safe to call multiple times. Returns
+// the same channel each time. The channel never closes if ServeHTTP is
+// never called.
+func (h *Hub) Ready() <-chan struct{} { return h.ready }
 
 // Stop tears down the embedded NATS server and any HTTP listeners. Safe to
 // call multiple times.
