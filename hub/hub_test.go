@@ -238,6 +238,91 @@ func TestHub_ServeHTTP_RespondsAndShutsDownOnContextCancel(t *testing.T) {
 	}
 }
 
+// TestHub_Ready_ClosesAfterServeHTTPStarts asserts the Ready() channel
+// closes once ServeHTTP has wired up the http.Server and is about to
+// enter the Accept loop, and that an HTTP GET issued immediately after
+// the close succeeds without retry. Regression for #171.
+func TestHub_Ready_ClosesAfterServeHTTPStarts(t *testing.T) {
+	h := newTestHub(t)
+
+	select {
+	case <-h.Ready():
+		t.Fatal("Ready closed before ServeHTTP was called")
+	default:
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- h.ServeHTTP(ctx) }()
+
+	select {
+	case <-h.Ready():
+	case <-time.After(2 * time.Second):
+		t.Fatal("Ready did not close within 2s of ServeHTTP start")
+	}
+
+	resp, err := http.Get("http://" + h.HTTPAddr() + "/")
+	if err != nil {
+		t.Fatalf("HTTP GET immediately after Ready close: %v", err)
+	}
+	resp.Body.Close()
+
+	cancel()
+	select {
+	case <-serveDone:
+	case <-time.After(2 * time.Second):
+		t.Error("ServeHTTP did not shut down within 2s of ctx cancel")
+	}
+}
+
+// TestHub_Ready_BroadcastsToManyWaiters asserts the channel-close pattern
+// fans out to many concurrent waiters with no goroutine timing out. 100
+// goroutines select on Ready() plus a deadline; all must receive the close.
+// Regression for #171 acceptance criterion "race test".
+func TestHub_Ready_BroadcastsToManyWaiters(t *testing.T) {
+	h := newTestHub(t)
+
+	const waiters = 100
+	results := make(chan bool, waiters)
+	for range waiters {
+		go func() {
+			select {
+			case <-h.Ready():
+				results <- true
+			case <-time.After(3 * time.Second):
+				results <- false
+			}
+		}()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- h.ServeHTTP(ctx) }()
+
+	for i := range waiters {
+		if !<-results {
+			t.Errorf("waiter %d timed out instead of seeing Ready close", i)
+		}
+	}
+
+	cancel()
+	<-serveDone
+}
+
+// TestHub_Ready_SameChannelOnRepeatedCalls asserts the documented contract
+// that Ready() returns the same channel on every call (no per-call
+// allocation, idempotent for callers that cache the return value).
+func TestHub_Ready_SameChannelOnRepeatedCalls(t *testing.T) {
+	h := newTestHub(t)
+	first := h.Ready()
+	second := h.Ready()
+	if first != second {
+		t.Error("Ready() returned a different channel on a second call")
+	}
+}
+
 func TestHub_Stop_IsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	h, err := NewHub(context.Background(), Config{
