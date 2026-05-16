@@ -4,8 +4,8 @@ go 1.26.0
 
 require (
 	github.com/alecthomas/kong v1.15.0
-	github.com/danmestas/EdgeSync/bridge v0.0.3
-	github.com/danmestas/EdgeSync/leaf v0.0.11
+	github.com/danmestas/EdgeSync/bridge v0.0.4
+	github.com/danmestas/EdgeSync/leaf v0.0.12
 	github.com/danmestas/libfossil v0.6.2
 	github.com/danmestas/libfossil/db/driver/modernc v0.2.0
 	github.com/nats-io/nats-server/v2 v2.12.6
