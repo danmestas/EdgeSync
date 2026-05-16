@@ -60,6 +60,21 @@ type Config struct {
 	// 0 = auto-pick.
 	NATSLeafPort int
 
+	// EnableWebSocket turns on the embedded NATS server's WebSocket
+	// listener. Off by default — opt-in for security (no TLS/WSS is wired
+	// up here; see issue #176). When true the listener binds on
+	// 127.0.0.1:NATSWebSocketPort with NoTLS=true.
+	//
+	// A separate bool (rather than overloading NATSWebSocketPort) is
+	// required because 0 already means "auto-pick" for the sibling port
+	// knobs, leaving no room for a "disabled" sentinel.
+	EnableWebSocket bool
+
+	// NATSWebSocketPort is the embedded NATS server's WebSocket listener
+	// port when EnableWebSocket is true. 0 = auto-pick. Ignored when
+	// EnableWebSocket is false.
+	NATSWebSocketPort int
+
 	// LeafUpstream is an optional upstream leafnode URL to solicit a
 	// connection toward (e.g. "nats-leaf://hub.example:7422"). When set,
 	// this hub acts as a leaf of that upstream — subjects published locally
@@ -153,9 +168,10 @@ type Hub struct {
 	syncSubject   string
 	commitSubject string
 
-	httpAddr string
-	natsURL  string
-	leafURL  string
+	httpAddr     string
+	natsURL      string
+	leafURL      string
+	websocketURL string
 
 	checkpointStop chan struct{}
 	checkpointDone chan struct{}
@@ -236,6 +252,11 @@ func NewHub(ctx context.Context, cfg Config) (*Hub, error) {
 		leafAddr = fmt.Sprintf("nats-leaf://127.0.0.1:%d", varz.LeafNode.Port)
 	}
 
+	wsURL := ""
+	if cfg.EnableWebSocket {
+		wsURL = natsServer.WebsocketURL()
+	}
+
 	h := &Hub{
 		repo:         repo,
 		server:       natsServer,
@@ -243,6 +264,7 @@ func NewHub(ctx context.Context, cfg Config) (*Hub, error) {
 		httpAddr:     httpLn.Addr().String(),
 		natsURL:      natsServer.ClientURL(),
 		leafURL:      leafAddr,
+		websocketURL: wsURL,
 		ready:        make(chan struct{}),
 	}
 
@@ -585,6 +607,11 @@ func (h *Hub) ServerName() string { return h.server.Name() }
 // from Config.LeafUpstream, which is the input URL this hub itself solicits.
 func (h *Hub) LeafURL() string { return h.leafURL }
 
+// NATSWebSocketURL returns the embedded NATS server's WebSocket client URL
+// (e.g. "ws://127.0.0.1:NNNN") when Config.EnableWebSocket is true, or "" when
+// WebSocket is disabled (the default). No TLS/WSS is wired up — see issue #176.
+func (h *Hub) NATSWebSocketURL() string { return h.websocketURL }
+
 // HTTPAddr returns the host:port the fossil HTTP server is bound to.
 func (h *Hub) HTTPAddr() string { return h.httpAddr }
 
@@ -649,6 +676,14 @@ func startNATS(cfg Config) (*natsserver.Server, error) {
 	}
 	opts.LeafNode.Host = "127.0.0.1"
 	opts.LeafNode.Port = portOrAuto(cfg.NATSLeafPort)
+
+	if cfg.EnableWebSocket {
+		opts.Websocket = natsserver.WebsocketOpts{
+			Host:  "127.0.0.1",
+			Port:  portOrAuto(cfg.NATSWebSocketPort),
+			NoTLS: true, // TLS/WSS out of scope — issue #176
+		}
+	}
 
 	if cfg.LeafUpstream != "" {
 		u, err := url.Parse(cfg.LeafUpstream)

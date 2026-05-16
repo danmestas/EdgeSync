@@ -19,6 +19,8 @@ type Config struct {
     FossilHTTPPort     int           // 0 = auto-pick
     NATSClientPort     int           // 0 = auto-pick
     NATSLeafPort       int           // 0 = auto-pick
+    EnableWebSocket    bool          // false = WS listener off (default; opt-in, no TLS/WSS)
+    NATSWebSocketPort  int           // 0 = auto-pick when EnableWebSocket=true; ignored otherwise
     LeafUpstream       string        // optional "nats-leaf://host:port" to solicit upstream; empty = root hub
     CheckpointInterval time.Duration // 0 = 10s (PASSIVE WAL checkpoint cadence)
 }
@@ -29,10 +31,11 @@ func NewHub(ctx context.Context, cfg Config) (*Hub, error)
 func (h *Hub) ServeHTTP(ctx context.Context) error
 func (h *Hub) Stop() error
 
-func (h *Hub) NATSURL() string       // "nats://127.0.0.1:NNNN"
-func (h *Hub) LeafUpstream() string  // "nats-leaf://127.0.0.1:LLLL" (this hub's leafnode listener)
-func (h *Hub) HTTPAddr() string      // "127.0.0.1:HHHH"
-func (h *Hub) ServerName() string    // live NATS server identity (Config.ServerName or auto-generated)
+func (h *Hub) NATSURL() string          // "nats://127.0.0.1:NNNN"
+func (h *Hub) NATSWebSocketURL() string // "ws://127.0.0.1:NNNN" when EnableWebSocket; "" otherwise
+func (h *Hub) LeafUpstream() string     // "nats-leaf://127.0.0.1:LLLL" (this hub's leafnode listener)
+func (h *Hub) HTTPAddr() string         // "127.0.0.1:HHHH"
+func (h *Hub) ServerName() string       // live NATS server identity (Config.ServerName or auto-generated)
 
 type User struct{ Login, Caps string }
 
