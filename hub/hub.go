@@ -162,11 +162,14 @@ type Hub struct {
 	httpListener net.Listener
 	httpServer   *http.Server
 
-	natsClient    *nats.Conn
-	natsSyncSub   *nats.Subscription
-	natsCommitSub *nats.Subscription
-	syncSubject   string
-	commitSubject string
+	natsClient      *nats.Conn
+	natsSyncSub     *nats.Subscription
+	natsPeerSyncSub *nats.Subscription
+	natsCommitSub   *nats.Subscription
+	syncSubject     string
+	peerSyncSubject string
+	commitSubject   string
+	peerID          string
 
 	httpAddr     string
 	natsURL      string
@@ -280,6 +283,9 @@ func NewHub(ctx context.Context, cfg Config) (*Hub, error) {
 			if h.natsSyncSub != nil {
 				_ = h.natsSyncSub.Unsubscribe()
 			}
+			if h.natsPeerSyncSub != nil {
+				_ = h.natsPeerSyncSub.Unsubscribe()
+			}
 			if h.natsClient != nil {
 				h.natsClient.Close()
 			}
@@ -323,9 +329,26 @@ func (h *Hub) startCheckpointLoop(interval time.Duration) {
 }
 
 // startFossilSyncSubscriber connects a local NATS client to the embedded
-// server and subscribes to "<prefix>.<project-code>.sync", dispatching
-// incoming xfer payloads to the hub repo's HandleSync. Invoked by NewHub
-// when Config.DisableFossilSyncOverNATS is false.
+// server and subscribes to two subjects for incoming xfer payloads,
+// dispatching both to the hub repo's HandleSync:
+//
+//  1. "<prefix>.<project-code>.sync" — the broadcast subject used by
+//     external leaf-agent pushes. Joined as a NATS queue group keyed on
+//     the project-code so that across a multi-hub cluster only ONE hub
+//     responds to any given broadcast request. Without the queue group,
+//     every hub on the project would answer and nats.Request would
+//     non-deterministically pick the first reply — see #162.
+//
+//  2. "<prefix>.<project-code>.sync.<peer-id>" — a per-peer addressed
+//     subject. Used by hub-to-hub pulls triggered by .commit
+//     notifications: the puller addresses the originating peer
+//     directly so the response is deterministic regardless of how many
+//     other hubs share the project-code.
+//
+// peerID is the hub's NATS server name. Reconnects keep the same server
+// name because the embedded server's name is stable across the client's
+// reconnect window. Invoked by NewHub when Config.DisableFossilSyncOverNATS
+// is false.
 func (h *Hub) startFossilSyncSubscriber(cfg Config) error {
 	projectCode, err := h.repo.handle.Config("project-code")
 	if err != nil {
@@ -340,6 +363,11 @@ func (h *Hub) startFossilSyncSubscriber(cfg Config) error {
 		prefix = "fossil"
 	}
 	subject := prefix + "." + projectCode + ".sync"
+	peerID := h.server.Name()
+	if peerID == "" {
+		return fmt.Errorf("hub: NATS server name is empty; cannot derive peer-id for addressed .sync subject")
+	}
+	peerSubject := subject + "." + peerID
 
 	nc, err := nats.Connect(h.natsURL,
 		nats.Name("edgesync-hub"),
@@ -353,7 +381,7 @@ func (h *Hub) startFossilSyncSubscriber(cfg Config) error {
 		return fmt.Errorf("hub: connect local NATS for fossil-sync subscriber: %w", err)
 	}
 
-	sub, err := nc.Subscribe(subject, func(msg *nats.Msg) {
+	handle := func(msg *nats.Msg) {
 		respBytes, hsErr := h.repo.handle.HandleSync(context.Background(), msg.Data)
 		if hsErr != nil {
 			// Empty response signals failure to the caller without hanging.
@@ -361,32 +389,52 @@ func (h *Hub) startFossilSyncSubscriber(cfg Config) error {
 			return
 		}
 		_ = msg.Respond(respBytes)
-	})
-	if err != nil {
-		nc.Close()
-		return fmt.Errorf("hub: subscribe %s: %w", subject, err)
 	}
 
-	// Flush so the server has registered the subscription before NewHub
+	// Queue-group scope is the project-code so cross-project hub clusters
+	// (unlikely today but cheap to guarantee) don't share a queue.
+	queue := "sync-" + projectCode
+	sub, err := nc.QueueSubscribe(subject, queue, handle)
+	if err != nil {
+		nc.Close()
+		return fmt.Errorf("hub: queue-subscribe %s: %w", subject, err)
+	}
+
+	peerSub, err := nc.Subscribe(peerSubject, handle)
+	if err != nil {
+		_ = sub.Unsubscribe()
+		nc.Close()
+		return fmt.Errorf("hub: subscribe %s: %w", peerSubject, err)
+	}
+
+	// Flush so the server has registered the subscriptions before NewHub
 	// returns. Tests that publish immediately after NewHub depend on this.
 	if err := nc.FlushTimeout(2 * time.Second); err != nil {
 		_ = sub.Unsubscribe()
+		_ = peerSub.Unsubscribe()
 		nc.Close()
 		return fmt.Errorf("hub: flush fossil-sync subscription: %w", err)
 	}
 
 	h.natsClient = nc
 	h.natsSyncSub = sub
+	h.natsPeerSyncSub = peerSub
 	h.syncSubject = subject
+	h.peerSyncSubject = peerSubject
+	h.peerID = peerID
 	return nil
 }
 
 // commitNotification is the JSON payload published on the .commit subject
-// when a new commit lands. Peers decode it and pull the manifest via the
-// .sync subject.
+// when a new commit lands. Peers decode it and pull the manifest from the
+// originating peer via the addressed "<prefix>.<project-code>.sync.<peer-id>"
+// subject. PeerID is the publisher hub's NATS server name; pullers MUST
+// route requests through it rather than the broadcast .sync subject to
+// avoid the multi-responder race documented in #162.
 type commitNotification struct {
-	RID  int64  `json:"rid"`
-	UUID string `json:"uuid"`
+	RID    int64  `json:"rid"`
+	UUID   string `json:"uuid"`
+	PeerID string `json:"peer_id"`
 }
 
 // startCommitSubscriber subscribes to "<prefix>.<project-code>.commit" and,
@@ -410,14 +458,33 @@ func (h *Hub) startCommitSubscriber(cfg Config) error {
 	}
 	commitSubject := prefix + "." + projectCode + ".commit"
 	syncSubject := prefix + "." + projectCode + ".sync"
+	ownPeerID := h.peerID
 
-	pullTransport := newNATSTransport(h.natsClient, syncSubject, 0)
 	sub, err := h.natsClient.Subscribe(commitSubject, func(msg *nats.Msg) {
 		var n commitNotification
 		if jsonErr := json.Unmarshal(msg.Data, &n); jsonErr != nil {
 			log.Printf("hub commit subscriber: decode notification: %v", jsonErr)
 			return
 		}
+		// PeerID is required: without it we'd have to fall back to the
+		// broadcast .sync subject, which is exactly the multi-responder
+		// race #162 fixes. Drop notifications missing it (would only
+		// happen against an older publisher that pre-dates this fix).
+		if n.PeerID == "" {
+			log.Printf("hub commit subscriber: notification missing peer_id rid=%d uuid=%s; refusing broadcast pull (see #162)", n.RID, n.UUID)
+			return
+		}
+		// Self-notifications can happen even with NoEcho when a
+		// publish from this hub round-trips back via an upstream leaf.
+		// Skip them so we don't try to pull from ourselves.
+		if n.PeerID == ownPeerID {
+			return
+		}
+		// Address the pull at the publishing peer directly via its
+		// per-peer .sync subject so exactly that peer responds — no
+		// race with stale subscribers on the broadcast subject.
+		peerSyncSubject := syncSubject + "." + n.PeerID
+		pullTransport := newNATSTransport(h.natsClient, peerSyncSubject, 0)
 		// Pull is naturally idempotent — if we already have the uuid,
 		// the sync round converges with zero rounds / zero blobs. So
 		// we skip the up-front existence check and let the protocol
@@ -429,7 +496,7 @@ func (h *Hub) startCommitSubscriber(cfg Config) error {
 			ProjectCode: projectCode,
 			PeerID:      "edgesync-hub",
 		}); syncErr != nil {
-			log.Printf("hub commit subscriber: pull triggered by notification rid=%d uuid=%s: %v", n.RID, n.UUID, syncErr)
+			log.Printf("hub commit subscriber: pull triggered by notification rid=%d uuid=%s peer=%s: %v", n.RID, n.UUID, n.PeerID, syncErr)
 		}
 	})
 	if err != nil {
@@ -441,9 +508,12 @@ func (h *Hub) startCommitSubscriber(cfg Config) error {
 	}
 
 	// Wire publish hook on the repo so future commits notify peers.
+	// PeerID is required so receivers can address their pull-back at
+	// this specific hub rather than fanning out a broadcast request
+	// that's vulnerable to the #162 multi-responder race.
 	nc := h.natsClient
 	h.repo.publish = func(rid int64, uuid string) {
-		payload, jsonErr := json.Marshal(commitNotification{RID: rid, UUID: uuid})
+		payload, jsonErr := json.Marshal(commitNotification{RID: rid, UUID: uuid, PeerID: ownPeerID})
 		if jsonErr != nil {
 			log.Printf("hub commit publish: encode notification rid=%d uuid=%s: %v", rid, uuid, jsonErr)
 			return
@@ -570,6 +640,9 @@ func (h *Hub) Stop() error {
 		}
 		if h.natsSyncSub != nil {
 			_ = h.natsSyncSub.Unsubscribe()
+		}
+		if h.natsPeerSyncSub != nil {
+			_ = h.natsPeerSyncSub.Unsubscribe()
 		}
 		if h.natsClient != nil {
 			h.natsClient.Close()
