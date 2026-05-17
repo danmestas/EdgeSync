@@ -406,6 +406,130 @@ func TestCrossLeaf_SubjectsAlign(t *testing.T) {
 	}
 }
 
+// TestCrossLeaf_ThreeHubs_CommitAnnouncePropagatesToAll exercises the
+// 3-hub star topology that production sesh actually runs (per-session
+// hubs leaf-linked to a central ~/.sesh/hub.repo), which the existing
+// 2-hub propagation tests do not cover. hubB and hubC both leaf-link to
+// hubA; all three share the same project-code so they're subscribed to
+// the same .sync and .commit subjects.
+//
+// Asserts the property the original brief on #179 claimed was broken:
+// a commit on any peer propagates to BOTH of the other two peers via
+// the .commit notify → .sync pull pipeline. If this test hangs at the
+// 10s wait, we've reproduced what `orch/test/docker-sesh` F11 sees in
+// production sesh and the underlying cause is #162 (multi-responder
+// race on .sync — every peer with a sub matches the request, only the
+// first reply wins, and a stale responder silently starves the pulling
+// hub). If it passes, the hub layer is sound for 3+ hub topologies and
+// F11's gap lives downstream of EdgeSync (sesh wiring, project-code
+// drift, or docker-sesh infra).
+//
+// Both directions are checked: a commit on B is asserted at A AND C;
+// then a commit on C is asserted at A AND B. The reverse direction
+// covers the case where the publishing hub is *not* the topology root.
+func TestCrossLeaf_ThreeHubs_CommitAnnouncePropagatesToAll(t *testing.T) {
+	if testing.Short() {
+		// BLOCKED ON #162 — cross-leaf 3-hub commit propagation hangs on
+		// the multi-responder .sync race. Remove this skip once #162 is
+		// fixed; the test then serves as the regression sentinel for the
+		// 3+ hub topology that production sesh relies on.
+		t.Skip("reproduces #162 — multi-responder .sync race; enable in -short once #162 fix lands")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// hubA is the topology root; B and C both leaf-link to it.
+	dirA := t.TempDir()
+	hubA, err := NewHub(ctx, Config{
+		RepoPath:    filepath.Join(dirA, "hubA.fossil"),
+		ProjectCode: sharedProjectCode,
+		NobodyCaps:  "gio",
+	})
+	if err != nil {
+		t.Fatalf("NewHub A: %v", err)
+	}
+	t.Cleanup(func() { _ = hubA.Stop() })
+
+	httpCtxA, httpCancelA := context.WithCancel(context.Background())
+	t.Cleanup(httpCancelA)
+	go func() { _ = hubA.ServeHTTP(httpCtxA) }()
+
+	dirB := t.TempDir()
+	hubB, err := NewHub(ctx, Config{
+		RepoPath:     filepath.Join(dirB, "hubB.fossil"),
+		ProjectCode:  sharedProjectCode,
+		LeafUpstream: hubA.LeafURL(),
+		NobodyCaps:   "gio",
+	})
+	if err != nil {
+		t.Fatalf("NewHub B: %v", err)
+	}
+	t.Cleanup(func() { _ = hubB.Stop() })
+
+	httpCtxB, httpCancelB := context.WithCancel(context.Background())
+	t.Cleanup(httpCancelB)
+	go func() { _ = hubB.ServeHTTP(httpCtxB) }()
+
+	dirC := t.TempDir()
+	hubC, err := NewHub(ctx, Config{
+		RepoPath:     filepath.Join(dirC, "hubC.fossil"),
+		ProjectCode:  sharedProjectCode,
+		LeafUpstream: hubA.LeafURL(),
+		NobodyCaps:   "gio",
+	})
+	if err != nil {
+		t.Fatalf("NewHub C: %v", err)
+	}
+	t.Cleanup(func() { _ = hubC.Stop() })
+
+	httpCtxC, httpCancelC := context.WithCancel(context.Background())
+	t.Cleanup(httpCancelC)
+	go func() { _ = hubC.ServeHTTP(httpCtxC) }()
+
+	// Both leaves must be up before any commit fires; otherwise the
+	// .commit notify lands in the void and the test sees a false
+	// "propagation broken" signal.
+	waitFor(t, 10*time.Second, "leaf links B→A and C→A", func() bool {
+		return hubA.NumLeafs() >= 2
+	})
+
+	// Direction 1: commit on B, assert A and C converge.
+	if _, err := hubB.Commit(ctx, CommitOpts{
+		Files:   []FileToCommit{{Name: "from-b.txt", Content: []byte("hello-from-B")}},
+		Message: "commit on B (3-hub star)",
+		Author:  "hub",
+	}); err != nil {
+		t.Fatalf("hubB.Commit: %v", err)
+	}
+
+	waitFor(t, 10*time.Second, "A sees from-b.txt at trunk", func() bool {
+		got, readErr := hubA.Read(ctx, "from-b.txt")
+		return readErr == nil && bytes.Equal(got, []byte("hello-from-B"))
+	})
+	waitFor(t, 10*time.Second, "C sees from-b.txt at trunk", func() bool {
+		got, readErr := hubC.Read(ctx, "from-b.txt")
+		return readErr == nil && bytes.Equal(got, []byte("hello-from-B"))
+	})
+
+	// Direction 2: commit on C, assert A and B converge.
+	if _, err := hubC.Commit(ctx, CommitOpts{
+		Files:   []FileToCommit{{Name: "from-c.txt", Content: []byte("hello-from-C")}},
+		Message: "commit on C (3-hub star)",
+		Author:  "hub",
+	}); err != nil {
+		t.Fatalf("hubC.Commit: %v", err)
+	}
+
+	waitFor(t, 10*time.Second, "A sees from-c.txt at trunk", func() bool {
+		got, readErr := hubA.Read(ctx, "from-c.txt")
+		return readErr == nil && bytes.Equal(got, []byte("hello-from-C"))
+	})
+	waitFor(t, 10*time.Second, "B sees from-c.txt at trunk", func() bool {
+		got, readErr := hubB.Read(ctx, "from-c.txt")
+		return readErr == nil && bytes.Equal(got, []byte("hello-from-C"))
+	})
+}
+
 // TestNewHub_ProjectCodeMismatchOnExistingRepo asserts the drift-guard:
 // reopening a repo with a different ProjectCode than what's on disk
 // fails fast.
