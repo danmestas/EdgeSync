@@ -428,13 +428,11 @@ func TestCrossLeaf_SubjectsAlign(t *testing.T) {
 // then a commit on C is asserted at A AND B. The reverse direction
 // covers the case where the publishing hub is *not* the topology root.
 func TestCrossLeaf_ThreeHubs_CommitAnnouncePropagatesToAll(t *testing.T) {
-	if testing.Short() {
-		// BLOCKED ON #162 — cross-leaf 3-hub commit propagation hangs on
-		// the multi-responder .sync race. Remove this skip once #162 is
-		// fixed; the test then serves as the regression sentinel for the
-		// 3+ hub topology that production sesh relies on.
-		t.Skip("reproduces #162 — multi-responder .sync race; enable in -short once #162 fix lands")
-	}
+	// Regression sentinel for #162: ran red under -short until the fix
+	// landed; now runs under both -short and full modes. If this flakes,
+	// the multi-responder .sync race is back. Production sesh's per-session
+	// hubs leaf-link to a central ~/.sesh/hub.repo, putting 3+ hubs on the
+	// same .commit/.sync subjects — exactly this topology.
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
