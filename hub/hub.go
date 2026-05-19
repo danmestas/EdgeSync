@@ -271,6 +271,28 @@ func NewHub(ctx context.Context, cfg Config) (*Hub, error) {
 		ready:        make(chan struct{}),
 	}
 
+	// Build the HTTP mux + server here, in NewHub, rather than inside
+	// ServeHTTP. Single-writer (this function), many-readers (ServeHTTP,
+	// Stop). After NewHub returns, h.httpServer is immutable for the
+	// hub's lifetime, so the Stop-vs-ServeHTTP read/write race that
+	// existed when ServeHTTP wrote h.httpServer mid-goroutine is gone
+	// by construction — no mutex, no atomic, no sync.Once required.
+	// (Issue #187.)
+	mux := http.NewServeMux()
+	xfer := h.repo.handle.XferHandler()
+	// Wrap XferHandler so commits arriving via an external `fossil push
+	// <hub-http>` (which writes artifacts straight into the SQLite repo
+	// via libfossil's xfer protocol, bypassing Repo.Commit) still trigger
+	// the .commit auto-publish that Repo.Commit installs. publishNewCommits
+	// is a no-op when nothing new landed (typical for pull/clone) or when
+	// the publish hook isn't wired (DisableFossilSyncOverNATS), so it's
+	// safe to fire on every request. Issue #160.
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		xfer.ServeHTTP(w, r)
+		h.repo.publishNewCommits()
+	}))
+	h.httpServer = &http.Server{Handler: mux}
+
 	if !cfg.DisableFossilSyncOverNATS {
 		if err := h.startFossilSyncSubscriber(cfg); err != nil {
 			natsServer.Shutdown()
@@ -571,23 +593,15 @@ func (h *Hub) startPublishCatchup() {
 // ServeHTTP runs the fossil HTTP server (timeline UI + xfer endpoint)
 // against the listener bound by NewHub. Blocks until ctx is cancelled or
 // Stop is called.
+//
+// The http.Server itself is constructed by NewHub; ServeHTTP only consumes
+// it. This is by design: a single writer (NewHub) and many readers
+// (ServeHTTP, Stop, …) means no concurrent write on h.httpServer, so no
+// race between Stop and a not-yet-started ServeHTTP. Issue #187.
 func (h *Hub) ServeHTTP(ctx context.Context) error {
-	mux := http.NewServeMux()
-	xfer := h.repo.handle.XferHandler()
-	// Wrap XferHandler so commits arriving via an external `fossil push
-	// <hub-http>` (which writes artifacts straight into the SQLite repo
-	// via libfossil's xfer protocol, bypassing Repo.Commit) still trigger
-	// the .commit auto-publish that Repo.Commit installs. publishNewCommits
-	// is a no-op when nothing new landed (typical for pull/clone) or when
-	// the publish hook isn't wired (DisableFossilSyncOverNATS), so it's
-	// safe to fire on every request. Issue #160.
-	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		xfer.ServeHTTP(w, r)
-		h.repo.publishNewCommits()
-	}))
-
-	srv := &http.Server{Handler: mux}
-	h.httpServer = srv
+	assert(h.httpServer != nil, "ServeHTTP called before NewHub finished (h.httpServer == nil)")
+	assert(h.httpListener != nil, "ServeHTTP called before NewHub finished (h.httpListener == nil)")
+	srv := h.httpServer
 
 	go func() {
 		<-ctx.Done()
@@ -623,18 +637,29 @@ func (h *Hub) Ready() <-chan struct{} { return h.ready }
 
 // Stop tears down the embedded NATS server and any HTTP listeners. Safe to
 // call multiple times.
+//
+// h.httpServer and h.httpListener are populated by NewHub and immutable for
+// the hub's lifetime, so Stop reads them without coordination with a
+// concurrent ServeHTTP. The asserts surface a programmer-bug if Stop is
+// somehow called against a Hub the constructor didn't finish (today
+// impossible — NewHub only returns a *Hub on success). Issue #187.
 func (h *Hub) Stop() error {
+	assert(h.httpServer != nil, "Stop called on a Hub NewHub did not finish constructing (h.httpServer == nil)")
+	assert(h.httpListener != nil, "Stop called on a Hub NewHub did not finish constructing (h.httpListener == nil)")
 	var firstErr error
 	h.stopOnce.Do(func() {
-		if h.httpServer != nil {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := h.httpServer.Shutdown(shutdownCtx); err != nil && err != http.ErrServerClosed {
-				firstErr = fmt.Errorf("hub: shutdown HTTP: %w", err)
-			}
-		} else if h.httpListener != nil {
-			h.httpListener.Close()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := h.httpServer.Shutdown(shutdownCtx); err != nil && err != http.ErrServerClosed {
+			firstErr = fmt.Errorf("hub: shutdown HTTP: %w", err)
 		}
+		// Shutdown only closes listeners srv.Serve was actually called
+		// against. If ServeHTTP never ran, the bound listener from
+		// NewHub is still open; close it explicitly. Idempotent — a
+		// second Close on an already-closed listener returns an error
+		// which we deliberately ignore (Stop is itself idempotent via
+		// stopOnce above).
+		_ = h.httpListener.Close()
 		if h.natsCommitSub != nil {
 			_ = h.natsCommitSub.Unsubscribe()
 		}
