@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,39 +9,70 @@ import (
 	"testing"
 )
 
-// buildBinary builds the edgesync binary into a temp dir and returns its path.
-func buildBinary(t *testing.T) string {
-	t.Helper()
-	bin := filepath.Join(t.TempDir(), "edgesync")
-	cmd := exec.Command("go", "build", "-buildvcs=false", "-o", bin, "./cmd/edgesync/")
-	// Build from the repo root (where go.mod lives).
-	cmd.Dir = repoRoot(t)
-	out, err := cmd.CombinedOutput()
+// sharedBinary is the path to the edgesync binary built once by TestMain
+// and reused across every test in this package. Building only once avoids a
+// build-storm — without this, each test's buildBinary() invocation ran its own
+// `go build`, and under cold-cache / parallel-load the cumulative cost pushed
+// the package past `go test -timeout=30s` (see issue #170).
+var sharedBinary string
+
+func TestMain(m *testing.M) {
+	// Build into a temp dir that survives until the process exits.
+	dir, err := os.MkdirTemp("", "edgesync-test-bin-")
 	if err != nil {
-		t.Fatalf("build failed: %s\n%s", err, out)
+		fmt.Fprintf(os.Stderr, "tempdir: %s\n", err)
+		os.Exit(2)
 	}
-	return bin
+
+	root, err := findRepoRoot()
+	if err != nil {
+		os.RemoveAll(dir)
+		fmt.Fprintf(os.Stderr, "find repo root: %s\n", err)
+		os.Exit(2)
+	}
+
+	sharedBinary = filepath.Join(dir, "edgesync")
+	cmd := exec.Command("go", "build", "-buildvcs=false", "-o", sharedBinary, "./cmd/edgesync/")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		os.RemoveAll(dir)
+		fmt.Fprintf(os.Stderr, "build edgesync binary: %s\n%s", err, out)
+		os.Exit(2)
+	}
+
+	// os.Exit skips deferred functions, so clean up explicitly between
+	// running tests and exiting. (Ousterhout follow-up to PR #186.)
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
 
-// repoRoot returns the root of the EdgeSync repo (parent of cmd/).
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	// This test file is in cmd/edgesync/, so go two levels up.
+// findRepoRoot locates the EdgeSync repo root (parent of cmd/) starting from
+// the test's working directory.
+func findRepoRoot() (string, error) {
 	wd, err := os.Getwd()
 	if err != nil {
-		t.Fatal(err)
+		return "", err
 	}
-	// When running tests, cwd is the package dir (cmd/edgesync/).
-	// Go up to repo root.
+	// When `go test` runs, cwd is the package dir (cmd/edgesync/).
 	root := filepath.Dir(filepath.Dir(wd))
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
-		t.Fatalf("could not find repo root from %s", wd)
+		return "", fmt.Errorf("could not find repo root from %s: %w", wd, err)
 	}
-	return root
+	return root, nil
+}
+
+// edgesyncBin returns the shared edgesync binary path.
+func edgesyncBin(t *testing.T) string {
+	t.Helper()
+	if sharedBinary == "" {
+		t.Fatal("sharedBinary is empty — TestMain did not run")
+	}
+	return sharedBinary
 }
 
 func TestNotifyCLIInit(t *testing.T) {
-	bin := buildBinary(t)
+	bin := edgesyncBin(t)
 	tmp := t.TempDir()
 
 	// -R points to a fake repo path — init creates notify.fossil next to it.
@@ -65,7 +97,7 @@ func TestNotifyCLIInit(t *testing.T) {
 }
 
 func TestNotifyCLIPairAndDevices(t *testing.T) {
-	bin := buildBinary(t)
+	bin := edgesyncBin(t)
 	tmp := t.TempDir()
 	fakeRepo := filepath.Join(tmp, "project.fossil")
 
@@ -104,7 +136,7 @@ func TestNotifyCLIPairAndDevices(t *testing.T) {
 }
 
 func TestNotifyCLIUnpair(t *testing.T) {
-	bin := buildBinary(t)
+	bin := edgesyncBin(t)
 	tmp := t.TempDir()
 	fakeRepo := filepath.Join(tmp, "project.fossil")
 
@@ -122,7 +154,7 @@ func TestNotifyCLIUnpair(t *testing.T) {
 }
 
 func TestNotifyCLISendAndThreads(t *testing.T) {
-	bin := buildBinary(t)
+	bin := edgesyncBin(t)
 	tmp := t.TempDir()
 	fakeRepo := filepath.Join(tmp, "project.fossil")
 
