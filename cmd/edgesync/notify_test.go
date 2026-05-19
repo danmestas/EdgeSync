@@ -23,10 +23,10 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "tempdir: %s\n", err)
 		os.Exit(2)
 	}
-	defer os.RemoveAll(dir)
 
 	root, err := findRepoRoot()
 	if err != nil {
+		os.RemoveAll(dir)
 		fmt.Fprintf(os.Stderr, "find repo root: %s\n", err)
 		os.Exit(2)
 	}
@@ -35,11 +35,16 @@ func TestMain(m *testing.M) {
 	cmd := exec.Command("go", "build", "-buildvcs=false", "-o", sharedBinary, "./cmd/edgesync/")
 	cmd.Dir = root
 	if out, err := cmd.CombinedOutput(); err != nil {
+		os.RemoveAll(dir)
 		fmt.Fprintf(os.Stderr, "build edgesync binary: %s\n%s", err, out)
 		os.Exit(2)
 	}
 
-	os.Exit(m.Run())
+	// os.Exit skips deferred functions, so clean up explicitly between
+	// running tests and exiting. (Ousterhout follow-up to PR #186.)
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 // findRepoRoot locates the EdgeSync repo root (parent of cmd/) starting from
