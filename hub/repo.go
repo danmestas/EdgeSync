@@ -35,6 +35,15 @@ type Repo struct {
 	closeMu sync.Mutex
 	closed  bool
 
+	// usersMu serializes EnsureUser's get-then-create sequence so two
+	// in-process callers racing on the same login cannot both observe
+	// "absent" and then both attempt CreateUser (the loser would surface
+	// a UNIQUE-constraint error from the underlying user table).
+	// AddUser / RemoveUser / SetUserCaps don't acquire this — they're
+	// single-statement and their existing error contracts already cover
+	// the duplicate / missing cases callers must reason about.
+	usersMu sync.Mutex
+
 	// publish, when non-nil, is invoked after a successful Commit with the
 	// new commit's rid and uuid. NewHub wires this to a NATS publisher on
 	// "<prefix>.<project-code>.commit" so peer hubs can pull the new
@@ -154,6 +163,38 @@ func (r *Repo) SetUserCaps(login, caps string) error {
 	}
 	if err := r.handle.SetCaps(login, caps); err != nil {
 		return fmt.Errorf("hub: set caps for %q: %w", login, err)
+	}
+	return nil
+}
+
+// EnsureUser registers a user with the given capabilities if not already
+// registered. Idempotent: repeated calls with the same login return nil and
+// do not modify the existing row, even when caps differ — existing caps are
+// PRESERVED. Callers that need replace-on-conflict semantics should use
+// SetUserCaps (or RemoveUser + AddUser) explicitly.
+//
+// Returns an error only for genuine failures (login empty, underlying repo
+// unreachable, etc.). The check-then-create sequence is serialized by an
+// internal mutex so concurrent in-process callers racing on the same login
+// all return nil with exactly one registration ultimately landing.
+func (r *Repo) EnsureUser(login, caps string) error {
+	if login == "" {
+		return errors.New("hub: EnsureUser: login is required")
+	}
+	r.usersMu.Lock()
+	defer r.usersMu.Unlock()
+	if _, err := r.handle.GetUser(login); err == nil {
+		return nil
+	}
+	if err := r.handle.CreateUser(libfossil.UserOpts{Login: login, Caps: caps}); err != nil {
+		// Double-check in case a concurrent out-of-process writer landed
+		// the user between our GetUser and CreateUser (unlikely against
+		// our in-process serialization, but the underlying repo file is
+		// shared state). Treat that as success, matching the contract.
+		if _, getErr := r.handle.GetUser(login); getErr == nil {
+			return nil
+		}
+		return fmt.Errorf("hub: ensure user %q: %w", login, err)
 	}
 	return nil
 }
