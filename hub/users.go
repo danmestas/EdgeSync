@@ -25,3 +25,14 @@ func (h *Hub) RemoveUser(login string) error { return h.repo.RemoveUser(login) }
 
 // SetUserCaps replaces the caps string on an existing user.
 func (h *Hub) SetUserCaps(login, caps string) error { return h.repo.SetUserCaps(login, caps) }
+
+// EnsureUser registers a user with the given capabilities if not already
+// registered. Idempotent: repeated calls with the same login return nil and
+// do not modify the existing row, even when caps differ — existing caps are
+// PRESERVED. Callers that need replace-on-conflict semantics should use
+// SetUserCaps (or RemoveUser + AddUser) explicitly.
+//
+// Returns an error only for genuine failures (login empty, underlying repo
+// unreachable, etc.). Safe for concurrent in-process callers racing on the
+// same login.
+func (h *Hub) EnsureUser(login, caps string) error { return h.repo.EnsureUser(login, caps) }
