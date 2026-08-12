@@ -31,7 +31,7 @@ async fn load_or_generate_key(path: &Path) -> anyhow::Result<SecretKey> {
         tracing::info!("loaded existing keypair from {}", path.display());
         Ok(key)
     } else {
-        let key = SecretKey::generate(&mut rand::rng());
+        let key = SecretKey::generate();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
         }
