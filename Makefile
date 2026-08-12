@@ -1,4 +1,4 @@
-.PHONY: build test clean leaf bridge edgesync iroh-sidecar wasm-wasi wasm-browser wasm dst dst-full dst-hostile dst-drivers sim sim-full setup-hooks setup test-interop test-iroh update-libfossil auto-release auto-release-dry
+.PHONY: build test clean leaf bridge edgesync iroh-sidecar wasm-wasi wasm-browser wasm setup-hooks setup test-iroh update-libfossil auto-release auto-release-dry
 
 # --- Build ---
 
@@ -34,7 +34,8 @@ clean:
 	rm -rf bin/
 
 # --- Test (what CI runs) ---
-# Unit tests run in parallel across modules; sim/dst run sequentially after.
+# Unit tests run in parallel across modules; sim integration tests run after.
+# Iroh tests need the sidecar binary — run them via test-iroh.
 
 test:
 	@pids=""; fail=0; \
@@ -42,10 +43,7 @@ test:
 	(cd bridge && go test ./... -short -count=1) & pids="$$pids $$!"; \
 	for pid in $$pids; do wait $$pid || fail=1; done; \
 	if [ $$fail -ne 0 ]; then echo "FAIL: unit tests"; exit 1; fi
-	(cd sim && go test . -run 'TestFaultProxy|TestGenerateSchedule|TestBuggify' -count=1)
-	(cd sim && go test . -run 'TestServeHTTP|TestLeafToLeaf|TestAgentServe|TestHubLeafE2E|TestAgentNew_|TestHubNATSFossilSync_' -count=1 -timeout=120s)
-	(cd sim && go test . -run 'TestInterop' -count=1 -short -timeout=60s)
-	(cd sim && go test . -run 'TestSimulation' -sim.seed=1 -count=1 -timeout=120s)
+	(cd sim && go test . -run 'TestHubLeafE2E|TestAgentNew_|TestHubNATSFossilSync_' -count=1 -timeout=120s)
 
 vet:
 	go vet ./...
@@ -65,27 +63,10 @@ setup-hooks:
 	@echo "Pre-commit hook installed. Runs ~5s of tests before each commit."
 	@echo "Skip with: git commit --no-verify"
 
-# --- Sim (Integration Simulation) — run locally, requires fossil ---
-# Note: DST tests now live in libfossil (github.com/danmestas/libfossil/dst)
-
-# Quick: 1 seed, normal severity
-sim:
-	cd sim && go test . -run TestSimulation -sim.seed=1 -v -timeout=120s
-
-# Full: 16 seeds × 3 severities
-sim-full:
-	@echo "=== Sim full (16 seeds × 3 severities) ==="
-	@for severity in normal adversarial hostile; do \
-		for seed in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do \
-			echo "  seed=$$seed severity=$$severity ..."; \
-			(cd sim && go test . -run TestSimulation -sim.seed=$$seed -sim.severity=$$severity -timeout=120s) || true; \
-		done; \
-	done
-	@echo "=== Sim full done ==="
-
-# Fossil interop: Tier 1 + Tier 2 (requires fossil binary, Tier 2 samples 5K+2K blobs)
-test-interop:
-	cd sim && go test -buildvcs=false . -run TestInterop -timeout=10m -v
+# --- Sim (Integration Simulation) ---
+# DST and the seed-sweep simulation/interop suites live in go-libfossil
+# (github.com/danmestas/go-libfossil): the old sim/dst regex targets here
+# ran against tests that were removed in the v0.2.0 handle-API migration.
 
 # Iroh P2P: build sidecar then run iroh unit + integration tests
 test-iroh: iroh-sidecar
