@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"sync"
 
-	libfossil "github.com/danmestas/libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // publishedRIDConfigKey is the libfossil-config row that persists the

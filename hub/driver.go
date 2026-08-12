@@ -13,4 +13,4 @@ package hub
 // syscalls under those targets. The build constraint above excludes this
 // file from wasm compilation; wasm consumers must register their own
 // driver (libfossil's ncruces driver has wasm support via ncruces_js.go).
-import _ "github.com/danmestas/libfossil/db/driver/modernc"
+import _ "github.com/danmestas/go-libfossil/db/driver/modernc"

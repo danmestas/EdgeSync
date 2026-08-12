@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	libfossil "github.com/danmestas/libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 	"github.com/danmestas/EdgeSync/leaf/agent"
 	"github.com/danmestas/EdgeSync/leaf/telemetry"
 )

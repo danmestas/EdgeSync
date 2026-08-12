@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	libfossil "github.com/danmestas/libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 func TestHub_FileToCommit_PermXMarksExecutable(t *testing.T) {
@@ -64,16 +64,15 @@ func TestHub_CommitOpts_TimeIsHonoured(t *testing.T) {
 	}
 
 	r := h.Repo().handle
-	rid, err := r.ResolveVersion(string(rev))
-	if err != nil {
-		t.Fatalf("ResolveVersion: %v", err)
-	}
-	entries, err := r.Timeline(libfossil.LogOpts{Start: rid, Limit: 1})
+	entries, err := r.Timeline(libfossil.TimelineOpts{Limit: 1})
 	if err != nil {
 		t.Fatalf("Timeline: %v", err)
 	}
 	if len(entries) == 0 {
 		t.Fatal("Timeline returned no entries")
+	}
+	if entries[0].UUID != string(rev) {
+		t.Fatalf("newest timeline entry = %s, want committed rev %s", entries[0].UUID, rev)
 	}
 	got := entries[0].Time.UTC()
 	if !got.Equal(want) {
@@ -97,16 +96,15 @@ func TestHub_CommitOpts_ZeroTimeDefaultsToNow(t *testing.T) {
 	after := time.Now().UTC().Add(1 * time.Second)
 
 	r := h.Repo().handle
-	rid, err := r.ResolveVersion(string(rev))
-	if err != nil {
-		t.Fatalf("ResolveVersion: %v", err)
-	}
-	entries, err := r.Timeline(libfossil.LogOpts{Start: rid, Limit: 1})
+	entries, err := r.Timeline(libfossil.TimelineOpts{Limit: 1})
 	if err != nil {
 		t.Fatalf("Timeline: %v", err)
 	}
 	if len(entries) == 0 {
 		t.Fatal("Timeline returned no entries")
+	}
+	if entries[0].UUID != string(rev) {
+		t.Fatalf("newest timeline entry = %s, want committed rev %s", entries[0].UUID, rev)
 	}
 	got := entries[0].Time.UTC()
 	if got.Before(before) || got.After(after) {

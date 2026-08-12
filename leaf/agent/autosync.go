@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	libfossil "github.com/danmestas/libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // AutosyncMode controls the autosync behavior around commit.

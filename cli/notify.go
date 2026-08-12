@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/danmestas/EdgeSync/leaf/agent/notify"
-	libfossil "github.com/danmestas/libfossil"
-	libfossilcli "github.com/danmestas/libfossil/cli"
+	libfossil "github.com/danmestas/go-libfossil"
+	libfossilcli "github.com/danmestas/go-libfossil/cli"
 	"github.com/nats-io/nats.go"
 )
 

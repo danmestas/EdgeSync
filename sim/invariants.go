@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	libfossil "github.com/danmestas/libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // InvariantResult describes a single invariant check outcome.

@@ -6,8 +6,8 @@ require (
 	github.com/alecthomas/kong v1.16.1
 	github.com/danmestas/EdgeSync/bridge v0.0.4
 	github.com/danmestas/EdgeSync/leaf v0.0.12
-	github.com/danmestas/libfossil v0.6.3
-	github.com/danmestas/libfossil/db/driver/modernc v0.2.0
+	github.com/danmestas/go-libfossil v0.9.0
+	github.com/danmestas/go-libfossil/db/driver/modernc v0.3.0
 	github.com/nats-io/nats-server/v2 v2.14.5
 	github.com/nats-io/nats.go v1.53.1
 )

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	libfossil "github.com/danmestas/libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // InitNotifyRepo creates a new notify.fossil repo at the given path.

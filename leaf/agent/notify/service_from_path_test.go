@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	libfossil "github.com/danmestas/libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 func TestNewServiceFromPath_FreshPath_CreatesRepo(t *testing.T) {

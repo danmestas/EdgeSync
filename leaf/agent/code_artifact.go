@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	libfossil "github.com/danmestas/libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // RevID is an opaque commit handle. Treat as opaque; do not parse.

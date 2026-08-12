@@ -11,9 +11,9 @@ import (
 
 	leafagent "github.com/danmestas/EdgeSync/leaf/agent"
 
-	libfossil "github.com/danmestas/libfossil"
-	_ "github.com/danmestas/libfossil/db/driver/modernc"
-	"github.com/danmestas/libfossil/testutil"
+	libfossil "github.com/danmestas/go-libfossil"
+	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
+	"github.com/danmestas/go-libfossil/testutil"
 )
 
 // startFossilServer starts a fossil server on a free port and returns the URL
@@ -67,10 +67,10 @@ ready:
 }
 
 func TestIntegrationLeafBridgeFossil(t *testing.T) {
-	if !testutil.HasFossil() {
+	bin := testutil.FossilBinary()
+	if bin == "" {
 		t.Skip("fossil not in PATH")
 	}
-	bin := testutil.FossilBinary()
 
 	dir := t.TempDir()
 

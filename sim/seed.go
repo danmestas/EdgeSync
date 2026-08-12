@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 
-	libfossil "github.com/danmestas/libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // SeedResult records what was seeded into a leaf repo.
