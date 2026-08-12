@@ -56,3 +56,6 @@ node_modules/
 
 # Local-only MCP config (personal paths, internal endpoints)
 .mcp.json
+
+# Local agent tooling traces
+.agent-config/
