@@ -15,11 +15,7 @@ use crate::NATS_ALPN;
 ///
 /// Each incoming connection is handled in a tracked task so we can await
 /// all in-flight work on shutdown rather than killing tasks mid-request.
-pub async fn run_accept_loop(
-    endpoint: Endpoint,
-    callback_url: String,
-    nats_addr: Option<String>,
-) {
+pub async fn run_accept_loop(endpoint: Endpoint, callback_url: String, nats_addr: Option<String>) {
     let client = reqwest::Client::new();
     let mut tasks = JoinSet::new();
 

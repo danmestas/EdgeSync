@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danmestas/EdgeSync/leaf/agent/internal/natshdr"
 	"github.com/danmestas/EdgeSync/leaf/agent/notify"
 	"github.com/nats-io/nats.go"
 	natsserver "github.com/nats-io/nats-server/v2/server"
@@ -92,18 +93,19 @@ func TestPublishCtx_InjectsTraceparent(t *testing.T) {
 	if got.Header == nil {
 		t.Fatalf("expected headers on captured message, got nil")
 	}
-	if got.Header.Get("traceparent") == "" {
+	if natshdr.Carrier(got.Header).Get("traceparent") == "" {
 		t.Fatalf("expected traceparent in headers, got none (headers=%v)", got.Header)
 	}
 
 	// Use the same public extraction helper subscribers will use. This also
-	// exercises natshdr.Carrier's case-insensitive Get path, since NATS
-	// delivers header keys in lowercase on the wire regardless of send case.
+	// exercises natshdr.Carrier's case-insensitive Get path, since header key
+	// case on the wire varies by nats.go version (lowercase before v1.50,
+	// send-case preserved after) and Header.Get is exact-match.
 	ext := notify.ExtractFromMsg(context.Background(), got)
 	sc := trace.SpanContextFromContext(ext)
 	if !sc.TraceID().IsValid() {
 		t.Fatalf("extracted span context has invalid TraceID (traceparent=%q)",
-			got.Header.Get("traceparent"))
+			natshdr.Carrier(got.Header).Get("traceparent"))
 	}
 	if sc.TraceID() != span.SpanContext().TraceID() {
 		t.Fatalf("trace id mismatch: extracted=%s, original=%s",

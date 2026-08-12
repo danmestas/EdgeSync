@@ -46,10 +46,7 @@ async fn main() -> anyhow::Result<()> {
         vec![args.alpn.as_bytes().to_vec()]
     };
 
-    let (ep, endpoint_id) = endpoint::create_endpoint(
-        &args.key_path,
-        &alpns,
-    ).await?;
+    let (ep, endpoint_id) = endpoint::create_endpoint(&args.key_path, &alpns).await?;
 
     tracing::info!(%endpoint_id, "iroh endpoint ready");
 
