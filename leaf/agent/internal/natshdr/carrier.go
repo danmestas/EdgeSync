@@ -2,11 +2,10 @@
 // nats.Header so OpenTelemetry propagators can read/write W3C trace
 // context directly on a NATS message's headers.
 //
-// NATS preserves header case on the send side but delivers headers
-// lower-cased on the receive side, so Get is case-insensitive; otherwise
-// subscribers would miss the injected "traceparent" because the wire
-// delivers it as "traceparent" while http.Header.Get canonicalizes the
-// lookup key to "Traceparent".
+// Header key case on the wire varies: nats.go before v1.50 delivered
+// keys lower-cased, later versions preserve send case, and nats.Header's
+// own Get is exact-match. Get here is case-insensitive so subscribers
+// find "traceparent" regardless of which variant arrives.
 package natshdr
 
 import (

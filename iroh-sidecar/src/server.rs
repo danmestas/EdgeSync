@@ -5,26 +5,22 @@
 //!   GET  /status                 — return local endpoint info as JSON
 //!   POST /shutdown               — graceful shutdown
 
-use std::{
-    collections::HashMap,
-    str::FromStr,
-    sync::Arc,
-};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use axum::{
-    Router,
     body::Bytes,
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
+    Router,
 };
 use iroh::{
-    EndpointAddr, EndpointId,
     endpoint::{Connection, Endpoint},
+    EndpointAddr, EndpointId,
 };
 use serde_json::json;
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{oneshot, Mutex};
 
 /// Shared state injected into every axum handler.
 #[derive(Clone)]
