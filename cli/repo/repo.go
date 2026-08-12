@@ -6,7 +6,7 @@
 //
 // Replace this in your CLI:
 //
-//	import libfossilcli "github.com/danmestas/libfossil/cli"
+//	import libfossilcli "github.com/danmestas/go-libfossil/cli"
 //
 //	type CLI struct {
 //		libfossilcli.Globals
@@ -32,7 +32,7 @@
 // Re-declaring them as wrapper structs would require mirroring ~38
 // subcommands' worth of kong flags by hand, brittle to libfossil flag
 // additions/renames. Aliases give consumers source-level isolation
-// (no "github.com/danmestas/libfossil/cli" import needed in consumer code)
+// (no "github.com/danmestas/go-libfossil/cli" import needed in consumer code)
 // while reusing libfossil's tested CLI implementation.
 //
 // Because aliases resolve to the same type, the libfossil/cli package is
@@ -43,7 +43,7 @@
 package repo
 
 import (
-	libfossilcli "github.com/danmestas/libfossil/cli"
+	libfossilcli "github.com/danmestas/go-libfossil/cli"
 )
 
 // Globals holds flags shared by all repo subcommands (-R repo path, -v

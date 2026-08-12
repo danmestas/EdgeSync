@@ -4,7 +4,7 @@ import (
 	"math/rand"
 	"sync"
 
-	libfossil "github.com/danmestas/libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 var _ libfossil.BuggifyChecker = (*Buggify)(nil)

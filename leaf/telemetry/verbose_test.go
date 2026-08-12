@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	libfossil "github.com/danmestas/libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 func TestVerboseObserver(t *testing.T) {

@@ -3,9 +3,9 @@ module github.com/danmestas/EdgeSync/leaf
 go 1.26.0
 
 require (
-	github.com/danmestas/libfossil v0.6.3
-	github.com/danmestas/libfossil/db/driver/modernc v0.2.0
-	github.com/danmestas/libfossil/db/driver/ncruces v0.2.0
+	github.com/danmestas/go-libfossil v0.9.0
+	github.com/danmestas/go-libfossil/db/driver/modernc v0.3.0
+	github.com/danmestas/go-libfossil/db/driver/ncruces v0.3.0
 	github.com/nats-io/nats-server/v2 v2.14.5
 	github.com/nats-io/nats.go v1.53.1
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e

@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
-	libfossil "github.com/danmestas/libfossil"
-	"github.com/danmestas/libfossil/simio"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/simio"
 	"github.com/nats-io/nats.go"
 )
 

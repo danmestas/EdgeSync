@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	libfossil "github.com/danmestas/libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 const devicesFilePath = "_notify/devices.json"

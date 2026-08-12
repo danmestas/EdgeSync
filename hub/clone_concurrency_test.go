@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	libfossil "github.com/danmestas/libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // TestHub_ConcurrentClones reproduces issue #120: the leaf v0.0.7

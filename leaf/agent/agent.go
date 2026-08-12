@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"time"
 
-	libfossil "github.com/danmestas/libfossil"
-	"github.com/danmestas/libfossil/simio"
+	libfossil "github.com/danmestas/go-libfossil"
+	"github.com/danmestas/go-libfossil/simio"
 	"github.com/danmestas/EdgeSync/leaf/agent/notify"
 	"github.com/nats-io/nats.go"
 )

@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/alecthomas/kong"
-	_ "github.com/danmestas/libfossil/db/driver/modernc"
+	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
 )
 
 // Build-time variables, populated via -ldflags by GoReleaser.

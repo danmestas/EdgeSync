@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	libfossil "github.com/danmestas/libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // newAgentForCommitTests opens a fresh repo and builds an Agent without
@@ -321,18 +321,14 @@ func TestAgent_Commit_ChainsOntoTrunkTipByDefault(t *testing.T) {
 	}
 
 	// Walk the timeline and find rev2; its Parents must contain rev1.
-	tipRID, err := a.repo.BranchTip("trunk")
-	if err != nil {
-		t.Fatalf("BranchTip: %v", err)
-	}
-	timeline, err := a.repo.Timeline(libfossil.LogOpts{Start: tipRID, Limit: 10})
+	timeline, err := a.repo.Timeline(libfossil.TimelineOpts{Limit: 10})
 	if err != nil {
 		t.Fatalf("Timeline: %v", err)
 	}
 	var second *libfossil.LogEntry
 	for i := range timeline {
 		if timeline[i].UUID == string(rev2) {
-			second = &timeline[i]
+			second = &timeline[i].LogEntry
 			break
 		}
 	}
@@ -486,11 +482,7 @@ func TestAgent_Commit_ExplicitParentIDOverride(t *testing.T) {
 		t.Fatalf("Commit 2 with explicit ParentID: %v", err)
 	}
 
-	tipRID, err := a.repo.BranchTip("trunk")
-	if err != nil {
-		t.Fatalf("BranchTip: %v", err)
-	}
-	timeline, err := a.repo.Timeline(libfossil.LogOpts{Start: tipRID, Limit: 10})
+	timeline, err := a.repo.Timeline(libfossil.TimelineOpts{Limit: 10})
 	if err != nil {
 		t.Fatalf("Timeline: %v", err)
 	}

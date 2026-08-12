@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/danmestas/EdgeSync/leaf/agent"
-	libfossilcli "github.com/danmestas/libfossil/cli"
+	libfossilcli "github.com/danmestas/go-libfossil/cli"
 )
 
 // SyncCmd is the top-level command group for leaf agent sync.

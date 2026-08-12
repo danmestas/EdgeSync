@@ -3,7 +3,7 @@ package bridge
 import (
 	"fmt"
 
-	libfossil "github.com/danmestas/libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // Config holds the settings for a Bridge instance.

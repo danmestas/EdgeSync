@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	libfossil "github.com/danmestas/libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // sharedProjectCode is a fixed 40-char lowercase hex string used as the
@@ -212,14 +212,17 @@ func TestCrossLeaf_HTTPPush_PropagatesCommit(t *testing.T) {
 	// commit && fossil push $HTTP` flow from the issue's reproduction.
 	agentPath := filepath.Join(t.TempDir(), "agent.fossil")
 	httpURL := "http://" + hubA.HTTPAddr() + "/"
-	agentRepo, _, err := libfossil.Clone(ctx, agentPath,
+	agentRepo, cloneResult, err := libfossil.Clone(ctx, agentPath,
 		libfossil.NewHTTPTransport(httpURL),
-		libfossil.CloneOpts{ProjectCode: sharedProjectCode},
+		libfossil.CloneOpts{},
 	)
 	if err != nil {
 		t.Fatalf("agent clone from %s: %v", httpURL, err)
 	}
 	t.Cleanup(func() { _ = agentRepo.Close() })
+	if cloneResult.ProjectCode != sharedProjectCode {
+		t.Fatalf("agent clone project-code = %q, want %q", cloneResult.ProjectCode, sharedProjectCode)
+	}
 
 	if _, _, err := agentRepo.Commit(libfossil.CommitOpts{
 		Files: []libfossil.FileToCommit{

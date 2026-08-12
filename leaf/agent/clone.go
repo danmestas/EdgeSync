@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	libfossil "github.com/danmestas/libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // cloneFromHub clones a fossil repo from hubURL into repoPath. The cloned

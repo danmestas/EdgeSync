@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	libfossil "github.com/danmestas/libfossil"
-	_ "github.com/danmestas/libfossil/db/driver/modernc"
-	"github.com/danmestas/libfossil/testutil"
+	libfossil "github.com/danmestas/go-libfossil"
+	_ "github.com/danmestas/go-libfossil/db/driver/modernc"
+	"github.com/danmestas/go-libfossil/testutil"
 	"github.com/nats-io/nats.go"
 )
 
@@ -95,10 +95,10 @@ func startTestBridge(t *testing.T, nc *nats.Conn, projectCode, fossilURL string)
 }
 
 func TestIntegrationLeafPush(t *testing.T) {
-	if !testutil.HasFossil() {
+	bin := testutil.FossilBinary()
+	if bin == "" {
 		t.Skip("fossil not in PATH")
 	}
-	bin := testutil.FossilBinary()
 
 	dir := t.TempDir()
 

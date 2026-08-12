@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"os"
 
-	libfossil "github.com/danmestas/libfossil"
+	libfossil "github.com/danmestas/go-libfossil"
 )
 
 // seedFromUpstream clones a fossil repo at path from the given HTTP xfer
@@ -36,9 +36,7 @@ func seedFromUpstream(ctx context.Context, path, upstreamURL, expectedProjectCod
 	}
 
 	transport := libfossil.NewHTTPTransport(upstreamURL)
-	repo, result, err := libfossil.Clone(ctx, path, transport, libfossil.CloneOpts{
-		ProjectCode: expectedProjectCode,
-	})
+	repo, result, err := libfossil.Clone(ctx, path, transport, libfossil.CloneOpts{})
 	if err != nil {
 		return fmt.Errorf("hub: clone from %s: %w", upstreamURL, err)
 	}
