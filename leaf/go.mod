@@ -3,7 +3,7 @@ module github.com/danmestas/EdgeSync/leaf
 go 1.26.0
 
 require (
-	github.com/danmestas/go-libfossil v0.9.0
+	github.com/danmestas/go-libfossil v0.10.0
 	github.com/danmestas/go-libfossil/db/driver/modernc v0.3.0
 	github.com/danmestas/go-libfossil/db/driver/ncruces v0.3.0
 	github.com/nats-io/nats-server/v2 v2.14.5
