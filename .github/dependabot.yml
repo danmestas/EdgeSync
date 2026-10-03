@@ -1,0 +1,22 @@
+# Keep go-libfossil current. A new go-libfossil release is picked up within a
+# day as one pull request per module path, updating every go.mod that uses it.
+# This replaces a cross-repo dispatch from go-libfossil's release workflow,
+# which needed a personal access token and broke silently when it expired.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directories:
+      - "/"
+      - "/bridge"
+      - "/leaf"
+    schedule:
+      interval: daily
+    allow:
+      - dependency-name: "github.com/danmestas/go-libfossil*"
+    groups:
+      go-libfossil:
+        patterns:
+          - "github.com/danmestas/go-libfossil*"
+        group-by: dependency-name
+    commit-message:
+      prefix: "build(deps)"
