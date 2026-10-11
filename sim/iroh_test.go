@@ -137,6 +137,10 @@ func TestIrohConvergence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open leaf-%d: %v", i, err)
 		}
+		// leaf-0 pushes to leaf-1 without credentials.
+		if err := r.SetCaps("nobody", "gio"); err != nil {
+			t.Fatalf("leaf-%d: grant nobody push: %v", i, err)
+		}
 		a := agent.NewFromParts(agent.Config{
 			RepoPath:     leafPaths[i],
 			Push:         true,

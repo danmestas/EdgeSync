@@ -32,6 +32,7 @@ func main() {
 	pull := flag.Bool("pull", true, "enable pull")
 	serveHTTP := flag.String("serve-http", envOrDefault("LEAF_SERVE_HTTP", ""), "HTTP listen address (e.g. :8080) to serve fossil clone/sync")
 	serveNATS := flag.Bool("serve-nats", false, "enable NATS request/reply listener for leaf-to-leaf sync")
+	nobodyCaps := flag.String("nobody-caps", envOrDefault("LEAF_NOBODY_CAPS", ""), "capabilities for peers syncing without credentials (e.g. gio to accept their pushes); empty keeps the repo's")
 	uv := flag.Bool("uv", false, "enable unversioned file sync (wiki, forum, attachments)")
 	iroh := flag.Bool("iroh", envBool("LEAF_IROH"), "enable iroh sidecar for peer-to-peer sync")
 	irohKeyPath := flag.String("iroh-key", envOrDefault("LEAF_IROH_KEY", ""), "path to iroh Ed25519 keypair (default: <repo>.iroh-key)")
@@ -103,6 +104,7 @@ func main() {
 		UV:               *uv,
 		ServeHTTPAddr:    *serveHTTP,
 		ServeNATSEnabled: *serveNATS,
+		NobodyCaps:       *nobodyCaps,
 		Observer:         obs,
 		IrohEnabled:      *iroh,
 		IrohPeers:        irohPeers,

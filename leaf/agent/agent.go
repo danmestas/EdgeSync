@@ -101,6 +101,13 @@ func New(cfg Config) (*Agent, error) {
 	}
 	applySQLiteTuning(r)
 
+	if cfg.NobodyCaps != "" {
+		if err := r.SetCaps("nobody", cfg.NobodyCaps); err != nil {
+			r.Close()
+			return nil, fmt.Errorf("agent: apply NobodyCaps: %w", err)
+		}
+	}
+
 	projectCode, err := r.Config("project-code")
 	if err != nil {
 		r.Close()

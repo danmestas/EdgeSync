@@ -83,6 +83,7 @@ func TestNATSOverIrohSync(t *testing.T) {
 			IrohKeyPath:      filepath.Join(dir, fmt.Sprintf("leaf-%d.iroh-key", i)),
 			IrohBinaryPath:   sidecarBin,
 			ServeNATSEnabled: true,
+			NobodyCaps:       "gio", // peers push to each other without credentials
 			PeerID:           fmt.Sprintf("test-peer-%d", i),
 			Logger: func(msg string) {
 				t.Logf("[leaf-%d] %s", idx, msg)
