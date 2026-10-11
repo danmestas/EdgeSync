@@ -106,6 +106,15 @@ type Config struct {
 	// project sync subject. Enables leaf-to-leaf sync without a bridge.
 	ServeNATSEnabled bool
 
+	// NobodyCaps, when non-empty, replaces the capabilities of the repo's
+	// "nobody" user at startup. Peers that sync with this leaf without
+	// credentials (HTTP, NATS or iroh serving) get exactly these. Empty
+	// keeps whatever the repo stores; a repo libfossil creates or clones
+	// grants nobody clone and pull ("gjorz") but not push. Set "gio" to
+	// let unauthenticated peers push to this leaf. Applied by New;
+	// NewFromParts does no I/O and ignores it.
+	NobodyCaps string
+
 	// CustomDialer overrides the default net.Dial for NATS connections.
 	// Set to &wsdialer.WSDialer{URL: "ws://..."} for browser WebSocket.
 	CustomDialer nats.CustomDialer

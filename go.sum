@@ -8,8 +8,8 @@ github.com/antithesishq/antithesis-sdk-go v0.7.2 h1:oEEedg1Xgi8drRjqB0f9tfjhLoIn
 github.com/antithesishq/antithesis-sdk-go v0.7.2/go.mod h1:FQyySiasQQM8735Ddel3MRojmy4dA1IqCeyJ5jmPMbI=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
-github.com/danmestas/go-libfossil v0.10.0 h1:POA4uzYgIv3iJhTMwLM1wGmGo5FnzOBtyd1BwR6H/lo=
-github.com/danmestas/go-libfossil v0.10.0/go.mod h1:srcBH/pQu2vKaebmyTIQcwJ5Jev2PUtL76JQXxEy7mQ=
+github.com/danmestas/go-libfossil v0.11.0 h1:oqd/1f0CooP7940Ten8i2NF5yRtZFjEvybbXqEn+otQ=
+github.com/danmestas/go-libfossil v0.11.0/go.mod h1:srcBH/pQu2vKaebmyTIQcwJ5Jev2PUtL76JQXxEy7mQ=
 github.com/danmestas/go-libfossil/db/driver/modernc v0.3.0 h1:O01NTY1LOkD9rcjneDAti5SC4RGvSARrrWtfnXyehBs=
 github.com/danmestas/go-libfossil/db/driver/modernc v0.3.0/go.mod h1:spdUGmH76DTTxNqmE2BaH3PvzGkilaNYnGQbaHO3T7M=
 github.com/danmestas/go-libfossil/db/driver/ncruces v0.3.0 h1:/0g6Ye9NFh6M9eH2n8shS/ahlyKK9Xtwl9w8K5/MEbE=
