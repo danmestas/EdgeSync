@@ -33,8 +33,10 @@ AGENTS.md
 skills-lock.json
 .DS_Store
 .gitnexus
-.claude/worktrees/
-.claude/skills/
+.claude/
+CLAUDE.md
+MEMORY.md
+docs/agents/
 go.work
 go.work.sum
 
