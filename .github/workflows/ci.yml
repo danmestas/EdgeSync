@@ -49,3 +49,22 @@ jobs:
 
       - name: CLI tests
         run: go test -buildvcs=false ./cmd/edgesync/ -count=1 -timeout=60s
+
+  install-script:
+    # install.sh runs against the latest published release, so a change to
+    # it, or to goreleaser's archive names, fails here.
+    name: install script (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - name: install.sh
+        env:
+          EDGESYNC_INSTALL_DIR: ${{ runner.temp }}/edgesync-bin
+        run: |
+          sh install.sh
+          "$EDGESYNC_INSTALL_DIR/edgesync" --version
+          "$EDGESYNC_INSTALL_DIR/leaf" -h 2>&1 | grep -q 'Usage of'

@@ -8,11 +8,17 @@ A five-minute tour of EdgeSync: install the binary, point it at a `.fossil` repo
 ## Install
 
 ```sh
-go install github.com/danmestas/EdgeSync/cmd/edgesync@latest
+curl -fsSL https://raw.githubusercontent.com/danmestas/EdgeSync/main/install.sh | sh
 edgesync --help
 ```
 
-The binary is pure-Go and CGo-free thanks to the [libfossil](https://github.com/danmestas/libfossil) library underneath — drop it on any Linux/macOS/Windows host with no runtime dependency.
+The script installs `edgesync` and the `leaf` agent from the latest [GitHub release](https://github.com/danmestas/EdgeSync/releases/latest) into `~/.local/bin`, after checking each archive against the release's `checksums.txt`. Releases are built for macOS and Linux on Intel and ARM. On another platform, or to build from source:
+
+```sh
+go install github.com/danmestas/EdgeSync/cmd/edgesync@latest
+```
+
+The binary is pure Go and CGo-free thanks to the [go-libfossil](https://github.com/danmestas/go-libfossil) library underneath, so it has no runtime dependency.
 
 Verify your environment:
 

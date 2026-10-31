@@ -54,6 +54,14 @@ graph LR
 - **Fossil binary** *(optional)* — needed only for interop tests and to create demo repos. Install from [fossil-scm.org/downloads](https://fossil-scm.org/home/uv/download.html)
 - **direnv** *(optional)* — if installed, the included `.envrc` sets `GOFLAGS=-buildvcs=false` automatically (see Dual VCS Note below)
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/danmestas/EdgeSync/main/install.sh | sh
+```
+
+This installs `edgesync` and the `leaf` agent from the latest [GitHub release](https://github.com/danmestas/EdgeSync/releases/latest) into `~/.local/bin`, after checking each archive against the release's `checksums.txt`. Releases are built for macOS and Linux, Intel and ARM. `sh -s -- leaf` installs one binary only; `EDGESYNC_INSTALL_DIR` and `EDGESYNC_VERSION=v0.0.21` choose the directory and the release. `go install github.com/danmestas/EdgeSync/cmd/edgesync@latest` also works.
+
 ## Quick Start
 
 ```bash
