@@ -3,8 +3,7 @@
 #
 # Cross-compiles edgesync and the leaf daemon for macOS and Linux on
 # amd64/arm64, archives as tarballs, generates checksums, publishes a
-# GitHub release, and updates two Homebrew formulas
-# (edgesync, leaf) in danmestas/homebrew-tap.
+# GitHub release. install.sh installs from it.
 
 version: 2
 
@@ -36,9 +35,6 @@ builds:
 
   # leaf is its own Go module under ./leaf — `dir: leaf` switches goreleaser
   # into that module so its go.mod resolves cleanly without root replaces.
-  # The bones CLI spawns this binary and waits for /healthz; shipping it
-  # via brew lets `brew install danmestas/tap/bones` pull it as a dep
-  # instead of requiring users to clone EdgeSync and `make leaf`.
   - id: leaf
     main: ./cmd/leaf
     dir: leaf
@@ -127,9 +123,9 @@ release:
 
     ## Install
 
-    ### Homebrew (macOS / Linux)
+    ### Install script (macOS / Linux)
     ```bash
-    brew install danmestas/tap/edgesync
+    curl -fsSL https://raw.githubusercontent.com/danmestas/EdgeSync/main/install.sh | EDGESYNC_VERSION={{ .Tag }} sh
     ```
 
     ### Go
@@ -139,39 +135,3 @@ release:
 
     ### Direct download
     Pick a binary from the assets above for your OS/arch.
-
-brews:
-  - name: edgesync
-    ids: [edgesync]
-    skip_upload: auto
-    repository:
-      owner: danmestas
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_PAT_TOKEN }}"
-    directory: Formula
-    homepage: https://github.com/danmestas/EdgeSync
-    description: "Sync engine for distributed teams: NATS messaging or peer-to-peer Fossil sync."
-    license: Apache-2.0
-    install: |
-      bin.install "edgesync"
-    test: |
-      system "#{bin}/edgesync --version"
-
-  # Standalone leaf formula. bones depends on this via `depends_on
-  # "danmestas/tap/leaf"` in its own brew formula.
-  - name: leaf
-    ids: [leaf]
-    skip_upload: auto
-    repository:
-      owner: danmestas
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_PAT_TOKEN }}"
-    directory: Formula
-    homepage: https://github.com/danmestas/EdgeSync
-    description: "Leaf daemon: bridges a workspace to a NATS+Fossil hub. Spawned by bones."
-    license: Apache-2.0
-    install: |
-      bin.install "leaf"
-    # leaf has no --version flag; -h prints usage via stdlib flag (exit 0).
-    test: |
-      assert_match "Usage of", shell_output("#{bin}/leaf -h 2>&1")
