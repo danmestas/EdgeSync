@@ -11,7 +11,7 @@
 #   3. Detect whether the root module has changes since its latest v* tag
 #      (any new submodule pin counts). If so, tag the next root patch and
 #      push it. Pushing the root tag fires .github/workflows/release.yml,
-#      which runs goreleaser and dispatches the bones bump-upstream.
+#      which runs goreleaser.
 #
 # Usage:
 #   scripts/release.sh                   # do the bumps
@@ -241,7 +241,7 @@ fi
 
 root_next=$(bump_version "$root_cur" "$BUMP_KIND")
 log "root: ${root_cur} → ${root_next}"
-if ! confirm "tag ${ROOT_TAG_PREFIX}${root_next} at HEAD and push (fires release.yml + bones dispatch)?"; then
+if ! confirm "tag ${ROOT_TAG_PREFIX}${root_next} at HEAD and push (fires release.yml)?"; then
   warn "user declined root tag — submodules tagged + pin bumped but root release skipped"
   exit 1
 fi
