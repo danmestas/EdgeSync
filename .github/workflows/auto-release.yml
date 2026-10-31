@@ -3,8 +3,7 @@ name: Auto-release
 # Drives the multi-step EdgeSync release flow: tag any submodule that
 # changed since its last <name>/v* tag, bump the matching root go.mod
 # pin (commit straight to main as github-actions[bot]), then tag the
-# next root v*. Pushing the root tag fires release.yml (goreleaser +
-# bones dispatch).
+# next root v*. Pushing the root tag fires release.yml (goreleaser).
 #
 # Manual entry point. Click "Run workflow" or:
 #   gh workflow run auto-release.yml -f dry_run=true
